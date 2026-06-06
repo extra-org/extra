@@ -26,6 +26,7 @@ codebase. Read them before changing anything they cover:
 - [0004 — Prompts are templates rendered per request](adr/0004-prompts-are-templates-rendered-per-request.md)
 - [0005 — Prompt templates are rendered per request using resolved context](adr/0005-prompt-rendering-and-context-resolution.md)
 - [0006 — Reusable agent definitions and hierarchy instances](adr/0006-reusable-agent-definitions-and-hierarchy-instances.md)
+- [0007 — Build/compile phase is separate from the runtime/execution phase](adr/0007-build-phase-separate-from-runtime-phase.md)
 
 ## Relationship to other directories
 

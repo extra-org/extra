@@ -33,6 +33,64 @@ Client-specific authentication, authorization, and business logic stay **outside
 the generated runtime — in a client-owned **sidecar** or in **generated resolver
 packages / plugins**. The core runtime remains generic and reusable.
 
+This is **agent architecture as code**: the YAML is the declarative source of
+truth, and the runtime is a generic execution engine — not a framework for
+hand-writing agents.
+
+---
+
+## Execution phases: build vs. runtime vs. client extension
+
+The most important structural rule of the project is the separation of three
+phases. **Do not collapse these layers.**
+→ Decision recorded in
+[ADR 0007](adr/0007-build-phase-separate-from-runtime-phase.md).
+
+### 1. Build / generation / compilation phase
+
+Happens **before** any real user request is served. Responsible for:
+
+- loading `agent.yml`,
+- validating the YAML schema, references, prompt paths, tools, MCP servers, the
+  hierarchy, reusable agent instances, resolver references, and "no hardcoded
+  secrets",
+- detecting invalid cycles,
+- compiling the YAML into a `CompiledAgentGraph`,
+- (later) optionally generating resolver stubs for client business logic,
+- (later) optionally generating deployment artifacts.
+
+It answers: *"Is this agent system valid? What runtime structure should be created
+from it?"* **It must not execute user requests.**
+
+### 2. Runtime / execution phase
+
+Happens when the service is running and receives requests. Responsible for:
+
+- receiving a `/chat` or CLI request,
+- creating a fresh `ExecutionContext` per request,
+- calling the sidecar/resolvers if configured and enriching context (identity,
+  permissions, tenant, `customer_code`, …),
+- routing through the compiled graph and selecting the correct **agent
+  instance**,
+- resolving dynamic prompt variables and rendering prompts **for this request**,
+- executing the selected agent,
+- enforcing tool permissions and injecting protected tool parameters,
+- calling MCP/tools if needed,
+- returning a response and trace.
+
+It answers: *"A request arrived. Which agent should handle it, with what context
+and permissions?"*
+
+### 3. Client extension layer
+
+Client-specific business logic is **never hardcoded into the generated runtime**.
+It lives in extension boundaries: generated resolver functions, a client-owned
+sidecar service, plugin packages, or custom resolver implementations. Examples:
+authentication, authorization, `customer_code`/tenant/permission lookups, DB
+queries, third-party API calls, business-specific context, and tool input
+policies. **The core runtime stays generic.**
+→ See [ADR 0003](adr/0003-client-specific-logic-lives-in-sidecar.md).
+
 ---
 
 ## Design goals
@@ -194,28 +252,39 @@ state):
 
 - the `CompiledAgentGraph`
 - the prompt template loader (and raw-template cache)
+- the prompt renderer
 - the resolver registry
 - the sidecar client
 - the tool registry
 - the MCP manager
 - the LLM provider registry
 - observability/tracing infrastructure
+- runtime configuration
+
+It must **not** store: current `user_id`, `tenant_id`, `customer_code`,
+permissions, request message, rendered prompt, trace path, or tool results.
 
 **`ExecutionContext` owns request-specific state** (created fresh per request,
 discarded at the end):
 
 - `request_id`
-- `tenant_id`, `user_id`
+- `message`
+- `tenant_id`, `user_id`, `session_id`
 - `identity`
-- `permissions`
+- `roles`, `permissions`
+- `customer_code`
 - resolved context values
 - the selected agent path
-- prompt render values
-- trace events
+- rendered prompt values
 - temporary tool results
+- trace events
+- errors
 
 **Never store request-specific state on `RuntimeEngine`.** Doing so leaks data
 between concurrent requests and breaks the concurrency model.
+
+> **Simple rule:** `RuntimeEngine` = *how the system works*;
+> `ExecutionContext` = *what is happening in this specific request*.
 
 ---
 
@@ -412,12 +481,26 @@ resolvers; resolved values live on the `ExecutionContext`.
 
 ### Generated resolver project (concept)
 
-To keep the runtime generic, the platform may **generate resolver function stubs**
-for the client from the YAML resolver contracts. The client implements **only the
-business logic** inside that generated project (e.g. how to look up a
+To keep the runtime generic, the platform may **generate a separate Python project
+with resolver signatures** from the YAML resolver contracts. The client implements
+**only the business logic** inside that generated project (e.g. how to look up a
 `customer_code` from a `user_id`/`tenant_id`). The core runtime imports/calls
 those handlers through the generic resolver contract and never contains
-client-specific logic itself. This is a planned capability, not yet built.
+client-specific logic itself.
+
+```python
+# generated stub (illustrative — not yet implemented)
+async def resolve_customer_code(
+    context: ResolverContext,
+    user_id: str,
+    tenant_id: str,
+) -> ResolverResult[str]:
+    raise NotImplementedError("Client must implement this resolver")
+```
+
+The runtime supplies a `ResolverContext`, calls the handler, and maps the returned
+`ResolverResult` into the `ExecutionContext`. This is a planned capability, not yet
+built.
 
 ---
 
@@ -461,15 +544,61 @@ at call time regardless of prompt or model output, and denials are traced.
 
 ---
 
+## Open-source, self-hosted developer experience
+
+The platform is self-hosted open source. The intended first-run experience is
+deliberately simple and uses **only mocks** (mock LLM provider, mock tool/MCP
+layer, simple YAML and prompts, no real external services), so users grasp the
+product quickly:
+
+```bash
+git clone <repo> && cd <repo>
+make install
+
+# CLI working name: agentctl
+agentctl validate examples/hello-agent/agent.yml
+agentctl graph    examples/hello-agent/agent.yml
+agentctl run      examples/hello-agent/agent.yml --message "hello"
+agentctl serve    examples/hello-agent/agent.yml
+```
+
+| Command    | Phase            | Purpose                                            |
+| ---------- | ---------------- | -------------------------------------------------- |
+| `validate` | build            | Load + validate the YAML; report what is valid.    |
+| `graph`    | build            | Compile and print the `CompiledAgentGraph`.        |
+| `run`      | runtime (local)  | Execute one request locally (mock LLM/tools).      |
+| `serve`    | runtime (server) | Start the API and serve requests.                  |
+
+The long-term promise: *define your agent system in YAML, run it locally, extend
+it with resolvers or sidecars, deploy it when ready.* Real LLMs, MCP, sidecar, and
+deployment come later — see [ROADMAP.md](ROADMAP.md).
+
+---
+
 ## First implementation step
 
 Architecture is documented; **no runtime exists yet**. The first implementation
-step is the repository/package foundation, then the spec & validation layer:
+work is the repository/package foundation, then — as the **first feature** — the
+**YAML schema & validation** layer (not runtime, MCP, sidecar, or API):
 
 1. `tasks/0001-repository-foundation.md` — create the `src/agentplatform/`
    package skeleton and test layout.
-2. `tasks/0002-yaml-schema-and-validation.md` — typed schema models + validation
-   (validate before compile).
+2. `tasks/0002-yaml-schema-and-validation.md` — Pydantic models, YAML loader, and
+   validation: definitions, hierarchy, reusable agent instances, prompt paths,
+   tool/MCP/resolver references, no-hardcoded-secrets, plus tests.
+
+The first successful command should be `agentctl validate examples/hello-agent/agent.yml`,
+producing output such as:
+
+```text
+✓ YAML loaded
+✓ Definitions valid
+✓ Hierarchy valid
+✓ Reusable agent instances valid
+✓ Prompts valid
+✓ Tools valid
+✓ MCP servers valid
+```
 
 Subsequent tasks build the compiler (`0003`), runtime engine (`0004`), prompt
 rendering (`0005`), sidecar/resolvers (`0006`), and tools/permissions (`0007`).

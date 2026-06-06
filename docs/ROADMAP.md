@@ -20,6 +20,24 @@ aspiration.
 | 11    | Observability & tracing       | 0011       | ⏳ planned     |
 | 12    | Tests & quality gates         | 0012       | ⏳ planned     |
 
+## Open-source developer-experience milestones
+
+The platform is **self-hosted open source**. The first experience must be simple
+and run with **mocks only** (mock LLM provider, mock tool/MCP layer, simple YAML
+and prompts, no real external services). A bundled `examples/hello-agent/` will
+demonstrate the product end-to-end. The CLI (working name **`agentctl`**) unlocks
+these milestones in order:
+
+| Milestone | Command (on `examples/hello-agent/agent.yml`) | Enabled by |
+| --------- | --------------------------------------------- | ---------- |
+| Validate  | `agentctl validate …`                         | 0002       |
+| Inspect   | `agentctl graph …`                            | 0003       |
+| Run local | `agentctl run … --message "hello"`            | 0004–0005 (mock LLM/tools) |
+| Serve     | `agentctl serve …`                            | 0009       |
+
+Real LLMs, real MCP, real sidecar, and deployment come **after** the mock-based
+local experience works.
+
 ## Principles guiding the order
 
 - **Validate before compile, compile before run.** The schema/validation work

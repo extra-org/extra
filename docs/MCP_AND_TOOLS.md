@@ -36,9 +36,19 @@ definitions:
           invoice_id: { type: string }
         required: ["invoice_id"]
       requires_permissions: ["invoice:read"]
-      injected_params:
-        tenant_id: "${context.tenant_id}"   # forced by the runtime, not the model
+      input_policy:
+        inject:
+          customer_code: "{{ identity.customer_code }}"  # forced by the runtime, not the model
+        block_user_override:
+          - customer_code
 ```
+
+> **Terminology.** `input_policy` is the **declarative** tool input policy in
+> YAML: `inject` (force trusted values) and `block_user_override` (parameters the
+> model/user may not set). At runtime the sidecar may additionally return a
+> `tool_policy` (allow/deny + injects) per
+> [SIDECAR_CONTEXT_AUTH.md](SIDECAR_CONTEXT_AUTH.md). Both are enforced at the
+> tool layer; the prompt is never the boundary.
 
 Agents opt in to tools:
 
@@ -60,10 +70,11 @@ Every tool call passes through enforcement **at call time**, using the resolved
 1. **Permission check.** The caller must hold every permission in the tool's
    `requires_permissions` and must not be denied by the sidecar's `tool_policy`.
    Otherwise the call is **blocked** and traced.
-2. **Injected parameters.** `injected_params` and sidecar `tool_policy.inject`
-   values are **forced** into the call. The model's proposed arguments **cannot
-   override** them. This is how tenant isolation is guaranteed regardless of
-   what the model "decides".
+2. **Injected parameters.** `input_policy.inject` (and sidecar
+   `tool_policy.inject`) values are **forced** into the call, and
+   `input_policy.block_user_override` parameters cannot be set by the model/user.
+   The model's proposed arguments **cannot override** these. This is how tenant
+   isolation is guaranteed regardless of what the model "decides".
 3. **Input validation.** Arguments are validated against the tool's
    `input_schema` before invocation.
 4. **Trace.** The decision, final arguments (redacted as needed), and result

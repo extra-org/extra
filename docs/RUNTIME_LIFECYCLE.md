@@ -49,8 +49,17 @@ Everything that varies between requests lives on the `ExecutionContext`.
 ## RuntimeEngine
 
 - **Long-lived**, created at startup, one per process.
-- **Holds shared, read-only collaborators**: the compiled graph, provider
-  clients, the tool registry, the sidecar client, the prompt template cache.
+- **Holds shared, read-only collaborators**:
+  - the `CompiledAgentGraph`
+  - the prompt template loader (raw-template cache)
+  - the prompt renderer
+  - the resolver registry
+  - the sidecar client
+  - the tool registry
+  - the MCP manager
+  - the LLM provider registry
+  - observability/tracing infrastructure
+  - runtime configuration
 - **Holds NO request state.** No "current user", no "current request", no
   per-request mutable fields.
 - **Thread/async-safe by construction**: because it carries no request state,
@@ -58,19 +67,35 @@ Everything that varies between requests lives on the `ExecutionContext`.
 
 What does **not** belong on `RuntimeEngine`:
 
-- The current request, identity, tenant, or permissions.
+- The current `user_id`, `tenant_id`, `customer_code`, identity, or permissions.
+- The current request message.
 - Rendered prompts for a specific request.
+- The current trace path or tool results.
 - Any mutable counter/buffer scoped to a single request.
 
 ## ExecutionContext
 
 - **Per request**, created fresh, never reused.
-- **Carries everything request-scoped**: `request_id`, request data/headers,
-  resolved identity, tenant/customer, permissions, resolved context values,
-  the current routing path, and the trace accumulator.
+- **Carries everything request-scoped**:
+  - `request_id`
+  - `message`
+  - `tenant_id`, `user_id`, `session_id`
+  - `identity`
+  - `roles`, `permissions`
+  - `customer_code`
+  - resolved context values
+  - the selected agent path
+  - rendered prompt values
+  - temporary tool results
+  - trace events
+  - errors
 - **Passed explicitly** down through routing, context resolution, prompt
   rendering, and tool execution.
 - **Discarded** when the request completes.
+
+> **Simple rule:** `RuntimeEngine` = *how the system works*;
+> `ExecutionContext` = *what is happening in this specific request*. Never store
+> per-request state on `RuntimeEngine`.
 
 ---
 

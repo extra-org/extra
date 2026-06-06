@@ -22,9 +22,10 @@ Current date:
 {{ current_date }}
 ```
 
-Values such as `customer_code` and `current_date` are **dynamic** — they can
-differ on every request — so they are resolved and substituted **per request**,
-never baked in at startup.
+Values such as `customer_code`, `current_date`, `tenant_id`, permissions,
+customer profile, `region`, and `locale` are **dynamic** — they can differ on
+every request — so they are resolved and substituted **per request**, never baked
+in at startup.
 
 ---
 

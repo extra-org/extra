@@ -51,6 +51,15 @@ Incoming request
   → return response + trace
 ```
 
+**Three separated phases (do not collapse them):** (1) **build/compile** —
+load, validate, and compile `agent.yml` into a `CompiledAgentGraph` *before*
+serving requests (never executes requests); (2) **runtime/execution** — per
+request, create an `ExecutionContext`, resolve context, route to an agent
+instance, render prompts, execute, enforce tool policy, return response + trace;
+(3) **client extension** — client-specific auth/business logic lives in
+resolvers, a sidecar, or plugins, never in the generic runtime.
+→ See [ADR 0007](docs/adr/0007-build-phase-separate-from-runtime-phase.md).
+
 ---
 
 ## 3. Non-negotiable architecture rules
@@ -87,7 +96,9 @@ and **read
 [ADR 0006](docs/adr/0006-reusable-agent-definitions-and-hierarchy-instances.md)
 before changing how agent definitions, the hierarchy, the compiled graph, or
 agent execution work** (the runtime executes reusable *instances*, not
-definitions).
+definitions), and **read
+[ADR 0007](docs/adr/0007-build-phase-separate-from-runtime-phase.md) before
+blurring the build, runtime, and client-extension phases.**
 
 ---
 

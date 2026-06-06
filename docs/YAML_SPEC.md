@@ -101,18 +101,29 @@ definitions:
 
 ### `tools`
 Declares tools available to agents, including which MCP server (if any) provides
-them, declared input schema, **required permissions**, and any **injected
-parameters** the runtime enforces. → See [MCP_AND_TOOLS.md](MCP_AND_TOOLS.md).
+them, declared input schema, **required permissions**, and an **`input_policy`**
+the runtime enforces at the tool layer. → See
+[MCP_AND_TOOLS.md](MCP_AND_TOOLS.md).
 
 ```yaml
 definitions:
   tools:
-    get_invoice:
+    invoice_search:
       mcp_server: billing_mcp
       requires_permissions: ["invoice:read"]
-      injected_params:
-        tenant_id: "${context.tenant_id}"   # resolved by the runtime, not the model
+      input_policy:
+        inject:
+          customer_code: "{{ identity.customer_code }}"  # runtime injects trusted value
+        block_user_override:
+          - customer_code                                 # LLM/user cannot override
 ```
+
+`input_policy` is the **declarative** tool input policy: `inject` forces trusted
+values from resolved context/identity into the call, and `block_user_override`
+lists parameters the model/user may **not** set. The runtime (not the prompt)
+enforces this at call time, and the sidecar may return additional `tool_policy`
+at runtime. → See the security model in
+[ARCHITECTURE.md](ARCHITECTURE.md#security--tool-enforcement-model).
 
 ### `agents`
 Declares **reusable agent definitions**. An agent entry references a provider and
@@ -137,11 +148,43 @@ Prompts may be declared inline or referenced as template files. Either way they
 are **templates** with placeholders, rendered per request. → See
 [PROMPT_RENDERING.md](PROMPT_RENDERING.md).
 
+### `context_resolvers`
+Declares **resolver contracts**: which dynamic context values exist and where
+they come from (a generated function, a plugin, the sidecar, the request,
+identity, system time, DB/API, or an MCP tool). The YAML declares *what is needed
+and its source*; client-specific resolution logic lives **outside** the runtime
+(generated resolver package, plugin, or sidecar). The runtime resolves declared
+values generically and never contains client business logic.
+
+```yaml
+definitions:
+  context_resolvers:
+    customer_code:
+      type: generated_function        # or: sidecar | plugin | request | system | ...
+      handler: client_resolvers.customer.resolve_customer_code
+      input:
+        user_id: "{{ identity.user_id }}"
+        tenant_id: "{{ identity.tenant_id }}"
+      output:
+        name: customer_code
+        type: string
+        required: true
+```
+
+→ See the resolver model in
+[ARCHITECTURE.md](ARCHITECTURE.md#resolver-model) and
+[ADR 0005](adr/0005-prompt-rendering-and-context-resolution.md).
+
 ### `context requirements` & `security requirements`
 Agents and tools declare context (`requires_context`) and permissions
 (`requires_permissions`). These declarations are what the runtime hands to the
-sidecar and what the permission layer enforces. → See
+sidecar/resolvers and what the permission layer enforces. → See
 [SIDECAR_CONTEXT_AUTH.md](SIDECAR_CONTEXT_AUTH.md).
+
+### `deployment` metadata
+Deployment-related metadata (e.g. service name, image hints) is declared at the
+top-level `deployment` key and consumed only by later deployment phases. It is
+**not** used during validation/compilation of the agent graph.
 
 ---
 

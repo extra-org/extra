@@ -57,6 +57,22 @@ The runtime **never** implements the client's auth or business rules — it only
 
 ---
 
+## High-level flow
+
+```text
+Incoming request
+  → Security / Context Gate
+  → Client sidecar (POST /resolve-context)
+  → identity + permissions + context (+ tool policy)
+  → ExecutionContext (created/enriched)
+  → RuntimeEngine
+  → agent execution
+```
+
+The sidecar is a **client-owned service**. The runtime calls it, maps its
+response into the `ExecutionContext`, and then routes/renders/executes/enforces —
+it never implements the client's auth or business rules itself.
+
 ## When the runtime calls the sidecar
 
 Two optional phases, both using the same contract (see `phase`):
@@ -67,6 +83,10 @@ Two optional phases, both using the same contract (see `phase`):
   agent-specific permissions or data lookups.
 
 Either phase may be disabled per the spec's `security.sidecar.phases`.
+
+**Default failure behavior is fail-closed** for security-sensitive flows: if the
+sidecar is enabled but unreachable or errors, the runtime denies the request
+rather than proceeding without resolved identity/permissions.
 
 ---
 
