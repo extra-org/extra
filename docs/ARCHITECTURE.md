@@ -1,17 +1,22 @@
 # Architecture
 
-This document describes the architecture of the **product** end-to-end. It is a
+This document describes the architecture of the platform end-to-end. It is a
 design blueprint; the implementation is built task-by-task from
 [`tasks/`](../tasks/).
 
-The product is **not** "a YAML format." The product is a **generic, open-source,
-self-hosted runtime platform for declarative AI-agent systems**. YAML is one
-important layer: the declarative *input specification* that configures the
-platform. The platform validates that specification, compiles it into an
-internal executable agent graph, runs the graph through a long-lived runtime,
-creates per-request execution state, resolves dynamic context, renders prompts,
-enforces tool/data policies, integrates tools/MCP servers, supports
-resolver/sidecar extension points, and returns responses with full traceability.
+This project is an **open-source, self-hosted platform for defining and running
+AI-agent systems declaratively**. Users describe an agent system in a YAML
+specification; the platform validates that specification, compiles it into an
+internal executable agent graph, and runs it through a generic runtime engine.
+
+YAML is the **declarative specification layer** of the platform. It describes
+what agents, orchestrators, tools, MCP servers, prompts, resolvers, hierarchy,
+security requirements, observability, and deployment metadata should exist. The
+platform validates and compiles that declaration into an executable runtime
+model, and at request time handles context resolution, prompt rendering,
+routing, tool-policy enforcement, tracing, and runtime orchestration. The result
+is that teams define *what* their agent system should be, and the platform owns
+*how* it runs.
 
 > Read this with [`YAML_SPEC.md`](YAML_SPEC.md) (the input contract),
 > [`RUNTIME_LIFECYCLE.md`](RUNTIME_LIFECYCLE.md), [`PROMPT_RENDERING.md`](PROMPT_RENDERING.md),
@@ -465,12 +470,12 @@ source of truth, then add semantic checks the JSON Schema cannot express cleanly
 
 ---
 
-## YAML: the input contract (not the product)
+## YAML: the declarative specification layer
 
-The YAML is the **declarative source of truth for configuration**, and nothing
-more. It is the input the platform consumes — the platform itself is the runtime
-described above. The full grammar lives in [`YAML_SPEC.md`](YAML_SPEC.md); here is
-how it fits the architecture.
+YAML is the **declarative source of truth for configuration**: it describes the
+desired agent system, and the platform validates and compiles that declaration
+into the runtime structures described above. The full grammar lives in
+[`YAML_SPEC.md`](YAML_SPEC.md); here is how it fits the architecture.
 
 A config declares:
 
