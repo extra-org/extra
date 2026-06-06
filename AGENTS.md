@@ -228,11 +228,12 @@ Current order: `0001` foundation → `0002` YAML schema → `0003` compiled grap
 Run these from the repository root:
 
 ```bash
-make install   # set up the dev environment / install dependencies
-make format     # auto-format the codebase
-make lint       # static analysis (ruff, mypy)
+make install   # editable install (-e ".[dev]") with dev dependencies
+make format     # auto-format the codebase (ruff format)
+make lint       # lint (ruff check)
+make typecheck  # type-check (mypy)
 make test       # run the test suite (pytest)
-make check      # format-check + lint + test (the gate that must pass)
+make check      # lint + typecheck + test (the gate that must pass)
 ```
 
 `make check` is the **mandatory gate** before declaring a task complete. If the

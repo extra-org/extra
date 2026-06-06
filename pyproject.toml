@@ -1,9 +1,9 @@
 # Project + tooling configuration for the Declarative Agent Platform.
 #
-# Foundation phase note: the package under src/ is not implemented yet (task
-# 0001 creates the skeleton). This file establishes the toolchain conventions
-# (ruff, mypy, pytest) that the Makefile and skills refer to, so that future
-# tasks have a consistent, agreed configuration to build against.
+# Foundation phase note: this file establishes packaging and the toolchain
+# (ruff, mypy, pytest). Runtime dependencies are declared here for upcoming work,
+# but product features (validation, compiler, runtime, prompts, sidecar, tools,
+# CLI, API) are NOT implemented yet — they are built task-by-task (see tasks/).
 
 [build-system]
 requires = ["hatchling"]
@@ -11,19 +11,58 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentplatform"
-version = "0.0.0"
 description = "A declarative platform for building AI agent systems (foundation phase)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "TBD" }
-dependencies = []
+authors = [{ name = "The Declarative Agent Platform contributors" }]
+keywords = ["ai", "agents", "llm", "yaml", "declarative", "orchestration", "mcp"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+# Runtime dependencies the platform will use as features land. Declaring them now
+# keeps the environment consistent; importing them is deferred to later tasks.
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "jinja2>=3.1",
+]
 
 [project.optional-dependencies]
 dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "mypy>=1.10",
-    "pytest>=8.0",
 ]
+
+# CLI entrypoint. `agentctl` is the working CLI name used throughout the docs
+# (see docs/ARCHITECTURE.md and docs/ROADMAP.md); `agent-platform` is provided as
+# an alias. Only a `version` command exists today — feature commands are deferred
+# to tasks/0008-cli.md.
+[project.scripts]
+agentctl = "agentplatform.cli.main:app"
+agent-platform = "agentplatform.cli.main:app"
+
+[project.urls]
+Documentation = "https://github.com/example/agentplatform/tree/main/docs"
+
+[tool.hatch.version]
+path = "src/agentplatform/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentplatform"]
@@ -34,14 +73,25 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
+# A pragmatic senior-level default set: pyflakes/pycodestyle, imports, bugbear,
+# pyupgrade, simplify, and a few quality rules.
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # asserts are expected in tests
 
 [tool.mypy]
+# Strict-but-practical baseline: meaningful checks without making an early-stage
+# package painful. Tightened toward full strictness as the codebase grows.
 python_version = "3.11"
-strict = true
+check_untyped_defs = true
+warn_redundant_casts = true
 warn_unused_ignores = true
+warn_unused_configs = true
+no_implicit_optional = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+asyncio_mode = "auto"

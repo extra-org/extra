@@ -144,17 +144,52 @@ This repository is **agent-first**. If you are an AI coding agent:
 
 ## 10. Development setup
 
-> Requires Python 3.11+. Tooling: `ruff`, `mypy`, `pytest` (configured in
-> `pyproject.toml`). Early in the foundation phase some commands are no-ops or
-> placeholders; this is expected and documented in the task files.
+> Requires **Python 3.11+**. The project uses a `src/` layout with package
+> `agentplatform` and is configured via `pyproject.toml` (hatchling build;
+> `ruff`, `mypy`, `pytest` for tooling). Only a placeholder CLI (`agentctl version`)
+> exists today — product features are not implemented yet.
+
+### 1. Create and activate a virtual environment
 
 ```bash
-make install   # create/refresh the dev environment
-make format     # auto-format
-make lint       # ruff + mypy
-make test       # pytest
-make check      # format-check + lint + test (must pass before finishing a task)
+python3 -m venv .venv          # create the venv (.venv/ is git-ignored)
+source .venv/bin/activate      # macOS/Linux (zsh/bash)
+# .venv\Scripts\activate       # Windows (PowerShell: .venv\Scripts\Activate.ps1)
 ```
+
+### 2. Install the project (editable) with dev dependencies
+
+```bash
+make install                   # runs: pip install -e ".[dev]"
+```
+
+### 3. Verify
+
+```bash
+which python                   # → <repo>/.venv/bin/python
+agentctl version               # → 0.0.0  (console script; alias: agent-platform)
+make check                     # lint (ruff) + typecheck (mypy) + test (pytest)
+```
+
+### Everyday commands
+
+```bash
+make format      # auto-format (ruff format)
+make lint        # lint (ruff check)
+make typecheck   # type-check (mypy)
+make test        # run tests (pytest)
+make check       # lint + typecheck + test (run before finishing a task)
+```
+
+Leave the environment with `deactivate`. For a clean rebuild:
+`rm -rf .venv && python3 -m venv .venv && source .venv/bin/activate && make install`.
+
+### IDE setup (PyCharm / VS Code)
+
+Point your editor's Python interpreter at `<repo>/.venv/bin/python` so it resolves
+the editable install. In PyCharm you may also mark `src/` as a *Sources Root*.
+This clears any "unresolved reference `agentplatform`" warning (a `src/`-layout
+indexing quirk, not a code error).
 
 ## 11. Roadmap
 
