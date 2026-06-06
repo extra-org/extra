@@ -16,6 +16,9 @@ This folder contains only Claude-specific **tool configuration**:
 - `settings.json` — shared, conservative permissions for Claude Code.
 
 Local/private config (`CLAUDE.local.md`, `.claude/settings.local.json`) is
-git-ignored. If Claude Code needs per-skill `SKILL.md` directories or
-`.claude/agents/` definitions in the future, generate **thin adapters that
-reference `.ai/`** — never copy the content.
+git-ignored.
+
+Generated Claude skills live under `.claude/skills/<name>/SKILL.md`.
+Regenerate them with `make sync-skills` after editing `.ai/skills/`. These files
+contain the full skill content from `.ai/skills/<name>.md` — do not edit them
+directly.

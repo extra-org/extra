@@ -292,9 +292,9 @@ This repository is prepared for **Claude Code**. See
 - **`CLAUDE.md` is the project entrypoint** Claude Code reads first. It mirrors
   this manual's rules and points to `.ai/`; if the two ever disagree,
   **`AGENTS.md` wins**.
-- **Skills are not duplicated under `.claude/`.** `.claude/skills/` contains
-  **thin pointer files only** — one per `.ai/skills/<name>.md`, each containing
-  a single line that reads and applies the source skill. No logic lives there.
+- **Skills are not edited under `.claude/`.** `.claude/skills/<name>/SKILL.md`
+  contains **generated full skill copies** — produced by `make sync-skills` from
+  `.ai/skills/<name>.md`. Edit the canonical `.ai/` file, then regenerate.
   `.ai/` remains the single source of truth (see §5). `.claude/` otherwise holds
   only `settings.json` (tool permissions) and a thin `README.md` that points to `.ai/`.
 - **Role/persona definitions** (`architect`, `code-reviewer`, `test-engineer`,

@@ -1,7 +1,0 @@
----
-name: testing
-description: How to write and run fast, deterministic, behavior-focused pytest tests that never touch real external systems. Use whenever adding or changing behavior, or fixing a bug.
-generated: true
----
-
-Read and apply `.ai/skills/testing.md`.

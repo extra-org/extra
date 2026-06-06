@@ -22,6 +22,8 @@ CLAUDE.local.md
 # .cursor/rules/*.mdc (skill adapters only — project.mdc is committed manually)
 # .codex/skills/
 
+tests/_sync_tmp/
+
 # =========================
 # Environment variables / secrets
 # =========================
