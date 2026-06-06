@@ -1,0 +1,76 @@
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE / Editors
+# =========================
+.idea/
+.vscode/
+*.iml
+
+# =========================
+# Environment variables / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# =========================
+# Node / React / Frontend
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+.next/
+vite/dist/
+coverage/
+
+# =========================
+# Java / Maven / Gradle
+# =========================
+target/
+.gradle/
+build/
+out/
+
+# =========================
+# Docker / local runtime files
+# =========================
+docker-compose.override.yml
+
+# =========================
+# Temporary files
+# =========================
+tmp/
+temp/
+*.tmp
