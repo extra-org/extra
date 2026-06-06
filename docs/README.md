@@ -24,6 +24,7 @@ codebase. Read them before changing anything they cover:
 - [0002 — YAML is compiled, not executed directly](adr/0002-yaml-is-compiled-not-executed-directly.md)
 - [0003 — Client-specific logic lives in the sidecar](adr/0003-client-specific-logic-lives-in-sidecar.md)
 - [0004 — Prompts are templates rendered per request](adr/0004-prompts-are-templates-rendered-per-request.md)
+- [0005 — Prompt templates are rendered per request using resolved context](adr/0005-prompt-rendering-and-context-resolution.md)
 
 ## Relationship to other directories
 

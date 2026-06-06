@@ -4,7 +4,14 @@ This document defines the **client-owned sidecar** model. It is a design
 contract; no client and no runtime caller are implemented yet (sidecar work is
 task `0006`).
 
-→ See [ADR 0003](adr/0003-client-specific-logic-lives-in-sidecar.md).
+→ See [ADR 0003](adr/0003-client-specific-logic-lives-in-sidecar.md) and
+[ADR 0005](adr/0005-prompt-rendering-and-context-resolution.md).
+
+The sidecar is the **enterprise form of the resolver model**: an external,
+client-owned service that resolves identity, context, permissions, and tool
+policy through a standard contract, instead of (or alongside) in-process resolver
+packages/plugins. → See the resolver model in
+[ARCHITECTURE.md](ARCHITECTURE.md#resolver-model).
 
 ---
 
@@ -26,17 +33,20 @@ resolve who the caller is and what context/permissions apply.
 - authentication
 - authorization
 - identity resolution
-- tenant resolution
+- `tenant_id` / `user_id` resolution
 - `customer_code` resolution
+- roles and permissions
+- customer profile
 - third-party API calls
 - database lookups
-- business-specific context
+- business-specific / dynamic context
 - tool input policies
 
 ### The runtime is responsible for (generic):
 
 - calling the sidecar using the standard contract
-- mapping the sidecar response into the `ExecutionContext`
+- creating or **enriching** the `ExecutionContext` from the response
+- checking authorization (`allowed`)
 - using resolved context for prompt rendering
 - enforcing permissions
 - enforcing tool input policies

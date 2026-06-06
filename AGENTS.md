@@ -79,7 +79,10 @@ to ask for it. If a rule blocks you, stop and raise it.
 15. **Secrets must never be stored in YAML or prompt files.**
 16. **Every meaningful behavior must have tests.**
 
-See `docs/adr/` for the rationale behind the most important rules.
+See `docs/adr/` for the rationale behind the most important rules. In
+particular, **read
+[ADR 0005](docs/adr/0005-prompt-rendering-and-context-resolution.md) before
+changing prompt rendering, context resolver, sidecar, or tool-policy behavior.**
 
 ---
 
