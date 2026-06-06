@@ -12,6 +12,12 @@ Thumbs.db
 *.iml
 
 # =========================
+# Claude Code (local / private only — shared config IS committed)
+# =========================
+CLAUDE.local.md
+.claude/settings.local.json
+
+# =========================
 # Environment variables / secrets
 # =========================
 .env

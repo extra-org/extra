@@ -247,3 +247,34 @@ When you finish a task, respond using exactly this structure:
 - If a change would touch many files or alter architecture, **stop and propose
   it as its own task** instead of doing it inline.
 - When in doubt, do less and ask.
+
+---
+
+## Claude Code Integration
+
+This repository is prepared for **Claude Code**. See
+`docs/CLAUDE_CODE_WORKFLOW.md` for the full workflow.
+
+- **`CLAUDE.md` is the project entrypoint** Claude Code reads first. It mirrors
+  this manual's rules; if the two ever disagree, **`AGENTS.md` wins**.
+- **Claude-native skills live under `.claude/skills/<name>/SKILL.md`** — concise,
+  operational, with frontmatter. Each references the deeper, tool-agnostic
+  playbook in root **`skills/`** (the source of truth for *how*). Don't duplicate
+  content between them.
+- **Claude subagents live under `.claude/agents/`**: `architect` (planning/
+  review, read-only), `code-reviewer` (structured review), `test-engineer`
+  (pytest, never calls real services), `documentation-writer` (honest docs).
+- **Shared, conservative settings live in `.claude/settings.json`.** Local/private
+  config (`CLAUDE.local.md`, `.claude/settings.local.json`) is git-ignored.
+
+### Per-task rule
+
+For each task, **select the relevant skill(s) before editing**. If a task spans
+multiple areas, read all relevant skills first. In particular:
+
+- Task touches **architecture** → use `.claude/skills/architecture-review/SKILL.md`.
+- Task touches **tests** → use `.claude/skills/testing/SKILL.md`.
+- Task touches **Python code** → use `.claude/skills/senior-python-engineering/SKILL.md`.
+
+The full task→skill and area→skill mappings are in §5 (Skills System) and in
+`CLAUDE.md`.
