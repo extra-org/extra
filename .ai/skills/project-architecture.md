@@ -15,18 +15,18 @@ skill in the project's non-negotiable rules and layout.
 - `AGENTS.md`
 - `docs/ARCHITECTURE.md`
 - `docs/ROADMAP.md`
-- `docs/adr/` (all ADRs)
+- `docs/adr/`
 
 ## Architecture rules
 
-- The pipeline is one-directional: `agent.yml → validate → compile →
+- The pipeline is one-directional: `config.yml → validate → compile →
   CompiledAgentGraph → RuntimeEngine → ExecutionContext (per request) →
   execution → response + trace`.
 - YAML is declarative specification, never executable business logic.
 - Validate before compile; compile before run. The runtime sees only compiled,
   typed models — never raw YAML dicts.
 - `RuntimeEngine` is created once at startup; `ExecutionContext` is per request.
-- Client-specific auth/business logic lives in the sidecar, not the runtime.
+- Client-specific auth/business logic lives in customer plugins, not the runtime.
 - Prompts are templates rendered per request; security is enforced at the
   tool/data layer, not via prompt text.
 - Secrets never live in YAML or prompts.
@@ -38,7 +38,7 @@ skill in the project's non-negotiable rules and layout.
 - Keep each module to one architectural responsibility.
 - Respect layer boundaries: a layer depends only on the typed outputs of the
   layers before it.
-- Do not change public contracts (YAML schema, sidecar contract, API shape)
+- Do not change public contracts (YAML schema, plugin contracts, API shape)
   without an ADR and approval.
 - Stay within the current task's scope; propose new tasks for discovered work.
 
@@ -54,6 +54,6 @@ skill in the project's non-negotiable rules and layout.
 
 - Reading raw YAML in the runtime instead of compiled models.
 - Adding request state to `RuntimeEngine` or the compiled graph.
-- Putting client auth/business logic in the runtime.
+- Putting customer auth/business logic in the runtime.
 - Expanding scope beyond the current task or doing large uncontrolled rewrites.
 - Relying on prompt wording for security.

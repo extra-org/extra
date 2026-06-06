@@ -32,7 +32,7 @@ per-request rendering. Primary task: `tasks/0005-prompt-rendering.md`.
 - Cache the parsed template keyed by path + version; never cache rendered output.
 - Use strict rendering: undeclared/missing variables raise errors.
 - Pull values only from the `ExecutionContext` (which is populated by the
-  context resolver / sidecar), not from globals.
+  resolver plugins), not from globals.
 - Keep the source declaration (YAML) and resolution (runtime) separated.
 
 ## Validation checklist

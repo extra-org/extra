@@ -18,11 +18,11 @@ YAML is a **declarative specification**, not executable business logic. The
 pipeline is strictly:
 
 ```
-agent.yml → validate → compile → CompiledAgentGraph → runtime
+config.yml → validate → compile → CompiledAgentGraph → runtime
 ```
 
 - The YAML is **validated** first (schema, required fields, referential
-  integrity, hierarchy well-formedness).
+  integrity, graph well-formedness).
 - The validated spec is **compiled** into typed, immutable internal models.
 - The runtime operates **only** on the compiled models. It **never** reads or
   executes raw YAML dictionaries directly.

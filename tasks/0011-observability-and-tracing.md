@@ -2,8 +2,8 @@
 
 ## Goal
 
-Produce a structured, per-request trace covering routing, sidecar calls,
-context resolution, prompt rendering, and tool calls, with secrets redacted, and
+Produce a structured, per-request trace covering routing, access plugin checks,
+resolver context, prompt rendering, and tool calls, with secrets redacted, and
 expose it for inspection/export.
 
 ## Context
@@ -18,7 +18,7 @@ all layers contribute to it, and adds export.
 ## Scope
 
 - Define a structured trace schema (events/spans with timing and outcomes).
-- Ensure routing, sidecar, context, prompts, and tools emit trace events.
+- Ensure routing, access, resolver context, prompts, and tools emit trace events.
 - Provide an export/serialization path (e.g. JSON; optionally OpenTelemetry).
 
 ## Files allowed to change
@@ -30,7 +30,7 @@ all layers contribute to it, and adds export.
 ## Requirements
 
 - Trace is per-request, attached to the `ExecutionContext`.
-- Records: routing decisions, sidecar phase/decision (`allowed`/`reason`),
+- Records: routing decisions, access decisions (`allowed`/`reason`),
   resolved context keys (values redacted where sensitive), prompt render events,
   tool calls (final args redacted as needed, allow/deny outcomes).
 - **Secrets/tokens are redacted** everywhere in the trace.
@@ -40,7 +40,7 @@ all layers contribute to it, and adds export.
 ## Out of scope
 
 - Standing up external observability backends/dashboards.
-- Changing core runtime/sidecar/tool behavior beyond emitting events.
+- Changing core runtime/plugin/tool behavior beyond emitting events.
 
 ## Acceptance criteria
 

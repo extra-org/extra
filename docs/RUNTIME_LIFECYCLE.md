@@ -16,10 +16,10 @@ most important rule in this repository lives here:
 ### Startup (once per process)
 
 ```
-load agent.yml
+load config.yml
   → validate
   → compile → CompiledAgentGraph (immutable)
-  → construct RuntimeEngine(compiled_graph, providers, tool registry, sidecar client, ...)
+  → construct RuntimeEngine(compiled_graph, providers, plugin registry, MCP manager, ...)
 ```
 
 The `RuntimeEngine` and the `CompiledAgentGraph` are built **once** and shared,
@@ -32,13 +32,12 @@ happens here — not on the request path.
 ```
 request arrives
   → create ExecutionContext(request_id, request data, trace)
-  → [optional] pre-routing sidecar call → populate context
-  → route through hierarchy
-  → [optional] pre-agent sidecar call → populate context
-  → resolve context (assemble values from declared sources)
+  → filter protected nodes through access plugin
+  → route through graph
+  → resolve prompt variables through resolver plugins
   → render prompts (per request)
-  → execute agent(s)
-  → enforce tool permissions on each tool call
+  → execute orchestrator/agent
+  → call configured tool plugins/MCP servers as needed
   → finalize response + trace
 ```
 
@@ -53,8 +52,8 @@ Everything that varies between requests lives on the `ExecutionContext`.
   - the `CompiledAgentGraph`
   - the prompt template loader (raw-template cache)
   - the prompt renderer
-  - the resolver registry
-  - the sidecar client
+  - the resolver plugin registry
+  - the access plugin adapter
   - the tool registry
   - the MCP manager
   - the LLM provider registry
@@ -79,18 +78,16 @@ What does **not** belong on `RuntimeEngine`:
 - **Carries everything request-scoped**:
   - `request_id`
   - `message`
-  - `tenant_id`, `user_id`, `session_id`
-  - `identity`
-  - `roles`, `permissions`
-  - `customer_code`
+  - request headers and request data
+  - optional identity/context derived by plugins
   - resolved context values
-  - the selected agent path
+  - the selected node path
   - rendered prompt values
   - temporary tool results
   - trace events
   - errors
 - **Passed explicitly** down through routing, context resolution, prompt
-  rendering, and tool execution.
+  rendering, plugin calls, and tool execution.
 - **Discarded** when the request completes.
 
 > **Simple rule:** `RuntimeEngine` = *how the system works*;

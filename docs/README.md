@@ -22,10 +22,10 @@ codebase. Read them before changing anything they cover:
 
 - [0001 — RuntimeEngine created once](adr/0001-runtime-engine-created-once.md)
 - [0002 — YAML is compiled, not executed directly](adr/0002-yaml-is-compiled-not-executed-directly.md)
-- [0003 — Client-specific logic lives in the sidecar](adr/0003-client-specific-logic-lives-in-sidecar.md)
+- [0003 — Client-specific logic lives in plugins](adr/0003-client-specific-logic-lives-in-sidecar.md)
 - [0004 — Prompts are templates rendered per request](adr/0004-prompts-are-templates-rendered-per-request.md)
 - [0005 — Prompt templates are rendered per request using resolved context](adr/0005-prompt-rendering-and-context-resolution.md)
-- [0006 — Reusable agent definitions and hierarchy instances](adr/0006-reusable-agent-definitions-and-hierarchy-instances.md)
+- [0006 — Reusable node declarations and graph instances](adr/0006-reusable-agent-definitions-and-hierarchy-instances.md)
 - [0007 — Build/compile phase is separate from the runtime/execution phase](adr/0007-build-phase-separate-from-runtime-phase.md)
 
 ## Relationship to other directories

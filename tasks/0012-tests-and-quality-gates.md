@@ -9,7 +9,7 @@ reliable gate (lint, types, tests) suitable for CI.
 ## Context
 
 Tests accompany every prior task, but this task ensures the **whole pipeline**
-(validate → compile → runtime → prompts → sidecar → tools → trace) is covered and
+(validate → compile → runtime → prompts → plugins → tools → trace) is covered and
 that the quality gate is trustworthy.
 
 **Read first:** `AGENTS.md`, `.ai/skills/testing.md`,
@@ -17,10 +17,10 @@ that the quality gate is trustworthy.
 
 ## Scope
 
-- Add an end-to-end test exercising the full pipeline with a fake sidecar and
-  fake tools/MCP.
-- Add tests for the binding architecture rules (lifecycle, fail-closed,
-  non-overridable injected params, no rendered-prompt caching, redaction).
+- Add an end-to-end test exercising the full pipeline with fake resolver/access
+  plugins and fake tools/MCP.
+- Add tests for the binding architecture rules (lifecycle, access fail-closed,
+  no rendered-prompt caching, redaction).
 - Tighten `make check` and add a CI workflow that runs it.
 
 ## Files allowed to change
@@ -34,8 +34,8 @@ that the quality gate is trustworthy.
 
 - One end-to-end test: spec → validate → compile → build engine once → invoke a
   request → assert response + trace, using fakes (no real network/LLM/secrets).
-- Rule tests covering: engine-once / context-per-request, sidecar fail-closed,
-  injected params not overridable, rendered prompts not cached, secret redaction.
+- Rule tests covering: engine-once / context-per-request, access fail-closed,
+  rendered prompts not cached, secret redaction.
 - `make check` runs format-check + lint (ruff) + types (mypy) + tests (pytest)
   and fails on any error.
 - CI workflow runs `make install && make check` on push/PR.

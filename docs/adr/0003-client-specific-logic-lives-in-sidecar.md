@@ -1,4 +1,4 @@
-# ADR 0003: Client-specific logic lives in the sidecar
+# ADR 0003: Client-specific logic lives in plugins
 
 - **Status:** Accepted
 - **Date:** Foundation phase
@@ -7,50 +7,53 @@
 
 ## Context
 
-Every client authenticates differently, models tenants/customers differently,
-and stores business data differently. The platform must serve all of them
-without embedding any single client's auth or business rules into the generated
-runtime.
+Every customer authenticates differently, models users and permissions
+differently, and stores business data differently. The engine must remain
+generic while letting customers reuse their existing auth, RBAC, database, REST,
+and service libraries.
 
 ## Decision
 
-Client-specific authentication, authorization, identity/tenant/customer
-resolution, third-party calls, database lookups, business context, and tool
-input policies are handled by a **client-owned sidecar** that implements a
-standard contract (`POST /resolve-context`).
+Client-specific authentication, authorization, identity resolution, database
+lookups, REST calls, and business context live in customer Python plugins, not
+in the engine.
 
-The runtime is responsible only for: calling the sidecar at defined phases,
-mapping the response into the `ExecutionContext`, using resolved context for
-prompt rendering, enforcing permissions and tool input policies, and tracing the
-decision. It contains **no** client-specific logic.
+The engine supports a uniform plugin shape: class instances are created once,
+and methods receive request-scoped `ctx`.
+
+- Resolver plugins fill prompt variables before a node runs.
+- Tool plugins are exposed to the LLM at runtime.
+- The fixed access plugin at `plugins/access.py` controls protected nodes via
+  `AccessResolver.can_access(ctx, node_id) -> bool`.
+
+The runtime is responsible only for loading plugins, calling configured methods,
+mapping results into request execution, fail-closed access filtering, and
+tracing. It contains no customer-specific logic.
 
 ## Consequences
 
 **Positive**
 
-- The runtime stays generic and reusable across clients.
-- Clients customize auth and business logic without forking or editing generated
-  runtime code.
-- A clear, testable contract boundary; the runtime can be tested against a fake
-  sidecar.
+- The runtime stays generic and reusable.
+- Customers can adopt the engine with existing Python service libraries.
+- There is one plugin shape to learn across resolvers, tools, and access.
+- Access control can hide protected nodes from routers before routing.
 
 **Negative / constraints**
 
-- A network hop and its failure modes; the runtime **fails closed** if the
-  sidecar is enabled but unavailable.
-- The contract must be versioned and stable; changes require an ADR.
+- Customer plugin code runs in-process and shares the engine language/runtime.
+- Plugin loading and dependency packaging need clear deployment support.
+- Stronger isolation may require a future sidecar option.
 
-## Alternatives considered
+## Alternatives Considered
 
-- **Built-in auth/business modules in the runtime:** forces one company's model
-  on everyone and bloats the runtime. Rejected.
-- **Plugin code loaded into the runtime process:** couples client code to the
-  runtime's language/lifecycle and weakens isolation. The sidecar (separate
-  service, standard contract) is preferred; an in-process plugin variant may be
-  revisited later but is not the default.
+- **Built-in auth/business modules in the runtime:** rejected because it bakes in
+  one customer's model.
+- **Sidecar-first extension:** useful for stronger isolation, but slower for MVP
+  adoption. It may return later behind an explicit schema/ADR.
 
 ## Enforcement
 
-- No client-specific auth/business code in any runtime module.
-- The runtime depends only on the sidecar contract types.
-- `allowed: false` blocks execution and is traced; sidecar failures fail closed.
+- No customer-specific auth/business code in runtime modules.
+- Protected access failures fail closed.
+- Resolver/tool/access plugin calls are traced with secrets redacted.

@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The platform turns a declarative `agent.yml` into a running agent system. Two
+The platform turns a declarative YAML config into a running agent system. Two
 fundamentally different kinds of work are involved: deciding whether a system is
 valid and building its structure (**build/compile**), and handling individual
 user requests against that structure (**runtime/execution**). A third concern —
@@ -21,18 +21,17 @@ unsafe under concurrency, hard to test, and impossible to reuse across clients.
 The project recognizes **three separated phases**, and they must not be collapsed:
 
 1. **Build / generation / compilation phase** — before serving requests: load,
-   validate (schema, references, prompt paths, tools, MCP servers, hierarchy,
-   reusable instances, resolver references, cycles, no hardcoded secrets), and
-   compile into a `CompiledAgentGraph`. Later, optionally generate resolver stubs
-   and deployment artifacts. **This phase does not execute user requests.**
+   validate (schema, references, prompt paths, tools, MCP servers, graph
+   topology, reusable instances, resolver references, cycles, no hardcoded
+   secrets), and compile into a `CompiledAgentGraph`. Later, optionally generate
+   deployment artifacts. **This phase does not execute user requests.**
 2. **Runtime / execution phase** — per request: create an `ExecutionContext`,
-   resolve identity/context (via resolvers/sidecar), route to an agent instance,
-   render prompts, execute, enforce tool permissions and injected parameters, and
-   return a response + trace.
+   filter protected nodes through the access plugin, resolve context through
+   resolver plugins, route to a node instance, render prompts, execute, call
+   tools/MCP as needed, and return a response + trace.
 3. **Client extension layer** — client-specific logic (auth, authorization,
-   `customer_code`/tenant/permission lookups, DB/API calls, business context,
-   tool input policies) lives in generated resolver functions, a client-owned
-   sidecar, or plugins — **never** hardcoded into the generated runtime.
+   DB/API calls, business context, and access decisions) lives in customer
+   plugins — **never** hardcoded into the generated runtime.
 
 ## Consequences
 
@@ -47,7 +46,7 @@ The project recognizes **three separated phases**, and they must not be collapse
   [ADR 0001](0001-runtime-engine-created-once.md) (engine built once),
   [ADR 0002](0002-yaml-is-compiled-not-executed-directly.md) (compile, don't
   execute YAML), and [ADR 0003](0003-client-specific-logic-lives-in-sidecar.md)
-  (client logic in sidecar/extensions).
+  (customer logic in plugins).
 
 ## Alternatives Considered
 

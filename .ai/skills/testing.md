@@ -23,7 +23,7 @@ that never touch real external systems.
 - `AGENTS.md`
 - `docs/DEVELOPMENT_WORKFLOW.md`
 - `pyproject.toml` (`[tool.pytest.ini_options]`)
-- The skill for the area under test (runtime, prompts, sidecar, tools, etc.).
+- The skill for the area under test (runtime, prompts, plugins, tools, etc.).
 
 ## Core Principles
 
@@ -41,14 +41,13 @@ that never touch real external systems.
 ## Process
 
 1. **Pick the category** (see below) for what you are testing.
-2. **Arrange with fixtures** for repeated setup (specs, compiled graphs, a fake
-   sidecar, fake tools). Use `@pytest.mark.parametrize` for input variations.
+2. **Arrange with fixtures** for repeated setup (specs, compiled graphs, fake
+   resolver/access plugins, fake tools). Use `@pytest.mark.parametrize` for input variations.
 3. **Mock external boundaries** (LLM/MCP/DB/HTTP) at the adapter seam, not deep
    inside.
 4. **Write behavior assertions:** given input, assert observable output/effects.
 5. **Cover negatives and security:** invalid YAML/validation errors, missing
-   required prompt variables, denied permissions, sidecar `allowed: false`,
-   non-overridable injected params.
+   required prompt variables, denied protected-node access, plugin errors.
 6. **Run** `make test` (and `make check` for the full gate). Fix failures.
 
 ## Testing categories (use the right one)
@@ -56,14 +55,14 @@ that never touch real external systems.
 - **Unit tests** — a single function/class via its public interface.
 - **Integration tests** — multiple layers together (e.g. validate → compile →
   run) with fakes; only when requested.
-- **Contract tests** — verify the sidecar `/resolve-context` request/response
-  and the YAML schema match `docs/`; catch drift early.
-- **Golden example tests** — a known `agent.yml` produces a known compiled
+- **Contract tests** — verify plugin contracts and the YAML schema match
+  `docs/`; catch drift early.
+- **Golden example tests** — a known YAML config produces a known compiled
   graph / rendered prompt; update goldens deliberately.
 - **Negative tests** — invalid specs, missing variables, denied access must
   fail clearly with the right error.
-- **Security tests** — permission enforcement, injected params can't be
-  overridden, secrets redacted, sidecar fail-closed.
+- **Security tests** — protected access fail-closed, secrets redacted, no
+  request-state leakage.
 
 ## Example pytest structure (illustrative, not product tests)
 

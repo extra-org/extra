@@ -1,25 +1,25 @@
-# Declarative Agent Platform
+# Agent Engine
 
-> A declarative platform for building AI agent systems. Describe your agents in
-> YAML; the platform validates, compiles, and runs them through a long-lived
-> runtime with dynamic prompts, tools/MCP, client-owned context resolution, and
-> execution tracing.
+> A declarative Python engine for hierarchical multi-agent systems. Describe
+> orchestrators, agents, prompts, resolvers, tools, MCP servers, and graph
+> topology in YAML; the engine validates, compiles, and runs that system through
+> a long-lived runtime.
 
 **Status: 🚧 Repository foundation phase.** This repository currently contains
 documentation, architecture decisions, agent skills, and ordered implementation
-tasks. **The runtime, YAML parser, compiler, sidecar client, MCP client, and
-API are not implemented yet.** Nothing below describing the runtime is working
+tasks. **The runtime, YAML parser, compiler, plugin loader, MCP client, and API
+are not implemented yet.** Nothing below describing the runtime is working
 software — it describes the intended design that future work will build.
 
 ---
 
 ## 1. What this is
 
-A platform that turns a declarative YAML description of an agent system into a
-running, traceable, multi-agent application. You declare *what* exists (LLM
-providers, MCP servers, tools, agents, prompts) and *how* it is structured (a
-nested agent hierarchy), and the platform handles validation, compilation, and
-execution.
+A platform that turns a declarative YAML description into a running,
+traceable, multi-agent application. You declare *what* exists (MCP servers,
+tools, resolvers, orchestrators, agents, prompts) and *how it is connected*
+(`graph` indentation), and the engine handles validation, compilation, routing,
+prompt rendering, plugin calls, MCP access, and execution.
 
 ## 2. Why it exists
 
@@ -31,12 +31,14 @@ specification** of their system rather than its mechanics.
 
 ## 3. Vision
 
-- A single `agent.yml` fully describes an agent system.
+- A single YAML file fully describes an agent system.
 - The specification is **validated** and **compiled** into a typed agent graph.
 - A **long-lived runtime** executes requests against that graph.
-- **Prompts are templates** rendered per request from dynamic context.
-- **Client-specific auth and business context** live in a client-owned
-  **sidecar**, not in generated runtime code.
+- **Prompts are files** rendered per request from resolver values.
+- **Customer-specific logic** lives in customer Python plugins, not in the
+  generic engine.
+- The engine is **stateless with respect to conversation**: callers send a
+  complete conversation each invocation.
 - Every request produces a **trace** for observability and debugging.
 
 ## 4. Current status
@@ -53,7 +55,7 @@ Repository foundation phase. See the [Roadmap](docs/ROADMAP.md) and the
 | Compiled agent graph      | ⏳ Planned (0003) |
 | Runtime engine            | ⏳ Planned (0004) |
 | Prompt rendering          | ⏳ Planned (0005) |
-| Sidecar context/auth      | ⏳ Planned (0006) |
+| Plugin context/access     | ⏳ Planned (0006) |
 | Tools & MCP               | ⏳ Planned (0007) |
 | CLI / API / Docker        | ⏳ Planned (0008–0010) |
 | Observability             | ⏳ Planned (0011) |
@@ -61,77 +63,86 @@ Repository foundation phase. See the [Roadmap](docs/ROADMAP.md) and the
 ## 5. Planned architecture
 
 ```
-agent.yml → validate → compile → CompiledAgentGraph → RuntimeEngine
-          → ExecutionContext (per request) → recursive execution → response + trace
+config.yml → validate → compile → CompiledAgentGraph → RuntimeEngine
+           → ExecutionContext (per request) → route graph → response + trace
 ```
 
 Layers: spec → validation → compiler → agent graph → runtime → prompt rendering
-→ context resolver → sidecar → MCP/tools → tool permissions → observability →
-API → CLI → deployment. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+→ plugin resolvers/access → MCP/tools → observability → API → CLI → deployment.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 **Key rule:** `RuntimeEngine` is created **once** at startup; `ExecutionContext`
 is created **per request**. See
 [ADR 0001](docs/adr/0001-runtime-engine-created-once.md).
 
-## 6. Example future YAML shape
+## 6. Example YAML shape
 
 This is the **intended** shape (not yet parsed by any code). See
 [docs/YAML_SPEC.md](docs/YAML_SPEC.md) for the full specification.
 
 ```yaml
-version: "1.0"
+system:
+  name: "Rami Levy AI System"
 
-app:
-  name: example-agent-system
+defaults:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
 
-runtime:
-  entrypoint: root_orchestrator
-  mode: monolith_runtime
+tools:
+  book_flight:
+    class: FlightTools
+    method: book_flight
 
-definitions:
-  llm_providers: {}
-  mcp_servers: {}
-  tools: {}
-  agents: {}
+resolvers:
+  current_date:
+    class: Resolvers
+    method: current_date
 
-hierarchy:
-  agent: root_orchestrator
-  children:
-    - agent: business_orchestrator
-      children:
-        - agent: invoice_agent
+orchestrators:
+  main_router:
+    description: "Routes the user by topic."
+    prompts:
+      orchestrator: "prompts/main_router/orchestrator.md"
 
-security:
-  sidecar:
-    enabled: true
+agents:
+  domestic_flights_agent:
+    description: "Search and book flights within the country."
+    prompts:
+      system: "prompts/domestic_flights/system.md"
+    resolvers: [current_date]
+    tools: [book_flight]
 
-observability: {}
-
-deployment: {}
+graph:
+  main_router:
+    domestic_flights_agent:
 ```
 
-`definitions` declares *what exists*; `hierarchy` declares the *visual nested
-structure* and routing relationships.
+Flat sections declare *what exists*; `graph` declares the runtime topology.
+See [examples/agents.yml](examples/agents.yml) and
+[examples/config.schema.json](examples/config.schema.json).
 
-## 7. How the sidecar model works (high level)
+## 7. How plugins and access work
 
-The generated runtime contains **no** client-specific authentication,
-authorization, or business-data lookup code. Instead, a client implements a
-standard **Context/Auth Sidecar** contract. Before routing and/or before agent
-execution, the runtime calls the sidecar (`POST /resolve-context`) to resolve
-identity, tenant, customer code, roles, permissions, dynamic context values, and
-tool input policies. The runtime maps the response into the `ExecutionContext`,
-enforces permissions, and traces the decision. See
+The engine contains **no** customer-specific authentication, authorization, or
+business-data lookup code. Customers provide Python plugins with a uniform
+class + method shape. Resolver plugins fill prompt variables before a node runs;
+tool plugins are exposed to the LLM at runtime.
+
+Authorization is opt-in. A node can set `protected: true`; if any protected node
+exists, the engine expects `plugins/access.py` with
+`AccessResolver.can_access(ctx, node_id) -> bool`. Denied protected nodes are
+hidden from routers before routing. See
 [docs/SIDECAR_CONTEXT_AUTH.md](docs/SIDECAR_CONTEXT_AUTH.md).
 
 ## 8. How prompts are rendered dynamically
 
 Prompt files are **templates**. Parsed templates may be cached, but values are
-resolved **per request** from request data, identity, sidecar context, system
-time, memory, tools, databases, APIs, or plugins. Fully-rendered prompts are
+resolved **per request** from request headers/data and plugin resolvers.
+Fully-rendered prompts are
 **never** cached globally, and missing required variables fail loudly. Prompt
-text is **not** a security boundary — enforcement happens at the tool/data
-layer. See [docs/PROMPT_RENDERING.md](docs/PROMPT_RENDERING.md).
+text is **not** a security boundary. See
+[docs/PROMPT_RENDERING.md](docs/PROMPT_RENDERING.md).
 
 ## 9. How future agents should work here
 
@@ -195,7 +206,7 @@ indexing quirk, not a code error).
 ## 11. Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan. In short:
-foundation → spec & validation → compiler → runtime → prompts → sidecar →
+ foundation → spec & validation → compiler → runtime → prompts → plugin access/context →
 tools/MCP → CLI/API → deployment → observability → quality gates.
 
 ## License

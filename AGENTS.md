@@ -11,9 +11,9 @@ with this file, this file wins — stop and ask for clarification.
 This repository is a **declarative platform for building AI agent systems**.
 
 Developers describe an agent system in YAML. The platform validates that YAML,
-compiles it into a typed internal agent graph, and runs it through a long-lived
-runtime that renders prompts, calls tools/MCP servers, resolves client-specific
-context through a sidecar, exposes an API, and produces execution traces.
+compiles it into a typed internal graph, and runs it through a long-lived
+runtime that renders prompt files, calls resolver/tool plugins and MCP servers,
+exposes an API, and produces execution traces.
 
 The product is **not built yet**. The repository is currently in the
 **foundation phase**: documentation, architecture decisions, agent skills, and
@@ -25,7 +25,7 @@ files in `tasks/`.
 ## 2. Core architecture pipeline
 
 ```
-agent.yml
+config.yml
   → validate          (schema + semantic validation)
   → compile           (typed internal models)
   → CompiledAgentGraph (immutable, built once)
@@ -40,24 +40,23 @@ Per-request flow:
 ```
 Incoming request
   → Security/Context Gate
-  → optional pre-routing sidecar call
   → RuntimeEngine
-  → route through hierarchy
-  → optional pre-agent sidecar call
-  → resolve context
+  → filter protected nodes through access plugin
+  → route through graph
+  → resolve prompt variables through resolver plugins
   → render prompts
-  → execute selected agent
-  → enforce tool permissions
+  → execute selected orchestrator/agent
+  → call configured tools/MCP as needed
   → return response + trace
 ```
 
 **Three separated phases (do not collapse them):** (1) **build/compile** —
-load, validate, and compile `agent.yml` into a `CompiledAgentGraph` *before*
+load, validate, and compile YAML into a `CompiledAgentGraph` *before*
 serving requests (never executes requests); (2) **runtime/execution** — per
-request, create an `ExecutionContext`, resolve context, route to an agent
-instance, render prompts, execute, enforce tool policy, return response + trace;
+request, create an `ExecutionContext`, filter protected nodes, route to a node
+instance, render prompts, execute, call tools/MCP, return response + trace;
 (3) **client extension** — client-specific auth/business logic lives in
-resolvers, a sidecar, or plugins, never in the generic runtime.
+plugins, never in the generic runtime.
 → See [ADR 0007](docs/adr/0007-build-phase-separate-from-runtime-phase.md).
 
 ---
@@ -79,10 +78,10 @@ to ask for it. If a rule blocks you, stop and raise it.
 10. **Prompt values are resolved dynamically per request.** Never cache a
     fully-rendered prompt globally.
 11. **Client-specific auth, authorization, and business context are handled
-    through a sidecar/plugin model**, not baked into the generated runtime.
-12. **Agents declare what they need** (context, permissions, tools). **The
-    runtime resolves and enforces** those needs.
-13. **Tools must enforce permissions and injected parameters.**
+    through plugins**, not baked into the generated runtime.
+12. **Nodes declare what they need** (resolvers, tools, MCPs). **The runtime
+    resolves and binds** those needs.
+13. **Protected nodes must fail closed** through the fixed access plugin.
 14. **Prompt text alone is not a security boundary.** Enforcement happens at the
     tool/data layer.
 15. **Secrets must never be stored in YAML or prompt files.**
@@ -91,12 +90,12 @@ to ask for it. If a rule blocks you, stop and raise it.
 See `docs/adr/` for the rationale behind the most important rules. In
 particular, **read
 [ADR 0005](docs/adr/0005-prompt-rendering-and-context-resolution.md) before
-changing prompt rendering, context resolver, sidecar, or tool-policy behavior**,
+changing prompt rendering or resolver behavior**,
 and **read
 [ADR 0006](docs/adr/0006-reusable-agent-definitions-and-hierarchy-instances.md)
-before changing how agent definitions, the hierarchy, the compiled graph, or
-agent execution work** (the runtime executes reusable *instances*, not
-definitions), and **read
+before changing how reusable node declarations, graph instances, or execution
+work** (the runtime executes compiled *instances*, not raw declarations), and
+**read
 [ADR 0007](docs/adr/0007-build-phase-separate-from-runtime-phase.md) before
 blurring the build, runtime, and client-extension phases.**
 
@@ -137,8 +136,8 @@ src/agentplatform/
 ├── graph/         ← CompiledAgentGraph + typed models
 ├── runtime/       ← RuntimeEngine + ExecutionContext
 ├── prompts/       ← template loading + rendering
-├── context/       ← context resolvers + sidecar client
-├── tools/         ← tool + MCP integration + permission enforcement
+├── context/       ← resolver plugins + access plugin integration
+├── tools/         ← tool plugin + MCP integration
 ├── observability/ ← tracing
 ├── api/           ← HTTP API
 └── cli/           ← command-line interface
@@ -193,7 +192,7 @@ first; then pick by the *kind* of task and the *area* of the system.
 | YAML schema, loading, validation           | `.ai/skills/yaml-schema.md`           |
 | RuntimeEngine, ExecutionContext, lifecycle | `.ai/skills/runtime-engine.md`        |
 | Prompt templates / rendering               | `.ai/skills/prompt-rendering.md`      |
-| Sidecar contract, context/auth resolution  | `.ai/skills/sidecar-auth-context.md`  |
+| Plugin context/access resolution           | `.ai/skills/sidecar-auth-context.md`  |
 | Tools, MCP servers, permissions            | `.ai/skills/mcp-tools.md`             |
 
 Each skill ends with an **Expected Final Report** (or validation checklist) —
@@ -213,7 +212,7 @@ apply it before declaring work done.
    note it and propose a new task — do not silently expand scope.
 
 Current order: `0001` foundation → `0002` YAML schema → `0003` compiled graph →
-`0004` runtime engine → `0005` prompts → `0006` sidecar → `0007` tools/MCP →
+`0004` runtime engine → `0005` prompts → `0006` plugin context/access → `0007` tools/MCP →
 `0008` CLI → `0009` API → `0010` Docker → `0011` observability → `0012` tests
 & quality gates.
 
@@ -232,8 +231,8 @@ Current order: `0001` foundation → `0002` YAML schema → `0003` compiled grap
 - **No invented/fake features.** Do not stub something to look done. If it is
   not implemented, say so.
 - **No secrets**, ever, in code, YAML, prompts, or fixtures.
-- **No client-specific business logic** in the runtime — that belongs in the
-  sidecar.
+- **No client-specific business logic** in the runtime — that belongs in
+  customer plugins.
 - **Tests accompany behavior.** New meaningful behavior ships with tests.
 
 ---
@@ -277,7 +276,7 @@ When you finish a task, respond using exactly this structure:
 - **Never** perform a sweeping rewrite of a module to "clean it up" as a side
   effect of another task.
 - **Never** reformat or move files outside your task's scope.
-- **Never** change public contracts (YAML schema, sidecar contract, API shape)
+- **Never** change public contracts (YAML schema, plugin contracts, API shape)
   without an ADR and explicit approval.
 - If a change would touch many files or alter architecture, **stop and propose
   it as its own task** instead of doing it inline.

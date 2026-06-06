@@ -1,55 +1,52 @@
 ---
 name: mcp-tools
-description: Working on tool definitions, MCP server connections, tool invocation, or the tool permission layer. Primary task is tasks/0007-mcp-tools-and-permissions.md.
+description: Working on Python plugin tools, MCP server connections, tool invocation, or tool tracing. Primary task is tasks/0007-mcp-tools-and-permissions.md.
 ---
 
 # Skill: MCP & Tools
 
 ## When to use this skill
 
-Use this when working on tool definitions, MCP server connections, tool
-invocation, or the tool permission layer. Primary task:
+Use this when working on Python plugin tools, MCP server connections, tool
+invocation, or tool tracing. Primary task:
 `tasks/0007-mcp-tools-and-permissions.md`.
 
 ## Files to read first
 
 - `AGENTS.md`
 - `docs/MCP_AND_TOOLS.md`
-- `docs/SIDECAR_CONTEXT_AUTH.md` (permissions + tool policy)
-- `docs/RUNTIME_LIFECYCLE.md` (connection lifetime)
+- `docs/RUNTIME_LIFECYCLE.md`
 
 ## Architecture rules
 
-- Tools enforce permissions and injected parameters at call time.
-- Injected/policy parameters cannot be overridden by model output.
-- Tool inputs are validated against the declared schema.
-- MCP connections are created once and shared; never per request.
-- Prompt text is not a security boundary — this layer is.
+- Resolver plugins run before a node; tool plugins are exposed to the LLM during
+  execution.
+- MCP clients are created once and shared; never per request.
+- Per-request data flows via `ExecutionContext` / `ctx`.
+- Prompt text is not a security boundary.
 - Secrets never live in YAML; they are redacted in traces.
 
 ## Implementation rules
 
-- Implement tool registry, MCP integration, and enforcement in
-  `src/agentplatform/tools`.
-- At call time: check `requires_permissions` against `ExecutionContext`
-  permissions and sidecar `tool_policy`; block + trace on failure.
-- Force `injected_params` and `tool_policy.inject` into the final arguments.
-- Validate arguments against `input_schema` before invoking.
-- Hold MCP clients on the long-lived runtime; pass per-request data via context.
+- Implement tool registry and MCP integration in `src/agentplatform/tools`.
+- Load plugin classes once where possible.
+- Invoke configured class/method references with `ctx`.
+- Validate tool and MCP ids during validation/compilation; runtime should use
+  resolved bindings.
+- Hold MCP clients on the long-lived runtime.
 
 ## Validation checklist
 
-- [ ] Calls blocked without required permissions; blocks are traced.
-- [ ] Injected/policy params cannot be overridden by the model.
-- [ ] Inputs validated against the tool schema.
-- [ ] MCP connections created once and reused.
-- [ ] No secrets in YAML; secrets redacted in traces.
-- [ ] Tests cover allow, deny, injection, and schema-violation cases.
+- [ ] Tool plugin references load and invoke through the registry.
+- [ ] MCP connections are created once and reused.
+- [ ] Per-request context does not leak through shared state.
+- [ ] Tool/MCP calls are traced with redaction.
+- [ ] Tests cover success and failure with fakes.
 - [ ] `make check` passes.
 
 ## Common mistakes to avoid
 
-- Letting the model's arguments override injected/tenant values.
 - Recreating MCP connections per request.
-- Skipping input validation.
-- Relying on the prompt to restrict tool usage.
+- Treating resolvers as tools or tools as resolvers.
+- Skipping trace redaction.
+- Relying on prompt wording for enforcement.

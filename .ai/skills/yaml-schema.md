@@ -7,44 +7,43 @@ description: Loading agent.yml, defining schema models, and validating the speci
 
 ## When to use this skill
 
-Use this when working on loading `agent.yml`, defining schema models, or
-validating the specification (definitions, hierarchy, security, etc.). Primary
-task: `tasks/0002-yaml-schema-and-validation.md`.
+Use this when working on loading YAML configs, defining schema models, or
+validating the Agent Engine specification. Primary task:
+`tasks/0002-yaml-schema-and-validation.md`.
 
 ## Files to read first
 
 - `AGENTS.md`
 - `docs/YAML_SPEC.md`
+- `examples/agents.yml`
+- `examples/config.schema.json`
 - `docs/adr/0002-yaml-is-compiled-not-executed-directly.md`
-- `docs/ARCHITECTURE.md` (spec + validation layers)
 
 ## Architecture rules
 
-- YAML is declarative; it is data, never code. Never `eval`/execute spec values.
-- The spec has two halves: `definitions` (what exists) and `hierarchy` (how it
-  is arranged). Keep them distinct.
-- Validation must happen **before** compilation. Downstream layers trust only
-  validated specs.
-- Secrets are never values in YAML — only references (e.g. env var names).
+- YAML is declarative data, never code.
+- The spec has two halves: flat declarations and `graph` topology.
+- Validation must happen before compilation.
+- Runtime layers consume only validated/compiled models, never raw YAML dicts.
+- Secrets are never values in YAML.
 
 ## Implementation rules
 
-- Define typed schema models (e.g. pydantic/dataclasses) in `src/agentplatform/spec`.
-- Validation belongs in `src/agentplatform/validation` and should report
-  **all** errors with clear, located messages (not just the first).
-- Enforce: required top-level keys; ids referenced in `hierarchy` exist in
-  `definitions.agents`; single root matching `runtime.entrypoint`; no cycles;
-  referenced providers/tools/MCP servers exist; routing metadata is declarative.
-- Keep schema and validation separate from the compiler (that is task 0003).
-- Do not implement runtime behavior here.
+- Define typed schema models in `src/agentplatform/spec`.
+- Validation belongs in `src/agentplatform/validation`.
+- Report all validation errors with useful locations.
+- Enforce: required `system` and `graph`; one graph root; graph ids exist in
+  `orchestrators` or `agents`; no cycles; referenced resolvers/tools/MCPs exist;
+  orchestrators have `prompts.orchestrator`; model overrides are complete;
+  protected nodes require the access plugin at startup.
+- Keep schema/validation separate from the compiler.
 
 ## Validation checklist
 
-- [ ] Schema models cover the keys in `docs/YAML_SPEC.md`.
-- [ ] Validator catches missing keys, dangling references, multiple/missing
-      roots, and cycles.
-- [ ] Errors are structured and human-readable.
-- [ ] No secrets accepted as literal values (only references).
+- [ ] Schema models cover `docs/YAML_SPEC.md`.
+- [ ] `examples/agents.yml` validates successfully.
+- [ ] Dangling references, missing/multiple roots, and cycles fail clearly.
+- [ ] Unknown keys and hardcoded secrets are rejected.
 - [ ] Tests cover valid and invalid specs.
 - [ ] `make check` passes.
 
@@ -52,6 +51,5 @@ task: `tasks/0002-yaml-schema-and-validation.md`.
 
 - Mixing validation with compilation or runtime logic.
 - Failing fast on the first error instead of collecting all errors.
-- Allowing executable expressions in routing/condition fields.
-- Accepting hardcoded secrets in the spec.
+- Reintroducing the old `definitions` / `hierarchy` shape.
 - Letting unknown/typo'd keys pass silently.

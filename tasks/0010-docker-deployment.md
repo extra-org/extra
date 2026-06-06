@@ -2,8 +2,8 @@
 
 ## Goal
 
-Package the API server as a container and provide a basic local deployment
-(API + a fake/example sidecar) for development, with no secrets baked in.
+Package the API server as a container/base image and provide a basic local
+deployment with fake/example plugins for development, with no secrets baked in.
 
 ## Context
 
@@ -11,12 +11,12 @@ Deployment is a late concern. This task provides a minimal, reproducible
 container and compose setup; it does not introduce production topology.
 
 **Read first:** `AGENTS.md`, `docs/ARCHITECTURE.md` (deployment + API layers),
-`docs/SIDECAR_CONTEXT_AUTH.md` (the sidecar runs as a separate service).
+`docs/SIDECAR_CONTEXT_AUTH.md` (plugin context/access).
 
 ## Scope
 
-- Add a `Dockerfile` for the API server.
-- Add a `docker-compose.yml` wiring the API and a placeholder/example sidecar.
+- Add a `Dockerfile` for the API server/base image.
+- Add a `docker-compose.yml` wiring the API with example plugin volume/config.
 - Document configuration via environment variables.
 
 ## Files allowed to change
@@ -30,22 +30,22 @@ container and compose setup; it does not introduce production topology.
 ## Requirements
 
 - The image builds and runs the API with the runtime created once at startup.
-- Configuration (provider keys, sidecar URL) comes from **environment
+- Configuration (provider keys, plugin paths, MCP URLs) comes from **environment
   variables**, never baked into the image or YAML.
-- `docker-compose up` starts the API and a sidecar placeholder for local dev.
+- `docker-compose up` starts the API with example/fake plugins for local dev.
 - `.dockerignore` excludes caches, `.git`, `.env`, and build artifacts.
 - No secrets committed; `.env.example` documents required variables (no values).
 
 ## Out of scope
 
 - Production orchestration (Kubernetes, scaling, TLS termination).
-- A real client sidecar implementation.
+- Real customer plugin implementations.
 - Observability backends (task 0011).
 
 ## Acceptance criteria
 
 - [ ] `docker build` produces a runnable image.
-- [ ] `docker-compose up` starts API + sidecar placeholder.
+- [ ] `docker-compose up` starts API + example/fake plugins.
 - [ ] All config via env vars; no secrets in image, YAML, or compose file.
 - [ ] `.dockerignore` excludes the right paths.
 - [ ] `.env.example` lists required variables without values.

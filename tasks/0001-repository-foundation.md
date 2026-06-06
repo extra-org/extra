@@ -44,7 +44,7 @@ on.
 
 ## Out of scope
 
-- YAML loading, validation, compilation, runtime, prompts, sidecar, tools, CLI,
+- YAML loading, validation, compilation, runtime, prompts, plugins, tools, CLI,
   API (later tasks).
 - Any business logic or feature behavior.
 

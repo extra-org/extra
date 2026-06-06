@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-engine.dev/schemas/config.schema.json",
+  "title": "Agent Engine Configuration",
+  "description": "Declarative configuration for a hierarchical multi-agent system. Declarations are flat; the runtime topology is expressed by indentation under `graph`. The engine is stateless with respect to conversation: it receives a full conversation and runs the graph.",
+  "type": "object",
+  "required": [
+    "system",
+    "graph"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "system": {
+      "type": "object",
+      "description": "Top-level metadata. If any node is marked `protected: true`, the engine expects plugins/access.py to exist with a class AccessResolver implementing can_access(ctx, node_id) -> bool. No declaration is needed in YAML; the contract is fixed and the engine discovers it automatically.",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable name of the agent system.",
+          "minLength": 1
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "System-wide default values inherited by nodes that do not override them.",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/model",
+          "description": "Default model configuration. A node may override this, but overrides are FULL REPLACEMENT, not a merge: if a node defines `model`, it must define all required model fields."
+        }
+      }
+    },
+    "mcps": {
+      "type": "object",
+      "description": "Declarations of MCP servers. Each MCP can be referenced by multiple agents. Tools are discovered from the server automatically; only the URL is declared here.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Endpoint of the MCP server (e.g. an SSE URL)."
+          }
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "description": "Declarations of tools. A tool is a Python plugin method exposed to the LLM and invoked by the LLM at runtime (consumes tokens). Each declaration references a class + method in the customer's plugins. Tools are the runtime-decision counterpart to resolvers.",
+      "additionalProperties": {
+        "$ref": "#/$defs/pluginRef"
+      }
+    },
+    "resolvers": {
+      "type": "object",
+      "description": "Declarations of resolvers. A resolver is a Python plugin method that fills a {{variable}} in a prompt BEFORE the node runs. It is deterministic, runs without the LLM, and consumes no tokens. The method receives a `ctx` argument (built by the engine from request headers and other request data) and returns the value for the variable. The declaration key is the variable name used as {{key}} in prompt files.",
+      "additionalProperties": {
+        "$ref": "#/$defs/pluginRef"
+      }
+    },
+    "orchestrators": {
+      "type": "object",
+      "description": "Declarations of orchestrator nodes (routers). An orchestrator decides which child node to route to based on its prompt and the children's descriptions. Orchestrators do not hold tools or mcps; their children in the graph are effectively their capabilities. Kept as a distinct type from agents for clarity and self-documentation of the YAML.",
+      "additionalProperties": {
+        "$ref": "#/$defs/orchestrator"
+      }
+    },
+    "agents": {
+      "type": "object",
+      "description": "Declarations of agent nodes (executors). An agent performs work: it runs an LLM with a system prompt, may call tools and MCP servers, and is typically a leaf in the graph.",
+      "additionalProperties": {
+        "$ref": "#/$defs/agent"
+      }
+    },
+    "graph": {
+      "$ref": "#/$defs/graphNode",
+      "description": "The runtime topology, expressed purely by indentation (nesting). A node's nested children are the nodes it can route to. A node with no children is a leaf (executor). The single top-level node is the entrypoint (inferred automatically; no explicit entrypoint field). Every key here MUST reference an id declared under `orchestrators` or `agents`. A node id MAY appear in multiple places to model a DAG (a node reachable from several parents) without duplicating its declaration."
+    }
+  },
+  "$defs": {
+    "pluginRef": {
+      "type": "object",
+      "description": "A reference to a Python plugin method. Plugins are always classes with an __init__ (for shared state such as db/rest/auth clients, built once and reused) and methods (one capability each). This class+method shape is uniform across tools, resolvers, and access_resolver.",
+      "required": [
+        "class",
+        "method"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "type": "string",
+          "description": "Name of the plugin class defined in the customer's plugins directory.",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string",
+          "description": "Name of the method on the class that implements this capability.",
+          "minLength": 1
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "description": "A complete model configuration. Used as a default and as a full-replacement override on a node.",
+      "required": [
+        "provider",
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Model provider identifier (e.g. anthropic, openai)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Model name/id for the provider."
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Sampling temperature. Optional; provider default applies if omitted."
+        }
+      }
+    },
+    "orchestrator": {
+      "type": "object",
+      "description": "An orchestrator (router) node declaration.",
+      "required": [
+        "description",
+        "prompts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable display name."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this node handles. Used by a parent router to decide whether to route here. This is the routing criterion.",
+          "minLength": 1
+        },
+        "model": {
+          "$ref": "#/$defs/model",
+          "description": "Optional full-replacement model override. If present, fully replaces defaults.model (no field-level merge)."
+        },
+        "resolvers": {
+          "type": "array",
+          "description": "Resolver ids whose values are needed to fill {{variables}} in this node's prompts. Each id must be declared under top-level `resolvers`.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "protected": {
+          "type": "boolean",
+          "description": "If true, this node is access-restricted: before routing, the engine calls plugins/access.py AccessResolver.can_access(ctx, node_id); only if it returns true is the node kept as a routing candidate (otherwise it is hidden from the router entirely). Requires the fixed access plugin to exist when any protected node exists. If false or omitted, the node is never checked and is always reachable.",
+          "default": false
+        },
+        "prompts": {
+          "type": "object",
+          "description": "Prompt files for this orchestrator. The orchestrator prompt is mandatory.",
+          "required": [
+            "orchestrator"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "orchestrator": {
+              "type": "string",
+              "description": "MANDATORY. Routing instructions: which child handles what, how to choose, when to clarify. May contain {{variables}}.",
+              "minLength": 1
+            },
+            "system": {
+              "type": "string",
+              "description": "Optional. General system context/persona for this orchestrator. May contain {{variables}}.",
+              "minLength": 1
+            },
+            "user": {
+              "type": "string",
+              "description": "Optional. User prompt template wrapping the incoming input. May contain {{variables}}.",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "description": "An agent (executor) node declaration.",
+      "required": [
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable display name."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this agent does. Used by a parent router as the routing criterion.",
+          "minLength": 1
+        },
+        "model": {
+          "$ref": "#/$defs/model",
+          "description": "Optional full-replacement model override. If present, fully replaces defaults.model (no field-level merge)."
+        },
+        "resolvers": {
+          "type": "array",
+          "description": "Resolver ids needed to fill {{variables}} in this agent's prompts. Each must be declared under top-level `resolvers`.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "tools": {
+          "type": "array",
+          "description": "Tool ids this agent may call at runtime. Each must be declared under top-level `tools`.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "mcps": {
+          "type": "array",
+          "description": "MCP ids this agent connects to at runtime. Each must be declared under top-level `mcps`.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "protected": {
+          "type": "boolean",
+          "description": "If true, this node is access-restricted: before routing, the engine calls plugins/access.py AccessResolver.can_access(ctx, node_id); only if it returns true is the node kept as a routing candidate (otherwise it is hidden from the router entirely). Requires the fixed access plugin to exist when any protected node exists. If false or omitted, the node is never checked and is always reachable.",
+          "default": false
+        },
+        "prompts": {
+          "type": "object",
+          "description": "Prompt files for this node. All fields are optional for agents.",
+          "additionalProperties": false,
+          "properties": {
+            "system": {
+              "type": "string",
+              "description": "Optional. System prompt file path. General context/persona. May contain {{variables}}.",
+              "minLength": 1
+            },
+            "user": {
+              "type": "string",
+              "description": "Optional. User prompt template that wraps the incoming input. May contain {{variables}}.",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "graphNode": {
+      "type": "object",
+      "description": "A mapping whose keys are node ids (declared under orchestrators/agents) and whose values are either null (a leaf) or another graphNode (the node's children = its routing targets). Indentation expresses topology.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/graphNode"
+          }
+        ]
+      }
+    }
+  }
+}

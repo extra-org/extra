@@ -38,7 +38,7 @@ when the request ends.
 - Developers must never add request-scoped fields to `RuntimeEngine` or the
   compiled graph.
 - The compiled graph must be treated as immutable at runtime.
-- Reloading a changed `agent.yml` requires building a new engine (e.g. at
+- Reloading a changed YAML config requires building a new engine (e.g. at
   restart or via an explicit reload), not mutating the existing one.
 
 ## Alternatives considered

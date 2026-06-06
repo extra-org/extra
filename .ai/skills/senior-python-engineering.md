@@ -31,7 +31,7 @@ future agents can safely modify without fear.
   giant files.
 - **Explicit typed models.** Type everything; `mypy` runs strict.
   - Use **Pydantic** for data crossing a boundary that needs validation/parsing
-    (YAML spec models, sidecar/API payloads).
+    (YAML spec models, plugin/API payloads).
   - Use **dataclasses** (often frozen) for internal domain models that don't
     need runtime validation (e.g. compiled graph nodes). Choose intentionally,
     not at random.
@@ -42,7 +42,7 @@ future agents can safely modify without fear.
 - **Dependency injection over hidden globals.** Pass collaborators in; no
   module-level mutable singletons, and never mutable global request state.
 - **Adapters via Protocols/interfaces.** External integrations (LLM, MCP, DB,
-  sidecar) sit behind `typing.Protocol`/ABCs so they can be faked in tests.
+  plugins) sit behind `typing.Protocol`/ABCs so they can be faked in tests.
 - **Clear async boundaries.** Don't mix blocking I/O into async paths; keep
   async at the edges and be consistent within a module.
 - **Typed, actionable errors.** Define specific exception types; messages name

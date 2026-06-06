@@ -20,8 +20,7 @@ once at application startup (lifespan/startup hook), never per request.
   and builds the runtime at startup.
 - Implement an invocation endpoint that creates an `ExecutionContext` per request
   and returns the response and trace.
-- Include the Security/Context Gate entry point (delegating auth/context to the
-  sidecar layer from task 0006).
+- Include the plugin context/access entry point from task 0006.
 
 ## Files allowed to change
 
@@ -34,8 +33,8 @@ once at application startup (lifespan/startup hook), never per request.
 - The `RuntimeEngine` is created exactly once, at startup, and reused across
   requests.
 - Each request gets a fresh `ExecutionContext`; no request state on the engine.
-- The Security/Context Gate runs before routing; auth/context resolution is
-  delegated to the sidecar layer (no client-specific logic in the API).
+- Protected-node access filtering runs before routing; auth/context behavior is
+  delegated to customer plugins (no client-specific logic in the API).
 - A health endpoint and an invoke endpoint at minimum.
 - Errors return appropriate HTTP status codes; secrets are never returned.
 
@@ -43,14 +42,14 @@ once at application startup (lifespan/startup hook), never per request.
 
 - Deployment/packaging (task 0010).
 - Deep tracing/export (task 0011) beyond returning the basic trace.
-- Implementing sidecar/tool internals (reuse 0006/0007).
+- Implementing plugin/tool internals (reuse 0006/0007).
 
 ## Acceptance criteria
 
 - [ ] Engine built once at startup; verified not rebuilt per request.
 - [ ] Per-request `ExecutionContext`; no shared request state.
 - [ ] Invoke endpoint returns response + trace; health endpoint works.
-- [ ] Security/Context Gate delegates to the sidecar layer.
+- [ ] Protected-node access delegates to the plugin layer.
 - [ ] Error paths map to correct status codes; no secrets leaked.
 - [ ] Tests cover startup-once, a successful invoke, and a denied request.
 - [ ] `make check` passes.

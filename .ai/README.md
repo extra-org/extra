@@ -53,8 +53,8 @@ Area skills:
 | [yaml-schema](skills/yaml-schema.md)                         | YAML schema, loading, validation.           |
 | [runtime-engine](skills/runtime-engine.md)                   | RuntimeEngine, ExecutionContext, lifecycle. |
 | [prompt-rendering](skills/prompt-rendering.md)               | Prompt templates and rendering.             |
-| [sidecar-auth-context](skills/sidecar-auth-context.md)       | Sidecar contract, context/auth resolution.  |
-| [mcp-tools](skills/mcp-tools.md)                             | Tools, MCP servers, permission enforcement. |
+| [sidecar-auth-context](skills/sidecar-auth-context.md)       | Plugin context and protected-node access.   |
+| [mcp-tools](skills/mcp-tools.md)                             | Tool plugins and MCP servers.               |
 
 ### `roles/` — agent personas
 

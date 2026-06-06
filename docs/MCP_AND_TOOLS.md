@@ -1,117 +1,89 @@
 # MCP & Tools
 
-This document defines how agents use tools and MCP servers, and how the
-**tool permission layer** enforces safety. It is a design specification; tools
-and MCP work is task `0007`.
+This document defines how executor agents use Python plugin tools and MCP
+servers. Implementation is task `0007`.
 
 ---
 
-## Concepts
+## MCP Servers
 
-- **MCP server** — an external process/service (Model Context Protocol) that
-  exposes tools. Declared in `definitions.mcp_servers`.
-- **Tool** — a callable capability available to agents. A tool may be provided
-  by an MCP server or be built in. Declared in `definitions.tools`.
-- **Tool binding** — an agent lists the tool ids it may use. The runtime binds
-  these to actual callables at startup.
-
----
-
-## Declaring tools
+MCP servers are declared once and referenced by agents:
 
 ```yaml
-definitions:
-  mcp_servers:
-    billing_mcp:
-      transport: stdio
-      command: ["billing-mcp"]
+mcps:
+  flights_mcp:
+    url: "https://company.com/mcp/flights/sse"
 
-  tools:
-    get_invoice:
-      mcp_server: billing_mcp
-      description: "Fetch an invoice by id."
-      input_schema:
-        type: object
-        properties:
-          invoice_id: { type: string }
-        required: ["invoice_id"]
-      requires_permissions: ["invoice:read"]
-      input_policy:
-        inject:
-          customer_code: "{{ identity.customer_code }}"  # forced by the runtime, not the model
-        block_user_override:
-          - customer_code
+agents:
+  domestic_flights_agent:
+    description: "Search and book flights within the country."
+    mcps: [flights_mcp]
 ```
 
-> **Terminology.** `input_policy` is the **declarative** tool input policy in
-> YAML: `inject` (force trusted values) and `block_user_override` (parameters the
-> model/user may not set). At runtime the sidecar may additionally return a
-> `tool_policy` (allow/deny + injects) per
-> [SIDECAR_CONTEXT_AUTH.md](SIDECAR_CONTEXT_AUTH.md). Both are enforced at the
-> tool layer; the prompt is never the boundary.
+MCP servers may be implemented in any language. The engine connects to them from
+the long-lived runtime and exposes their discovered tools to configured agents.
 
-Agents opt in to tools:
+---
+
+## Python Plugin Tools
+
+Tools are Python plugin methods exposed to the LLM at runtime:
 
 ```yaml
-definitions:
-  agents:
-    invoice_agent:
-      tools: ["get_invoice"]
-      requires_permissions: ["invoice:read"]
+tools:
+  book_flight:
+    class: FlightTools
+    method: book_flight
+
+agents:
+  domestic_flights_agent:
+    description: "Search and book flights within the country."
+    tools: [book_flight]
 ```
 
----
+Plugin shape:
 
-## The tool permission layer (binding)
+```python
+class FlightTools:
+    def __init__(self):
+        ...
 
-Every tool call passes through enforcement **at call time**, using the resolved
-`ExecutionContext` (identity, permissions, tool policy from the sidecar):
+    def book_flight(self, ctx, **kwargs):
+        ...
+```
 
-1. **Permission check.** The caller must hold every permission in the tool's
-   `requires_permissions` and must not be denied by the sidecar's `tool_policy`.
-   Otherwise the call is **blocked** and traced.
-2. **Injected parameters.** `input_policy.inject` (and sidecar
-   `tool_policy.inject`) values are **forced** into the call, and
-   `input_policy.block_user_override` parameters cannot be set by the model/user.
-   The model's proposed arguments **cannot override** these. This is how tenant
-   isolation is guaranteed regardless of what the model "decides".
-3. **Input validation.** Arguments are validated against the tool's
-   `input_schema` before invocation.
-4. **Trace.** The decision, final arguments (redacted as needed), and result
-   status are recorded in the trace.
-
-> **Prompt text alone is not a security boundary.** A prompt asking the model to
-> "only access tenant 42" is not enforcement. The permission layer and injected
-> parameters are the enforcement. → See
-> [SIDECAR_CONTEXT_AUTH.md](SIDECAR_CONTEXT_AUTH.md).
+The engine loads plugin class instances once so customers can keep shared state
+such as database pools, REST clients, auth clients, or caches.
 
 ---
 
-## MCP connection lifecycle
+## Resolver vs. Tool Boundary
 
-- MCP connections/clients are set up **at startup** (or lazily but shared), held
-  by the long-lived runtime, and reused across requests.
-- They are **not** recreated per request. → See
-  [RUNTIME_LIFECYCLE.md](RUNTIME_LIFECYCLE.md).
-- Per-request data (identity, injected values) flows via the
-  `ExecutionContext`, not via shared connection state.
+| | Resolver | Tool |
+| --- | --- | --- |
+| Runs | Before the node runs | During LLM execution |
+| Chosen by | Engine | LLM |
+| Exposed to LLM | No | Yes |
+| Token cost | None | Yes |
+| Purpose | Fill prompt variables | Perform actions |
 
----
-
-## Secrets
-
-- MCP server credentials and tool API keys are **never** stored in YAML. Use
-  references (env var names) resolved at runtime.
-- Secrets are redacted in traces.
+Use a resolver for deterministic context such as `current_date`, `user_name`, or
+`subscription`. Use a tool for model-selected actions such as `book_flight` or
+`add_to_cart`.
 
 ---
 
-## Validation checklist (for tool/MCP changes)
+## Safety
 
-- [ ] Tool calls cannot proceed without required permissions.
-- [ ] Injected/policy parameters cannot be overridden by model output.
-- [ ] Tool inputs are validated against the declared schema.
-- [ ] MCP connections are created once and shared, not per request.
-- [ ] No secrets in YAML; secrets redacted in traces.
-- [ ] Blocked calls are traced with a reason.
-- [ ] `make check` passes.
+The current schema does not yet define per-tool permissions or input policies.
+For the MVP:
+
+- validate that every agent tool id exists in top-level `tools`;
+- validate that every agent MCP id exists in top-level `mcps`;
+- load plugin references explicitly by class and method;
+- pass request context through `ctx`;
+- redact secrets from traces;
+- keep prompt wording out of the enforcement path.
+
+Future per-tool access control should be added deliberately to the schema and
+docs before implementation.

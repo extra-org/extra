@@ -1,26 +1,25 @@
-# Task 0007 — MCP Tools & Permissions
+# Task 0007 — MCP Tools & Plugin Tools
 
 ## Goal
 
-Implement the tool registry, MCP server integration, and the **tool permission
-layer** that enforces permissions, injected parameters, and input validation at
-call time. Wire into the runtime's tool seam.
+Implement the tool registry, Python plugin tool invocation, and MCP server
+integration. Wire them into the runtime's tool seam.
 
 ## Context
 
-Tools enforce permissions and injected parameters; prompt text is not a security
-boundary. Connections are created once and shared. This task fills the tool seam
-from 0004 and uses context/tool policy from 0006.
+Tools are LLM-invoked runtime capabilities. Resolver plugins run before a node;
+tool plugins are exposed to executor agents during execution. MCP servers provide
+external tools and may be implemented in any language.
 
-**Read first:** `AGENTS.md`, `.ai/skills/mcp-tools.md`, `docs/MCP_AND_TOOLS.md`,
-`docs/SIDECAR_CONTEXT_AUTH.md` (permissions + tool policy).
+**Read first:** `AGENTS.md`, `.ai/skills/mcp-tools.md`,
+`docs/MCP_AND_TOOLS.md`, `docs/SIDECAR_CONTEXT_AUTH.md`.
 
 ## Scope
 
 - Implement a tool registry built at startup from the compiled graph.
-- Integrate MCP servers (connections created once, shared by the runtime).
-- Implement enforcement at call time: permission check, injected/policy params,
-  input-schema validation, and tracing.
+- Load Python plugin tool classes once and invoke configured methods.
+- Integrate MCP servers from `mcps` declarations.
+- Connect tool execution to the runtime seam and trace tool calls.
 
 ## Files allowed to change
 
@@ -30,28 +29,26 @@ from 0004 and uses context/tool policy from 0006.
 
 ## Requirements
 
-- A tool call is **blocked + traced** unless the caller holds every
-  `requires_permissions` and is not denied by sidecar `tool_policy`.
-- `injected_params` and `tool_policy.inject` are **forced** into final arguments
-  and **cannot** be overridden by model-proposed arguments.
-- Arguments are validated against the tool's `input_schema` before invocation.
+- Every agent tool id resolves to a declared tool plugin reference.
+- Tool plugin methods receive `ctx` and model-proposed arguments.
 - MCP connections/clients are created once and reused; per-request data flows via
   `ExecutionContext`.
-- No secrets in YAML; secrets redacted in traces.
+- Tool calls and MCP calls are traced with secrets redacted.
+- No secrets in YAML.
 
 ## Out of scope
 
+- Per-tool permissions/input policies unless the schema is extended first.
 - API/CLI surfaces (0008, 0009).
 - Deployment (0010), deep observability beyond basic tool-call tracing (0011).
 
 ## Acceptance criteria
 
-- [ ] Calls without required permissions are blocked and traced.
-- [ ] Injected/policy params cannot be overridden by the model.
-- [ ] Inputs validated against the declared schema.
-- [ ] MCP connections created once and shared.
-- [ ] No secrets in YAML; secrets redacted in traces.
-- [ ] Tests cover allow, deny, injection-override attempt, and schema violation.
+- [ ] Tool plugin references load and invoke through the registry.
+- [ ] MCP server declarations are resolved and clients are shared.
+- [ ] Per-request context is passed to tools without shared request state.
+- [ ] Tool/MCP calls are traced with redaction.
+- [ ] Tests cover plugin tool success/failure and MCP binding.
 - [ ] `make check` passes.
 
 ## Commands to run before finishing
@@ -62,5 +59,5 @@ make check
 
 ## Expected final report
 
-Use the AGENTS.md §9 format. Confirm enforcement happens at the tool layer (not
-the prompt) and injected values are non-overridable. Recommend task 0008 next.
+Use the AGENTS.md §9 format. Confirm tools are runtime capabilities, resolvers
+remain pre-node context, and task 0008 is recommended next.

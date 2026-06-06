@@ -38,8 +38,8 @@ Values are resolved per request. This task fills the prompt seam created in 0004
 
 ## Out of scope
 
-- Sourcing context values from sidecar/DB/API (that is the context resolver /
-  task 0006); here, render from whatever the `ExecutionContext` already holds.
+- Sourcing context values from resolver plugins/DB/API (that is task 0006);
+  here, render from whatever the `ExecutionContext` already holds.
 - Tool execution, API/CLI.
 
 ## Acceptance criteria

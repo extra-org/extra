@@ -15,7 +15,7 @@ whether an ADR is required.
 
 - A change touches more than one layer or moves logic between layers.
 - A change affects the runtime lifecycle, the YAML→graph pipeline, prompts,
-  the sidecar contract, or tool/MCP integration.
+  plugin contracts, or tool/MCP integration.
 - Reviewing whether a design respects the project's invariants.
 - Before approving anything that alters a public contract.
 
@@ -43,12 +43,12 @@ a new/updated ADR.
   state. No request state on the engine/graph.
 - **Prompt templates may be cached; rendered values are resolved per request.**
   No global cache of rendered prompts.
-- **Client-specific auth/context/business logic lives in the sidecar/plugin
+- **Client-specific auth/context/business logic lives in plugin
   boundary**, never in the runtime.
 - **Tool permissions are enforced outside prompts**, at the tool/data layer;
   injected params can't be overridden by the model.
 - **Agents declare needs; the runtime resolves and enforces** them.
-- **The sidecar contract stays generic** — no client-specific fields baked into
+- **Plugin contracts stay generic** — no client-specific fields baked into
   it.
 - **MCP/tool integrations go through adapters**, not directly into core logic.
 
@@ -62,7 +62,7 @@ a new/updated ADR.
    on long-lived objects; graph immutable.
 4. **Check boundaries.** No client/business logic in the runtime; external
    systems behind adapters; security enforced outside prompts.
-5. **Check contracts.** If the YAML schema, sidecar contract, or API shape
+5. **Check contracts.** If the YAML schema, plugin contracts, or API shape
    changes, require an ADR and assess compatibility.
 6. **Decide.** Conforms / needs redesign / needs an ADR. Record reasoning.
 
@@ -83,7 +83,7 @@ a new/updated ADR.
 - Letting the runtime read raw YAML or skip compilation.
 - Storing request state on `RuntimeEngine`/compiled graph for convenience.
 - Caching rendered prompts globally.
-- Slipping client auth/business rules into the runtime instead of the sidecar.
+- Slipping client auth/business rules into the runtime instead of plugins.
 - Calling MCP/LLM/DB directly from core logic instead of through an adapter.
 - Changing a contract silently without an ADR.
 

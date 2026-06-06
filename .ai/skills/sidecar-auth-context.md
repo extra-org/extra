@@ -1,59 +1,55 @@
 ---
 name: sidecar-auth-context
-description: Working on the sidecar client, the /resolve-context contract, mapping sidecar responses into ExecutionContext, or sidecar-driven permission enforcement. Primary task is tasks/0006-sidecar-auth-context.md.
+description: Working on resolver plugins, the fixed access plugin contract, mapping resolver outputs into ExecutionContext, or protected-node filtering. Primary task is tasks/0006-sidecar-auth-context.md.
 ---
 
-# Skill: Sidecar Auth & Context
+# Skill: Plugin Context & Access
 
 ## When to use this skill
 
-Use this when working on the sidecar client, the `/resolve-context` contract,
-mapping sidecar responses into `ExecutionContext`, or permission/tool-policy
-enforcement driven by the sidecar. Primary task:
-`tasks/0006-sidecar-auth-context.md`.
+Use this when working on resolver plugins, the fixed access plugin contract,
+mapping resolver outputs into `ExecutionContext`, or protected-node filtering.
+Primary task: `tasks/0006-sidecar-auth-context.md`.
 
 ## Files to read first
 
 - `AGENTS.md`
 - `docs/SIDECAR_CONTEXT_AUTH.md`
-- `docs/adr/0003-client-specific-logic-lives-in-sidecar.md`
-- `docs/ARCHITECTURE.md` (sidecar + context resolver layers)
+- `docs/ARCHITECTURE.md`
+- `docs/PROMPT_RENDERING.md`
 
 ## Architecture rules
 
-- The runtime contains **no** client-specific auth/business logic.
-- The runtime only: calls the sidecar, maps the response into
-  `ExecutionContext`, enforces permissions/tool policies, and traces decisions.
-- Two phases share one contract: `pre_routing` and `pre_agent`.
-- `allowed: false` blocks execution; sidecar failures **fail closed**.
+- The runtime contains no customer-specific auth/business logic.
+- Resolver plugins fill prompt variables before a node runs.
+- Tool plugins are separate and run during LLM execution.
+- Protected nodes are hidden from routers unless the access plugin allows them.
+- Access failures fail closed.
 - Secrets are redacted in traces.
 
 ## Implementation rules
 
-- Implement the client in `src/agentplatform/context` against the contract types
-  in `docs/SIDECAR_CONTEXT_AUTH.md`.
-- Build the request from agent-declared `required_context` /
-  `required_permissions`; do not invent client semantics.
-- Map `identity`, `permissions`, `context`, `tool_policy` onto the
+- Implement plugin integration in `src/agentplatform/context`.
+- Build `ctx` from request headers and request data.
+- Call resolver plugin methods declared in top-level `resolvers`.
+- If any node has `protected: true`, require `plugins/access.py` with
+  `AccessResolver.can_access(ctx, node_id) -> bool`.
+- Keep plugin instances shared where appropriate; keep request data on
   `ExecutionContext`.
-- Enforce `tool_policy.inject` so model output cannot override injected values.
-- Make the sidecar client a shared collaborator on the long-lived engine; pass
-  per-request data via `ExecutionContext`.
 
 ## Validation checklist
 
-- [ ] No client-specific logic in the runtime.
-- [ ] Request/response match the documented contract (or an ADR updates it).
-- [ ] `allowed: false` blocks and traces with `reason`.
-- [ ] Sidecar errors fail closed.
-- [ ] Injected/policy values cannot be overridden.
+- [ ] No customer-specific logic in the runtime.
+- [ ] Resolver outputs are request-scoped.
+- [ ] Protected nodes are filtered before routing.
+- [ ] Deny/error cases fail closed and are traced.
 - [ ] Secrets redacted in traces.
-- [ ] Tests use a fake sidecar covering allow/deny/error.
+- [ ] Tests use fake plugins covering allow/deny/error.
 - [ ] `make check` passes.
 
 ## Common mistakes to avoid
 
-- Implementing auth/tenant/business rules inside the runtime.
-- Failing open when the sidecar is unavailable.
-- Trusting model-proposed values over injected policy values.
+- Implementing auth/tenant/business rules inside the engine.
+- Failing open when access plugin raises.
+- Exposing resolver plugins to the LLM as tools.
 - Logging raw tokens/secrets in the trace.

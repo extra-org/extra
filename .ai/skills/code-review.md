@@ -33,7 +33,7 @@ nitpick syntax.
 - **Review architecture before syntax.** A clean diff in the wrong layer is
   still wrong.
 - **Boundaries are non-negotiable.** Validation, compilation, runtime, prompt
-  rendering, sidecar/context, and tools stay separated.
+  rendering, plugin context/access, and tools stay separated.
 - **Security is enforced outside prompts.** Prompt wording is never a boundary.
 - **Simplicity wins.** Reject unnecessary abstraction; prefer the smallest
   design that works.
@@ -61,7 +61,7 @@ nitpick syntax.
    implementation details.
 8. **Simplicity & abstractions.** Flag premature abstractions, clever code, and
    layers collapsed "for convenience".
-9. **Backward compatibility.** If a public contract (YAML schema, sidecar
+9. **Backward compatibility.** If a public contract (YAML schema, plugin
    contract, API shape) changed, require an ADR and check for breakage.
 10. **Write the structured report** (below).
 

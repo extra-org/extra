@@ -1,0 +1,109 @@
+# ============================================================
+# Example configuration for the Agent Engine.
+# Conforms to examples/config.schema.json.
+# ============================================================
+
+# ---- 1. META ----
+system:
+  name: "Rami Levy AI System"
+  # admin_agent is protected: true → engine expects plugins/access.py
+  # with AccessResolver.can_access(ctx, node_id) -> bool at boot
+
+# ---- DEFAULTS ----
+defaults:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+    temperature: 0.7
+
+# ---- 2. DECLARATIONS ----
+
+mcps:
+  flights_mcp:
+    url: "https://company.com/mcp/flights/sse"
+  super_mcp:
+    url: "https://company.com/mcp/super/sse"
+
+tools:
+  book_flight:
+    class: FlightTools
+    method: book_flight
+  add_to_cart:
+    class: SuperTools
+    method: add_to_cart
+
+resolvers:
+  current_date:
+    class: Resolvers
+    method: current_date
+  user_name:
+    class: Resolvers
+    method: user_name
+  subscription:
+    class: Resolvers
+    method: subscription
+
+orchestrators:
+  main_router:
+    name: "Main Router"
+    description: "Routes the user by topic: flights, supermarket, or admin."
+    prompts:
+      orchestrator: "prompts/main_router/orchestrator.md"   # mandatory
+      system:       "prompts/main_router/system.md"         # optional
+      # no user
+
+  flights_router:
+    name: "Flights Router"
+    description: "Routes flight requests to domestic or international handling."
+    prompts:
+      orchestrator: "prompts/flights_router/orchestrator.md"
+      system:       "prompts/flights_router/system.md"
+    model:
+      provider: anthropic
+      name: claude-haiku-4-5
+      temperature: 0.0
+
+agents:
+  domestic_flights_agent:
+    name: "Domestic Flights"
+    description: "Search and book flights within the country."
+    prompts:
+      system: "prompts/domestic_flights/system.md"
+      user:   "prompts/domestic_flights/user.md"
+    resolvers: [current_date, user_name]
+    tools: [book_flight]
+    mcps: [flights_mcp]
+
+  international_flights_agent:
+    name: "International Flights"
+    description: "Search and book flights abroad."
+    prompts:
+      system: "prompts/international_flights/system.md"
+    resolvers: [current_date, user_name]
+    tools: [book_flight]
+    mcps: [flights_mcp]
+
+  super_agent:
+    name: "Supermarket"
+    description: "Handle supermarket orders and cart operations."
+    prompts:
+      system: "prompts/super/system.md"
+    resolvers: [user_name, subscription]
+    tools: [add_to_cart]
+    mcps: [super_mcp]
+
+  admin_agent:
+    name: "Admin"
+    description: "Sensitive administrative information and operations."
+    prompts:
+      system: "prompts/admin/system.md"
+    protected: true
+
+# ---- 3. GRAPH ----
+graph:
+  main_router:
+    flights_router:
+      domestic_flights_agent:
+      international_flights_agent:
+    super_agent:
+    admin_agent:

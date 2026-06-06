@@ -61,7 +61,7 @@ pick the next task → read its skill(s) → make a small change → run `make c
 - Only touch files listed in the task's "Files allowed to change".
 - Discovered out-of-scope work → propose a **new task**, don't expand the
   current one.
-- Contract changes (YAML schema, sidecar contract, API shape) require an **ADR**
+- Contract changes (YAML schema, plugin contracts, API shape) require an **ADR**
   and explicit approval. → See [`docs/adr/`](adr/).
 
 ## Definition of done (per task)

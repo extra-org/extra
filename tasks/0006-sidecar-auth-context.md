@@ -1,61 +1,58 @@
-# Task 0006 — Sidecar Auth & Context
+# Task 0006 — Plugin Context & Access
 
 ## Goal
 
-Implement the sidecar client and context resolver: call `POST /resolve-context`
-at the configured phases, map the response into the `ExecutionContext`, and
-enforce `allowed`/fail-closed behavior. Wire into the runtime's sidecar seam.
+Implement plugin-based resolver context and protected-node access filtering.
+Wire resolver/access plugin seams into the runtime. **No sidecar service in the
+current MVP.**
 
 ## Context
 
-Client-specific auth/business logic lives in the sidecar, not the runtime. The
-runtime only calls, maps, enforces, and traces. This task fills the sidecar seam
-from 0004 and feeds resolved context to prompts (0005) and tools (0007).
+Customer-specific auth/business logic lives in plugins, not the runtime. The
+runtime loads plugin classes, calls fixed methods with `ctx`, maps returned
+values, fails closed for protected access, and traces decisions.
 
 **Read first:** `AGENTS.md`, `.ai/skills/sidecar-auth-context.md`,
-`docs/SIDECAR_CONTEXT_AUTH.md`,
-`docs/adr/0003-client-specific-logic-lives-in-sidecar.md`.
+`docs/SIDECAR_CONTEXT_AUTH.md`, `docs/PROMPT_RENDERING.md`.
 
 ## Scope
 
-- Define the contract request/response types from `docs/SIDECAR_CONTEXT_AUTH.md`.
-- Implement an HTTP sidecar client and a context resolver that builds requests
-  from agent-declared `required_context`/`required_permissions`.
-- Map responses onto the `ExecutionContext`; enforce `allowed` and fail-closed.
+- Implement plugin reference loading/invocation for resolver methods.
+- Implement the fixed `plugins/access.py` contract:
+  `AccessResolver.can_access(ctx, node_id) -> bool`.
+- Build `ctx` from request headers and request data.
+- Wire access filtering before routing protected nodes.
+- Map resolver outputs into the request execution context for prompt rendering.
 
 ## Files allowed to change
 
 - `src/agentplatform/context/**`
-- `src/agentplatform/runtime/**` (only to connect the sidecar seam)
+- `src/agentplatform/runtime/**` (only to connect plugin seams)
 - `tests/context/**`
 
 ## Requirements
 
-- No client-specific auth/business logic in the runtime — only call/map/enforce/
-  trace.
-- Support `pre_routing` and `pre_agent` phases via the configured
-  `security.sidecar.phases`.
-- Build requests from declared requirements; map `identity`, `permissions`,
-  `context`, `tool_policy` onto the `ExecutionContext`.
-- `allowed: false` blocks execution and is traced with `reason`.
-- Sidecar enabled but unreachable/erroring → **fail closed** (deny + trace).
-- Redact secrets/tokens in traces.
+- No customer-specific auth/business logic in the runtime.
+- Resolver ids referenced by a node call the configured plugin method.
+- Protected nodes are hidden from routing unless access returns true.
+- `protected: true` without access plugin is a startup/configuration error.
+- Access plugin exceptions fail closed and are traced.
+- Secrets/tokens are redacted in traces.
 
 ## Out of scope
 
-- Implementing a real client sidecar (use a fake in tests).
-- Tool permission enforcement internals (task 0007) beyond mapping `tool_policy`
-  into context.
+- Tool plugin execution internals (task 0007).
+- Real customer plugin implementations beyond fakes/fixtures.
+- Sidecar HTTP service support.
 
 ## Acceptance criteria
 
-- [ ] Contract types match `docs/SIDECAR_CONTEXT_AUTH.md`.
-- [ ] Both phases supported and gated by config.
-- [ ] Response correctly mapped onto `ExecutionContext`.
-- [ ] `allowed: false` blocks + traces; failures fail closed.
-- [ ] Secrets redacted in traces.
-- [ ] No client-specific logic in the runtime.
-- [ ] Tests use a fake sidecar covering allow/deny/error.
+- [ ] Resolver plugin methods can fill prompt variables for a request.
+- [ ] Protected nodes are filtered before routing.
+- [ ] Access denial/error hides protected nodes and is traced.
+- [ ] Missing required access plugin is a clear configuration error.
+- [ ] No customer-specific logic is added to the runtime.
+- [ ] Tests cover allow/deny/error/missing-plugin cases.
 - [ ] `make check` passes.
 
 ## Commands to run before finishing
@@ -66,5 +63,5 @@ make check
 
 ## Expected final report
 
-Use the AGENTS.md §9 format. Confirm ADR 0003 (no client logic in runtime,
-fail-closed). Recommend task 0007 next.
+Use the AGENTS.md §9 format. Confirm customer logic remains in plugins,
+protected access fails closed, and task 0007 is recommended next.

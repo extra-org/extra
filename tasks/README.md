@@ -15,8 +15,8 @@ finishing, Expected final report.**
 | 0003 | [Compiled agent graph](0003-compiled-agent-graph.md)       | 0002       |
 | 0004 | [Runtime engine](0004-runtime-engine.md)                   | 0003       |
 | 0005 | [Prompt rendering](0005-prompt-rendering.md)               | 0004       |
-| 0006 | [Sidecar auth/context](0006-sidecar-auth-context.md)       | 0004       |
-| 0007 | [MCP tools & permissions](0007-mcp-tools-and-permissions.md) | 0004, 0006 |
+| 0006 | [Plugin context/access](0006-sidecar-auth-context.md)      | 0004, 0005 |
+| 0007 | [MCP tools & plugin tools](0007-mcp-tools-and-permissions.md) | 0004, 0006 |
 | 0008 | [CLI](0008-cli.md)                                          | 0002–0004  |
 | 0009 | [API server](0009-api-server.md)                           | 0004       |
 | 0010 | [Docker deployment](0010-docker-deployment.md)             | 0009       |
