@@ -1,0 +1,7 @@
+---
+name: runtime-engine
+description: Working on RuntimeEngine, ExecutionContext, agent execution, or the request lifecycle. Primary tasks are tasks/0003-compiled-agent-graph.md and tasks/0004-runtime-engine.md.
+generated: true
+---
+
+Read and apply `.ai/skills/runtime-engine.md`.

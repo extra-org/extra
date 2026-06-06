@@ -8,8 +8,11 @@ This repository uses a **generic, tool-agnostic AI instruction system**. The
 canonical instruction source is [`.ai/`](.ai/) — shared by Claude Code, Codex,
 Cursor, and any future tool. Claude Code should start from `AGENTS.md`,
 `CLAUDE.md`, and [`.ai/README.md`](.ai/README.md), and read the relevant
-`.ai/skills/*` file **before editing**. Do **not** recreate `.claude/skills/` or
-`.claude/agents/`, and do not duplicate `.ai/` content anywhere under `.claude/`.
+`.ai/skills/*` file **before editing**.
+
+`.claude/skills/` is **generated output** — do not edit it. Run
+`make sync-skills` (or `make install`) to regenerate it from `.ai/skills/`.
+`.ai/` is the single source of truth for all skills.
 
 ---
 

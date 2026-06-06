@@ -1,0 +1,7 @@
+---
+name: sidecar-auth-context
+description: Working on resolver plugins, the fixed access plugin contract, mapping resolver outputs into ExecutionContext, or protected-node filtering. Primary task is tasks/0006-sidecar-auth-context.md.
+generated: true
+---
+
+Read and apply `.ai/skills/sidecar-auth-context.md`.

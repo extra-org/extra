@@ -1,0 +1,7 @@
+---
+description: Working on prompt templates, template loading/caching, or per-request rendering. Primary task is tasks/0005-prompt-rendering.md.
+alwaysApply: false
+generated: true
+---
+
+Read and apply `.ai/skills/prompt-rendering.md`.

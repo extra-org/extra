@@ -9,15 +9,18 @@ SRC := src
 TESTS := tests
 
 .DEFAULT_GOAL := help
-.PHONY: help install test lint format typecheck check clean
+.PHONY: help install sync-skills test lint format typecheck check clean
 
 help: ## Show available targets.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install the package (editable) with dev dependencies.
+install: sync-skills ## Install the package (editable) with dev dependencies.
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -e ".[dev]"
+
+sync-skills: ## Generate tool adapters (Claude/Cursor/Codex) from .ai/skills/ — single source of truth.
+	$(PYTHON) scripts/sync_skills.py
 
 format: ## Auto-format the codebase (ruff format).
 	ruff format $(SRC) $(TESTS)
