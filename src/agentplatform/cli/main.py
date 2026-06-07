@@ -1,9 +1,8 @@
-"""Placeholder CLI entrypoint.
+"""CLI entrypoint for the declarative AI-agent platform.
 
-Exposes a single ``version`` command so the packaging/console-script wiring can be
-verified. Feature commands (``validate``, ``graph``, ``run``, ``serve``,
-``deploy``) are intentionally **not** implemented in this phase; see
-``tasks/0008-cli.md``.
+The validation command is implemented for the YAML specification layer. Runtime
+commands (``graph``, ``run``, ``serve``, ``deploy``) are intentionally not
+implemented yet.
 """
 
 from __future__ import annotations
@@ -11,10 +10,11 @@ from __future__ import annotations
 import typer
 
 from agentplatform import __version__
+from agentplatform.spec import SpecError, load_spec
 
 app = typer.Typer(
     name="agentctl",
-    help="Declarative AI-agent platform CLI (foundation phase — only `version` works).",
+    help="Declarative AI-agent platform CLI.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -22,17 +22,29 @@ app = typer.Typer(
 
 @app.callback()
 def main() -> None:
-    """Declarative AI-agent platform CLI (foundation phase).
-
-    Feature commands (validate, graph, run, serve, deploy) are not implemented
-    yet — see tasks/0008-cli.md.
-    """
+    """Declarative AI-agent platform CLI."""
 
 
 @app.command()
 def version() -> None:
     """Print the installed agentplatform version."""
     typer.echo(__version__)
+
+
+@app.command()
+def validate(path: str) -> None:
+    """Validate an agent YAML configuration without executing it."""
+    try:
+        loaded = load_spec(path)
+    except SpecError as exc:
+        typer.echo("✗ Configuration validation failed", err=True)
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("✓ YAML loaded")
+    typer.echo("✓ JSON schema valid")
+    typer.echo("✓ Semantic validation passed")
+    typer.echo(f"✓ Configuration is valid: {loaded.source_path}")
 
 
 if __name__ == "__main__":  # pragma: no cover

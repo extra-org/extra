@@ -7,8 +7,8 @@ aspiration.
 | Phase | Theme                         | Tasks      | Status        |
 | ----- | ----------------------------- | ---------- | ------------- |
 | 0     | Repository foundation         | docs/.ai/tasks | ✅ done      |
-| 1     | Package skeleton & tooling    | 0001       | ⏳ planned     |
-| 2     | YAML schema & validation      | 0002       | ⏳ planned     |
+| 1     | Package skeleton & tooling    | 0001       | ✅ done        |
+| 2     | YAML schema & validation      | 0002       | ✅ done        |
 | 3     | Compiled agent graph          | 0003       | ⏳ planned     |
 | 4     | Runtime engine                | 0004       | ⏳ planned     |
 | 5     | Prompt rendering              | 0005       | ⏳ planned     |
@@ -30,7 +30,7 @@ these milestones in order:
 
 | Milestone | Command (on `examples/agents.yml`) | Enabled by |
 | --------- | ---------------------------------- | ---------- |
-| Validate  | `agentctl validate examples/agents.yml` | 0002 |
+| Validate  | `agentctl validate examples/agents.yml` | ✅ 0002 |
 | Inspect   | `agentctl graph examples/agents.yml` | 0003 |
 | Run local | `agentctl run examples/agents.yml --message "hello"` | 0004–0005 (mock LLM/tools) |
 | Serve     | `agentctl serve examples/agents.yml` | 0009 |

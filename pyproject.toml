@@ -1,9 +1,9 @@
 # Project + tooling configuration for the Declarative Agent Platform.
 #
 # Foundation phase note: this file establishes packaging and the toolchain
-# (ruff, mypy, pytest). Runtime dependencies are declared here for upcoming work,
-# but product features (validation, compiler, runtime, prompts, sidecar, tools,
-# CLI, API) are NOT implemented yet — they are built task-by-task (see tasks/).
+# (ruff, mypy, pytest). YAML loading/validation is implemented; later product
+# features (compiler, runtime, prompts, sidecar, tools, API) are built
+# task-by-task (see tasks/).
 
 [build-system]
 requires = ["hatchling"]
@@ -35,6 +35,7 @@ dynamic = ["version"]
 dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
+    "jsonschema>=4.22",
     "typer>=0.12",
     "fastapi>=0.111",
     "uvicorn>=0.30",
@@ -52,8 +53,8 @@ dev = [
 
 # CLI entrypoint. `agentctl` is the working CLI name used throughout the docs
 # (see docs/ARCHITECTURE.md and docs/ROADMAP.md); `agent-platform` is provided as
-# an alias. Only a `version` command exists today — feature commands are deferred
-# to tasks/0008-cli.md.
+# an alias. The validation command is implemented; graph/run/serve commands are
+# deferred to later tasks.
 [project.scripts]
 agentctl = "agentplatform.cli.main:app"
 agent-platform = "agentplatform.cli.main:app"

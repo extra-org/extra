@@ -7,9 +7,10 @@
 
 **Status: 🚧 Repository foundation phase.** This repository currently contains
 documentation, architecture decisions, agent skills, and ordered implementation
-tasks. **The runtime, YAML parser, compiler, plugin loader, MCP client, and API
-are not implemented yet.** Nothing below describing the runtime is working
-software — it describes the intended design that future work will build.
+tasks. **YAML loading and validation are implemented; the compiler, runtime,
+plugin loader, MCP client, and API are not implemented yet.** Nothing below
+describing runtime execution is working software — it describes the intended
+design that future work will build.
 
 ---
 
@@ -52,7 +53,7 @@ Repository foundation phase. See the [Roadmap](docs/ROADMAP.md) and the
 | Documentation & ADRs      | ✅ In place     |
 | Agent skills              | ✅ In place     |
 | Implementation tasks      | ✅ Defined      |
-| YAML schema & validation  | ⏳ Planned (0002) |
+| YAML schema & validation  | ✅ Implemented (0002) |
 | Compiled agent graph      | ⏳ Planned (0003) |
 | Runtime engine            | ⏳ Planned (0004) |
 | Prompt rendering          | ⏳ Planned (0005) |
@@ -82,8 +83,8 @@ is created **per request**. See
 
 ## 6. Example YAML shape
 
-This is the **intended** shape (not yet parsed by any code). See
-[docs/YAML_SPEC.md](docs/YAML_SPEC.md) for the full specification.
+This is the supported validation shape. See [docs/YAML_SPEC.md](docs/YAML_SPEC.md)
+for the full specification.
 
 ```yaml
 system:
@@ -163,8 +164,9 @@ This repository is **agent-first**. If you are an AI coding agent:
 
 > Requires **Python 3.11+**. The project uses a `src/` layout with package
 > `agentplatform` and is configured via `pyproject.toml` (hatchling build;
-> `ruff`, `mypy`, `pytest` for tooling). Only a placeholder CLI (`agentctl version`)
-> exists today — product features are not implemented yet.
+> `ruff`, `mypy`, `pytest` for tooling). The CLI currently supports
+> `agentctl version` and `agentctl validate`; graph inspection, run, serve, and
+> deployment commands are still planned.
 
 ### 1. Create and activate a virtual environment
 
@@ -185,6 +187,7 @@ make install                   # runs: pip install -e ".[dev]"
 ```bash
 which python                   # → <repo>/.venv/bin/python
 agentctl version               # → 0.0.0  (console script; alias: agent-platform)
+agentctl validate examples/agents.yml
 make check                     # lint (ruff) + typecheck (mypy) + test (pytest)
 ```
 
