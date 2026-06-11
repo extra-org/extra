@@ -107,9 +107,13 @@ class AgentNode:
     """
 
     node_path: str
-    node_id: str
     declaration: NodeDeclaration
     child_nodes: tuple[AgentNode, ...]
+
+    @property
+    def node_id(self) -> str:
+        """Short node id — derived from the declaration, never stored twice."""
+        return self.declaration.node_id
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -119,4 +123,3 @@ class CompiledAgentGraph:
     system_name: str
     root: AgentNode
     nodes_by_id: Mapping[str, AgentNode]
-    declarations_by_id: Mapping[str, NodeDeclaration]

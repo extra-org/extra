@@ -55,7 +55,6 @@ def compile_spec(spec: AgentEngineSpec) -> CompiledAgentGraph:
         system_name=spec.system.name,
         root=root,
         nodes_by_id=nodes_by_id,
-        declarations_by_id=declarations,
     )
 
 
@@ -167,7 +166,6 @@ def _expand_node(
 
     return AgentNode(
         node_path=node_path,
-        node_id=node_id,
         declaration=declarations[node_id],
         child_nodes=tuple(child_nodes),
     )

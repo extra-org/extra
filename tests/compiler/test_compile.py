@@ -53,18 +53,18 @@ def test_references_resolve_to_specs(graph: CompiledAgentGraph) -> None:
 
 def test_model_defaults_and_overrides(graph: CompiledAgentGraph) -> None:
     # Agent with no model inherits the system default (haiku).
-    domestic = graph.declarations_by_id["domestic_flights_agent"]
+    domestic = graph.nodes_by_id["main_router/flights_router/domestic_flights_agent"].declaration
     assert isinstance(domestic, AgentDeclaration)
     assert domestic.model_name == "claude-haiku-4-5"
 
     # Orchestrator with its own model fully replaces the default (sonnet override).
-    flights_router = graph.declarations_by_id["flights_router"]
+    flights_router = graph.nodes_by_id["main_router/flights_router"].declaration
     assert isinstance(flights_router, OrchestratorDeclaration)
     assert flights_router.model_name == "claude-sonnet-4-6"
     assert flights_router.model_temperature == 0.0
 
 
 def test_protected_flag_preserved(graph: CompiledAgentGraph) -> None:
-    admin = graph.declarations_by_id["admin_agent"]
+    admin = graph.nodes_by_id["main_router/admin_agent"].declaration
     assert isinstance(admin, AgentDeclaration)
     assert admin.protected is True

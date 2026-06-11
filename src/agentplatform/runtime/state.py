@@ -15,13 +15,6 @@ class GraphState(TypedDict, total=False):
     message: str
     """The user's incoming message."""
 
-    route_hint: str
-    """Optional node id/node path an orchestrator should prefer when routing.
-
-    Placeholder until real LLM-based routing lands; lets us drive and test the
-    topology deterministically.
-    """
-
     visited: list[str]
     """Ordered node paths visited — the execution trace."""
 

@@ -12,15 +12,13 @@ Routing
 -------
 ``_make_router`` is the single place that decides which child to go to:
 
-1. If ``route_hint`` in state matches a child → use it (test / manual override).
-2. If ``base_dir`` was provided and the orchestrator has a model → call the LLM
+1. If ``base_dir`` was provided and the orchestrator has a model → call the LLM
    with the orchestrator-prompt + child descriptions, structured output
    ``{"next": "<node_id>"}``.
-3. Fallback → first declared child.
+2. Fallback → first declared child.
 
-This means tests that pass no ``base_dir`` always use the deterministic skeleton
-(route_hint + first child) and never hit the network.  Production passes
-``base_dir`` and gets real LLM routing.
+Tests inject a fake ``model_factory`` and pass ``base_dir`` to enable LLM
+routing without hitting the network.
 
 Plugins & prompts
 -----------------
@@ -208,10 +206,9 @@ def _make_router(
     """Build the routing function for an orchestrator.
 
     Priority:
-    1. ``route_hint`` in state matches a child → use it (tests / manual steering).
-    2. ``base_dir`` provided and orchestrator has a model → call LLM with
+    1. ``base_dir`` provided and orchestrator has a model → call LLM with
        structured output to pick the best child.
-    3. First declared child (last-resort fallback).
+    2. First declared child (last-resort fallback).
     """
     first_child_id = agent_node.child_nodes[0].node_path
     valid_node_ids = {child.node_id for child in agent_node.child_nodes}
@@ -234,13 +231,7 @@ def _make_router(
         ).with_structured_output(_RouteDecision)
 
     def route(state: GraphState) -> str:
-        # 1. Explicit override — lets tests and callers steer without an LLM call.
-        hint = state.get("route_hint", "")
-        for child in agent_node.child_nodes:
-            if hint in (child.node_id, child.node_path):
-                return child.node_path
-
-        # 2. LLM routing.
+        # 1. LLM routing.
         if routing_chain is not None:
             orchestrator_prompt = _load_orchestrator_prompt(declaration, base_dir)
             system = (
@@ -262,7 +253,7 @@ def _make_router(
             except Exception:  # routing failure → fall through to first-child fallback
                 pass
 
-        # 3. Fallback.
+        # 2. Fallback.
         return first_child_id
 
     return route
