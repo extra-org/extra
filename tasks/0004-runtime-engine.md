@@ -44,8 +44,8 @@ tools (0007) plug into.
   resolved context placeholder, trace).
 - The engine is safe to use concurrently (no shared mutable request state).
 - Routing selects a node path deterministically from declarative metadata.
-- Execution operates on compiled node instances, not raw declarations; trace
-  events use `instance_id` and also include `node_id`.
+- Execution operates on compiled `AgentNode` objects, not raw declarations;
+  trace events use `node_path` and also include `node_id`.
 - Execution is recursive over the graph and produces a response + trace
   object, even if downstream subsystems are stubbed at the seam.
 - Seams are abstract (protocols/interfaces); no concrete prompt/plugin/tool

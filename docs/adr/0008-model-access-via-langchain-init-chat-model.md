@@ -63,4 +63,4 @@ runtime depends only on `BaseChatModel`, never on a provider SDK.
 ## Related
 
 - [ADR 0001 — RuntimeEngine created once](0001-runtime-engine-created-once.md)
-- [ADR 0006 — Reusable node declarations and graph instances](0006-reusable-agent-definitions-and-hierarchy-instances.md)
+- [ADR 0006 — Reusable node declarations and agent nodes](0006-reusable-agent-definitions-and-hierarchy-instances.md)

@@ -1,4 +1,4 @@
-# ADR 0006: Reusable node declarations and graph instances
+# ADR 0006: Reusable node declarations and agent nodes
 
 ## Status
 
@@ -11,30 +11,29 @@ The YAML carries two distinct concepts:
 - A **node declaration** under `orchestrators` or `agents`, describing what the
   node is: type, description, prompts, model, resolvers, tools, MCPs, and
   protection.
-- A **graph instance**, which is one occurrence of that node id inside `graph`,
+- An **agent node**, which is one occurrence of that node id inside `graph`,
   describing where the node sits in the topology.
 
 The same node id may appear in multiple graph locations to model DAG
-reachability. Without distinct compiled instances, routing and tracing become
+reachability. Without distinct compiled agent nodes, routing and tracing become
 ambiguous.
 
 ## Decision
 
 Node declarations are reusable. Each occurrence inside `graph` compiles into a
-distinct compiled instance that points back to the shared declaration.
+distinct `AgentNode` that points back to the shared declaration.
 
 The compiler produces, for each occurrence:
 
-- `instance_id`
+- `node_path`
 - `node_id`
 - node type (`orchestrator` or `agent`)
-- `parent_instance_id`
-- fully qualified path
+- `parent_node_path`
 - resolved prompt/resolver/tool/MCP/model bindings
 
-Runtime execution operates on compiled instances, not raw declarations or raw
-YAML mappings. Trace events use `instance_id` as the primary identity and also
-include `node_id`.
+Runtime execution operates on compiled `AgentNode` objects, not raw
+declarations or raw YAML mappings. Trace events use `node_path` as the primary
+identity and also include `node_id`.
 
 ## Validation Rules
 
@@ -42,8 +41,8 @@ include `node_id`.
 2. The graph has exactly one root.
 3. Cycles are rejected in the MVP.
 4. Repeated node ids are allowed, but each occurrence must compile to a distinct
-   stable instance id.
-5. Runtime execution operates on instances, not declarations.
+   stable node path.
+5. Runtime execution operates on `AgentNode` objects, not declarations.
 
 ## Consequences
 

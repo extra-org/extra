@@ -107,12 +107,12 @@ Responsibilities:
   server declarations are well-formed.
 - **Validate the graph**: every node referenced in `graph` is declared; there is
   a single root; routing structure is consistent.
-- **Validate reusable instances**: a node declared once may appear at multiple
-  graph locations; each occurrence is a distinct instance (see §7).
+- **Validate reusable agent nodes**: a node declared once may appear at multiple
+  graph locations; each occurrence is a distinct `AgentNode` (see §7).
 - **Detect cycles** in the graph.
 - **Detect secrets**: reject literal secrets in YAML; only references are allowed.
 - **Compile** the flat declarations plus `graph` topology into a typed,
-  immutable `CompiledAgentGraph`, assigning a **stable instance id** to each
+  immutable `CompiledAgentGraph`, assigning a **stable node path** to each
   occurrence in the graph.
 - *(Optional, later)* generate **resolver/plugin stubs** for the client to fill
   in, and *(later)* generate **deployment artifacts**.
@@ -142,7 +142,7 @@ Responsibilities:
   the router never considers nodes the caller may not reach.
 - **Route** from the root node down through orchestrators, using each child's
   `description` and the orchestrator prompt.
-- **Select** the agent instance to execute.
+- **Select** the `AgentNode` to execute.
 - **Resolve dynamic prompt values** by calling the node's declared resolvers.
 - **Render prompt templates** for this request (strict; missing variables fail).
 - **Execute** the selected agent (or continue routing through an orchestrator).
@@ -219,7 +219,7 @@ Owns everything specific to a single request:
 - identity / tenant / user / session (as interpreted by plugins)
 - roles / permissions (as interpreted by plugins)
 - `customer_code` and other resolved context values
-- the selected agent path / instance
+- the selected agent node path
 - rendered prompt values for this request
 - temporary tool results
 - trace events
@@ -229,15 +229,15 @@ Request-scoped data never leaks onto the `RuntimeEngine` or the compiled graph.
 
 ---
 
-## 7. Agent Definitions vs. Agent Instances
+## 7. Node Declarations vs. Agent Nodes
 
 A node (orchestrator or agent) is **declared once** under `orchestrators:` /
 `agents:` and may be **reused** at multiple locations in the `graph`
 (see [ADR 0006](adr/0006-reusable-agent-definitions-and-hierarchy-instances.md)).
 
-- The **definition** is the reusable declaration (its prompts, model, tools,
-  resolvers, etc.).
-- A **graph instance** is one occurrence of that definition in the topology.
+- The **NodeDeclaration** is the reusable declaration (its prompts, model,
+  tools, resolvers, etc.).
+- An **AgentNode** is one concrete node inside the compiled graph.
 
 A single `security_review_agent` definition may, for example, appear under both
 an invoice flow and a payment flow. Conceptually:
@@ -252,21 +252,21 @@ agents:
 graph:
   root_orchestrator:
     invoice_orchestrator:
-      security_review_agent:    # instance A (under invoices)
+      security_review_agent:    # AgentNode A (under invoices)
     payment_orchestrator:
-      security_review_agent:    # instance B (under payments)
+      security_review_agent:    # AgentNode B (under payments)
 ```
 
 Here:
 
-- `security_review_agent` is the reusable **definition**.
-- The occurrence under `invoice_orchestrator` is one **instance**.
-- The occurrence under `payment_orchestrator` is another **instance**.
-- Both point to the same definition.
+- `security_review_agent` is the reusable **NodeDeclaration**.
+- The occurrence under `invoice_orchestrator` is one **AgentNode**.
+- The occurrence under `payment_orchestrator` is another **AgentNode**.
+- Both point to the same `NodeDeclaration`.
 
-The compiler assigns each occurrence a **stable instance id**, and the trace
-includes **both the node/agent id and the instance id**, so two occurrences of
-the same definition are distinguishable in observability.
+The compiler assigns each occurrence a **stable node path**, and the trace
+includes **both the node/agent id and the node path**, so two occurrences of the
+same declaration are distinguishable in observability.
 
 ---
 
@@ -457,7 +457,7 @@ Validation covers:
 - **definitions** validation (providers, MCP servers, tools, resolvers, agents,
   orchestrators, prompts);
 - **graph** validation (single root, declared nodes, consistent structure);
-- repeated graph occurrence detection groundwork for future instance ids;
+- repeated graph occurrence detection groundwork for future node paths;
 - **prompt path** validation;
 - **tool / MCP reference** validation;
 - **resolver reference** validation;
@@ -515,7 +515,7 @@ graph:
 
 > **Definitions answer: *what exists?* The graph answers: *how is it
 > connected?*** A node id declared in definitions may appear at multiple graph
-> locations; each occurrence becomes a distinct compiled instance (§7).
+> locations; each occurrence becomes a distinct `AgentNode` (§7).
 
 ---
 
@@ -535,7 +535,7 @@ graph:
 
 1. **Spec layer** — safe YAML loading and typed schema models.
 2. **Validation layer** — JSON Schema + semantic validation.
-3. **Compiler layer** — normalized typed graph, bindings, stable instance ids.
+3. **Compiler layer** — normalized typed graph, bindings, stable node paths.
 4. **Runtime layer** — long-lived engine + per-request execution contexts.
 5. **Prompt rendering layer** — file templates rendered per request.
 6. **Extension layer** — resolver, tool, and access plugins (and optional sidecar).

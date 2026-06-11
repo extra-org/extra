@@ -27,7 +27,7 @@ The project recognizes **three separated phases**, and they must not be collapse
    deployment artifacts. **This phase does not execute user requests.**
 2. **Runtime / execution phase** — per request: create an `ExecutionContext`,
    filter protected nodes through the access plugin, resolve context through
-   resolver plugins, route to a node instance, render prompts, execute, call
+   resolver plugins, route to an `AgentNode`, render prompts, execute, call
    tools/MCP as needed, and return a response + trace.
 3. **Client extension layer** — client-specific logic (auth, authorization,
    DB/API calls, business context, and access decisions) lives in customer

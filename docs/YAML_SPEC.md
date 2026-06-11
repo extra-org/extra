@@ -222,7 +222,7 @@ Semantic validation must enforce:
 - orchestrators may have children;
 - agents are normally leaves for the MVP;
 - repeated ids are allowed to model DAG reachability, but the compiler must
-  assign stable instance ids for each occurrence;
+  assign stable node paths for each occurrence;
 - cycles are rejected.
 
 ---
