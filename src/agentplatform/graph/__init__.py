@@ -2,8 +2,8 @@
 
 from agentplatform.graph.models import (
     AgentDeclaration,
+    AgentNode,
     CompiledAgentGraph,
-    GraphInstance,
     NodeDeclaration,
     OrchestratorDeclaration,
     ResolvedMcp,
@@ -13,8 +13,8 @@ from agentplatform.graph.models import (
 
 __all__ = [
     "AgentDeclaration",
+    "AgentNode",
     "CompiledAgentGraph",
-    "GraphInstance",
     "NodeDeclaration",
     "OrchestratorDeclaration",
     "ResolvedMcp",

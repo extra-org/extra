@@ -2,7 +2,7 @@
 
 Topology
 --------
-- ``START`` → root instance.
+- ``START`` → root agent node.
 - Each **orchestrator** node records itself as visited; routing is decided by
   its conditional edge function (see ``_make_router``).
 - Each **agent** (leaf) node calls its own model, optionally with tools bound,
@@ -50,8 +50,8 @@ from pydantic import BaseModel
 
 from agentplatform.graph.models import (
     AgentDeclaration,
+    AgentNode,
     CompiledAgentGraph,
-    GraphInstance,
     OrchestratorDeclaration,
 )
 from agentplatform.models import build_chat_model
@@ -92,25 +92,25 @@ def build_langgraph(
     loader = PluginLoader(base_dir) if base_dir is not None else None
     builder = StateGraph(GraphState)
 
-    for instance in graph.instances_by_id.values():
-        node = _make_node(instance, model_factory, loader, base_dir)
-        builder.add_node(instance.instance_id, node)  # type: ignore[call-overload]
+    for agent_node in graph.nodes_by_id.values():
+        node = _make_node(agent_node, model_factory, loader, base_dir)
+        builder.add_node(agent_node.node_path, node)  # type: ignore[call-overload]
 
-    builder.add_edge(START, graph.root.instance_id)
+    builder.add_edge(START, graph.root.node_path)
 
-    for instance in graph.instances_by_id.values():
-        if instance.children:
-            assert isinstance(instance.declaration, OrchestratorDeclaration)
+    for agent_node in graph.nodes_by_id.values():
+        if agent_node.child_nodes:
+            assert isinstance(agent_node.declaration, OrchestratorDeclaration)
             routes: dict[Hashable, str] = {
-                child.instance_id: child.instance_id for child in instance.children
+                child.node_path: child.node_path for child in agent_node.child_nodes
             }
             builder.add_conditional_edges(
-                instance.instance_id,
-                _make_router(instance, instance.declaration, model_factory, base_dir),
+                agent_node.node_path,
+                _make_router(agent_node, agent_node.declaration, model_factory, base_dir),
                 routes,
             )
         else:
-            builder.add_edge(instance.instance_id, END)
+            builder.add_edge(agent_node.node_path, END)
 
     return builder.compile()
 
@@ -121,35 +121,35 @@ def build_langgraph(
 
 
 def _make_node(
-    instance: GraphInstance,
+    agent_node: AgentNode,
     model_factory: ModelFactory,
     loader: PluginLoader | None,
     base_dir: Path | None,
 ) -> Callable[[GraphState], dict[str, object]]:
-    match instance.declaration:
+    match agent_node.declaration:
         case OrchestratorDeclaration():
-            instance_id = instance.instance_id
+            node_path = agent_node.node_path
 
             def orchestrator_node(state: GraphState) -> dict[str, object]:
-                return {"visited": [*state.get("visited", []), instance_id]}
+                return {"visited": [*state.get("visited", []), node_path]}
 
             return orchestrator_node
 
         case AgentDeclaration() as decl:
-            return _make_agent_node(instance, decl, model_factory, loader, base_dir)
+            return _make_agent_node(agent_node, decl, model_factory, loader, base_dir)
         case _:
-            raise TypeError(f"Unknown declaration type: {type(instance.declaration)}")
+            raise TypeError(f"Unknown declaration type: {type(agent_node.declaration)}")
 
 
 def _make_agent_node(
-    instance: GraphInstance,
+    agent_node: AgentNode,
     declaration: AgentDeclaration,
     model_factory: ModelFactory,
     loader: PluginLoader | None,
     base_dir: Path | None,
 ) -> Callable[[GraphState], dict[str, object]]:
     """Agent (leaf) node: resolves context, builds prompt, calls model in a loop."""
-    instance_id = instance.instance_id
+    node_path = agent_node.node_path
 
     # Build tools once at graph-build time.
     tools: list[BaseTool] = []
@@ -187,7 +187,7 @@ def _make_agent_node(
             response = model.invoke(messages)
 
         return {
-            "visited": [*state.get("visited", []), instance_id],
+            "visited": [*state.get("visited", []), node_path],
             "answer": _as_text(response.content),
         }
 
@@ -200,7 +200,7 @@ def _make_agent_node(
 
 
 def _make_router(
-    instance: GraphInstance,
+    agent_node: AgentNode,
     declaration: OrchestratorDeclaration,
     model_factory: ModelFactory,
     base_dir: Path | None,
@@ -213,11 +213,10 @@ def _make_router(
        structured output to pick the best child.
     3. First declared child (last-resort fallback).
     """
-    first_child_id = instance.children[0].instance_id
-    valid_node_ids = {child.node_id for child in instance.children}
+    first_child_id = agent_node.child_nodes[0].node_path
+    valid_node_ids = {child.node_id for child in agent_node.child_nodes}
     children_desc = "\n".join(
-        f"- {child.node_id}: {child.declaration.description}"
-        for child in instance.children
+        f"- {child.node_id}: {child.declaration.description}" for child in agent_node.child_nodes
     )
 
     # Build the LLM routing chain once at graph-build time (only with base_dir).
@@ -236,9 +235,9 @@ def _make_router(
     def route(state: GraphState) -> str:
         # 1. Explicit override — lets tests and callers steer without an LLM call.
         hint = state.get("route_hint", "")
-        for child in instance.children:
-            if hint in (child.node_id, child.instance_id):
-                return child.instance_id
+        for child in agent_node.child_nodes:
+            if hint in (child.node_id, child.node_path):
+                return child.node_path
 
         # 2. LLM routing.
         if routing_chain is not None:
@@ -249,14 +248,16 @@ def _make_router(
                 f"Respond with only the node_id of the best matching agent."
             )
             try:
-                decision = routing_chain.invoke([
-                    SystemMessage(content=system),
-                    HumanMessage(content=state.get("message", "")),
-                ])
+                decision = routing_chain.invoke(
+                    [
+                        SystemMessage(content=system),
+                        HumanMessage(content=state.get("message", "")),
+                    ]
+                )
                 if isinstance(decision, _RouteDecision) and decision.next in valid_node_ids:
-                    for child in instance.children:
+                    for child in agent_node.child_nodes:
                         if child.node_id == decision.next:
-                            return child.instance_id
+                            return child.node_path
             except Exception:  # routing failure → fall through to first-child fallback
                 pass
 

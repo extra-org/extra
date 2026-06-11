@@ -6,8 +6,8 @@ YAML (ADR 0002). The compiler does two jobs:
 1. Build one resolved ``NodeDeclaration`` per orchestrator/agent — spec types
    are flattened into graph-native fields, references resolved, and the
    effective model computed from defaults + node override.
-2. Expand the ``graph`` tree into ``GraphInstance`` occurrences, each with a
-   stable ``instance_id`` and a pointer back to its shared declaration
+2. Expand the ``graph`` tree into ``AgentNode`` objects, each with a stable
+   ``node_path`` and a pointer back to its shared declaration
    (ADR 0006).
 
 Validation (task 0002) already guarantees the input is well-formed: exactly
@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from agentplatform.graph.models import (
     AgentDeclaration,
+    AgentNode,
     CompiledAgentGraph,
-    GraphInstance,
     NodeDeclaration,
     OrchestratorDeclaration,
     ResolvedMcp,
@@ -38,18 +38,18 @@ def compile_spec(spec: AgentEngineSpec) -> CompiledAgentGraph:
     root = _expand_node(
         node_id=root_id,
         children=root_children,
-        parent_instance_id=None,
+        parent_node_path=None,
         parent_path=None,
         declarations=declarations,
     )
 
-    instances_by_id: dict[str, GraphInstance] = {}
-    _index_instances(root, instances_by_id)
+    nodes_by_id: dict[str, AgentNode] = {}
+    _index_nodes(root, nodes_by_id)
 
     return CompiledAgentGraph(
         system_name=spec.system.name,
         root=root,
-        instances_by_id=instances_by_id,
+        nodes_by_id=nodes_by_id,
         declarations_by_id=declarations,
     )
 
@@ -106,10 +106,7 @@ def _compile_agent(
             ResolvedTool(id=ref, description=engine_spec.tools[ref].description)
             for ref in spec.tools
         ),
-        mcps=tuple(
-            ResolvedMcp(id=ref, url=engine_spec.mcps[ref].url)
-            for ref in spec.mcps
-        ),
+        mcps=tuple(ResolvedMcp(id=ref, url=engine_spec.mcps[ref].url) for ref in spec.mcps),
         protected=spec.protected,
     )
 
@@ -129,43 +126,42 @@ def _expand_node(
     *,
     node_id: str,
     children: object,
-    parent_instance_id: str | None,
+    parent_node_path: str | None,
     parent_path: str | None,
     declarations: dict[str, NodeDeclaration],
-) -> GraphInstance:
-    """Recursively expand a spec graph node into a ``GraphInstance`` tree.
+) -> AgentNode:
+    """Recursively expand a spec graph node into an ``AgentNode`` tree.
 
-    Computes a stable ``instance_id`` path (e.g. ``main_router/super_agent``),
+    Computes a stable ``node_path`` (e.g. ``main_router/super_agent``),
     looks up the pre-compiled declaration, and recurses into children.
     """
     path = f"{parent_path}/{node_id}" if parent_path else node_id
     child_map = children if isinstance(children, dict) else {}
 
-    child_instances = tuple(
+    child_nodes = tuple(
         _expand_node(
             node_id=child_id,
             children=grandchildren,
-            parent_instance_id=path,
+            parent_node_path=path,
             parent_path=path,
             declarations=declarations,
         )
         for child_id, grandchildren in child_map.items()
     )
 
-    return GraphInstance(
-        instance_id=path,
+    return AgentNode(
+        node_path=path,
         node_id=node_id,
-        parent_instance_id=parent_instance_id,
-        path=path,
+        parent_node_path=parent_node_path,
         declaration=declarations[node_id],
-        children=child_instances,
+        child_nodes=child_nodes,
     )
 
 
-def _index_instances(
-    instance: GraphInstance,
-    index: dict[str, GraphInstance],
+def _index_nodes(
+    node: AgentNode,
+    index: dict[str, AgentNode],
 ) -> None:
-    index[instance.instance_id] = instance
-    for child in instance.children:
-        _index_instances(child, index)
+    index[node.node_path] = node
+    for child in node.child_nodes:
+        _index_nodes(child, index)

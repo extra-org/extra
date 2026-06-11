@@ -8,9 +8,9 @@ Two distinct concepts (see ADR 0006):
 - ``NodeDeclaration`` — *what a node is*. Base dataclass with all common
   fields.  Concrete subtypes are ``OrchestratorDeclaration`` and
   ``AgentDeclaration``.
-- ``GraphInstance`` — *one occurrence of a node inside the* ``graph`` *tree*.
-  Distinct per occurrence, with a stable ``instance_id`` and a pointer back
-  to its shared ``NodeDeclaration``.
+- ``AgentNode`` — *one concrete node inside the compiled agent graph*.
+  Distinct per graph location, with a stable ``node_path`` and a pointer back
+  to its pre-compiled ``NodeDeclaration``.
 
 The graph layer is fully decoupled from the spec layer — no spec types appear
 here.  All spec fields are flattened or projected into graph-native types by
@@ -97,20 +97,20 @@ class AgentDeclaration(NodeDeclaration):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GraphInstance:
-    """One occurrence of a node inside the ``graph`` tree.
+class AgentNode:
+    """One concrete node inside the compiled agent graph.
 
-    ``instance_id`` is stable and unique per occurrence (so a node id reused
-    in two graph locations yields two distinct instances).  ``declaration`` is
-    the shared ``NodeDeclaration`` this occurrence points back to.
+    ``node_path`` is stable and unique within the graph (so a node id reused in
+    two graph locations yields two distinct nodes).  ``declaration`` points to
+    the pre-compiled ``NodeDeclaration`` for this node.  ``child_nodes`` holds
+    any child ``AgentNode`` objects below this node.
     """
 
-    instance_id: str
+    node_path: str
     node_id: str
-    parent_instance_id: str | None
-    path: str
+    parent_node_path: str | None
     declaration: NodeDeclaration
-    children: tuple[GraphInstance, ...]
+    child_nodes: tuple[AgentNode, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,6 +118,6 @@ class CompiledAgentGraph:
     """The fully compiled, immutable agent graph the runtime consumes."""
 
     system_name: str
-    root: GraphInstance
-    instances_by_id: Mapping[str, GraphInstance]
+    root: AgentNode
+    nodes_by_id: Mapping[str, AgentNode]
     declarations_by_id: Mapping[str, NodeDeclaration]

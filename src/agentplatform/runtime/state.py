@@ -16,14 +16,14 @@ class GraphState(TypedDict, total=False):
     """The user's incoming message."""
 
     route_hint: str
-    """Optional node id/instance id an orchestrator should prefer when routing.
+    """Optional node id/node path an orchestrator should prefer when routing.
 
     Placeholder until real LLM-based routing lands; lets us drive and test the
     topology deterministically.
     """
 
     visited: list[str]
-    """Ordered instance ids visited — the execution trace."""
+    """Ordered node paths visited — the execution trace."""
 
     answer: str
     """The final answer produced by the agent (leaf) node that handled it."""
