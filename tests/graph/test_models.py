@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from agentplatform.graph import AgentDeclaration, CompiledAgentGraph, GraphInstance
+from agentplatform.graph import AgentDeclaration, AgentNode, CompiledAgentGraph
 
 
 def _leaf_declaration() -> AgentDeclaration:
@@ -18,34 +18,32 @@ def _leaf_declaration() -> AgentDeclaration:
 
 def test_models_carry_their_data() -> None:
     declaration = _leaf_declaration()
-    instance = GraphInstance(
-        instance_id="main_router/super_agent",
+    agent_node = AgentNode(
+        node_path="main_router/super_agent",
         node_id="super_agent",
-        parent_instance_id="main_router",
-        path="main_router/super_agent",
+        parent_node_path="main_router",
         declaration=declaration,
-        children=(),
+        child_nodes=(),
     )
     graph = CompiledAgentGraph(
         system_name="Rami Levy AI System",
-        root=instance,
-        instances_by_id={instance.instance_id: instance},
+        root=agent_node,
+        nodes_by_id={agent_node.node_path: agent_node},
         declarations_by_id={declaration.node_id: declaration},
     )
 
     assert graph.root.declaration is declaration
-    assert graph.instances_by_id["main_router/super_agent"].node_id == "super_agent"
+    assert graph.nodes_by_id["main_router/super_agent"].node_id == "super_agent"
 
 
-def test_instances_are_immutable() -> None:
-    instance = GraphInstance(
-        instance_id="i1",
+def test_agent_nodes_are_immutable() -> None:
+    agent_node = AgentNode(
+        node_path="i1",
         node_id="super_agent",
-        parent_instance_id=None,
-        path="super_agent",
+        parent_node_path=None,
         declaration=_leaf_declaration(),
-        children=(),
+        child_nodes=(),
     )
 
     with pytest.raises(dataclasses.FrozenInstanceError):
-        instance.node_id = "changed"  # type: ignore[misc]
+        agent_node.node_id = "changed"  # type: ignore[misc]

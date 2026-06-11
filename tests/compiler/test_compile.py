@@ -22,28 +22,26 @@ def test_root_is_main_router(graph: CompiledAgentGraph) -> None:
     assert graph.system_name == "Rami Levy AI System"
     assert graph.root.node_id == "main_router"
     assert isinstance(graph.root.declaration, OrchestratorDeclaration)
-    assert graph.root.parent_instance_id is None
+    assert graph.root.parent_node_path is None
 
 
 def test_tree_topology(graph: CompiledAgentGraph) -> None:
-    child_ids = [child.node_id for child in graph.root.children]
+    child_ids = [child.node_id for child in graph.root.child_nodes]
     assert child_ids == ["flights_router", "super_agent", "admin_agent"]
 
-    flights_router = graph.root.children[0]
-    flight_child_ids = [child.node_id for child in flights_router.children]
+    flights_router = graph.root.child_nodes[0]
+    flight_child_ids = [child.node_id for child in flights_router.child_nodes]
     assert flight_child_ids == ["domestic_flights_agent", "international_flights_agent"]
 
 
-def test_instance_ids_are_full_paths(graph: CompiledAgentGraph) -> None:
-    domestic = graph.instances_by_id["main_router/flights_router/domestic_flights_agent"]
+def test_node_paths_are_full_paths(graph: CompiledAgentGraph) -> None:
+    domestic = graph.nodes_by_id["main_router/flights_router/domestic_flights_agent"]
     assert domestic.node_id == "domestic_flights_agent"
-    assert domestic.parent_instance_id == "main_router/flights_router"
+    assert domestic.parent_node_path == "main_router/flights_router"
 
 
 def test_references_resolve_to_specs(graph: CompiledAgentGraph) -> None:
-    domestic = graph.instances_by_id[
-        "main_router/flights_router/domestic_flights_agent"
-    ].declaration
+    domestic = graph.nodes_by_id["main_router/flights_router/domestic_flights_agent"].declaration
     assert isinstance(domestic, AgentDeclaration)
 
     tool_ids = [tool.id for tool in domestic.tools]
