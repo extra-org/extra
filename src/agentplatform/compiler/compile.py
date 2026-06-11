@@ -26,7 +26,13 @@ from agentplatform.graph.models import (
     ResolvedResolver,
     ResolvedTool,
 )
-from agentplatform.spec.models import AgentEngineSpec, AgentSpec, ModelSpec, OrchestratorSpec
+from agentplatform.spec.models import (
+    AgentEngineSpec,
+    AgentSpec,
+    GraphChildren,
+    ModelSpec,
+    OrchestratorSpec,
+)
 
 
 def compile_spec(spec: AgentEngineSpec) -> CompiledAgentGraph:
@@ -34,11 +40,10 @@ def compile_spec(spec: AgentEngineSpec) -> CompiledAgentGraph:
     default_model = spec.defaults.model if spec.defaults else None
     declarations = _build_declarations(spec, default_model)
 
-    root_id, root_children = next(iter(spec.graph.items()))
+    (root_id, root_children), = spec.graph.items()
     root = _expand_node(
         node_id=root_id,
         children=root_children,
-        parent_node_path=None,
         parent_path=None,
         declarations=declarations,
     )
@@ -72,6 +77,11 @@ def _compile_orchestrator(
     default_model: ModelSpec | None,
 ) -> OrchestratorDeclaration:
     provider, name, temperature = _resolve_model(spec.model, default_model)
+
+    resolvers: list[ResolvedResolver] = []
+    for r in spec.resolvers:
+        resolvers.append(ResolvedResolver(id=r))
+
     return OrchestratorDeclaration(
         node_id=node_id,
         description=spec.description,
@@ -81,7 +91,7 @@ def _compile_orchestrator(
         orchestrator_prompt=spec.prompts.orchestrator,
         system_prompt=spec.prompts.system,
         user_prompt=spec.prompts.user,
-        resolvers=tuple(ResolvedResolver(id=r) for r in spec.resolvers),
+        resolvers=tuple(resolvers),
         protected=spec.protected,
     )
 
@@ -93,6 +103,19 @@ def _compile_agent(
     default_model: ModelSpec | None,
 ) -> AgentDeclaration:
     provider, name, temperature = _resolve_model(spec.model, default_model)
+
+    resolvers: list[ResolvedResolver] = []
+    for r in spec.resolvers:
+        resolvers.append(ResolvedResolver(id=r))
+
+    tools: list[ResolvedTool] = []
+    for ref in spec.tools:
+        tools.append(ResolvedTool(id=ref, description=engine_spec.tools[ref].description))
+
+    mcps: list[ResolvedMcp] = []
+    for ref in spec.mcps:
+        mcps.append(ResolvedMcp(id=ref, url=engine_spec.mcps[ref].url))
+
     return AgentDeclaration(
         node_id=node_id,
         description=spec.description,
@@ -101,12 +124,9 @@ def _compile_agent(
         model_temperature=temperature,
         system_prompt=spec.prompts.system if spec.prompts else None,
         user_prompt=spec.prompts.user if spec.prompts else None,
-        resolvers=tuple(ResolvedResolver(id=r) for r in spec.resolvers),
-        tools=tuple(
-            ResolvedTool(id=ref, description=engine_spec.tools[ref].description)
-            for ref in spec.tools
-        ),
-        mcps=tuple(ResolvedMcp(id=ref, url=engine_spec.mcps[ref].url) for ref in spec.mcps),
+        resolvers=tuple(resolvers),
+        tools=tuple(tools),
+        mcps=tuple(mcps),
         protected=spec.protected,
     )
 
@@ -125,8 +145,7 @@ def _resolve_model(
 def _expand_node(
     *,
     node_id: str,
-    children: object,
-    parent_node_path: str | None,
+    children: GraphChildren | None,
     parent_path: str | None,
     declarations: dict[str, NodeDeclaration],
 ) -> AgentNode:
@@ -135,26 +154,22 @@ def _expand_node(
     Computes a stable ``node_path`` (e.g. ``main_router/super_agent``),
     looks up the pre-compiled declaration, and recurses into children.
     """
-    path = f"{parent_path}/{node_id}" if parent_path else node_id
-    child_map = children if isinstance(children, dict) else {}
+    node_path = f"{parent_path}/{node_id}" if parent_path else node_id
 
-    child_nodes = tuple(
-        _expand_node(
+    child_nodes: list[AgentNode] = []
+    for child_id, grandchildren in (children or {}).items():
+        child_nodes.append(_expand_node(
             node_id=child_id,
             children=grandchildren,
-            parent_node_path=path,
-            parent_path=path,
+            parent_path=node_path,
             declarations=declarations,
-        )
-        for child_id, grandchildren in child_map.items()
-    )
+        ))
 
     return AgentNode(
-        node_path=path,
+        node_path=node_path,
         node_id=node_id,
-        parent_node_path=parent_node_path,
         declaration=declarations[node_id],
-        child_nodes=child_nodes,
+        child_nodes=tuple(child_nodes),
     )
 
 

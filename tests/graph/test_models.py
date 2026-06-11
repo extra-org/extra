@@ -21,7 +21,6 @@ def test_models_carry_their_data() -> None:
     agent_node = AgentNode(
         node_path="main_router/super_agent",
         node_id="super_agent",
-        parent_node_path="main_router",
         declaration=declaration,
         child_nodes=(),
     )
@@ -40,7 +39,6 @@ def test_agent_nodes_are_immutable() -> None:
     agent_node = AgentNode(
         node_path="i1",
         node_id="super_agent",
-        parent_node_path=None,
         declaration=_leaf_declaration(),
         child_nodes=(),
     )

@@ -6,7 +6,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-GraphNode = dict[str, Any]
+# The graph section is a tree: each key is a node_id, each value is that
+# node's children subtree (another GraphChildren) or None for leaf nodes.
+GraphChildren = dict[str, Any]
 
 
 class StrictSpecModel(BaseModel):
@@ -72,7 +74,7 @@ class AgentSpec(StrictSpecModel):
 
 class AgentEngineSpec(StrictSpecModel):
     system: SystemSpec
-    graph: GraphNode
+    graph: GraphChildren
     defaults: DefaultsSpec | None = None
     mcps: dict[str, McpSpec] = Field(default_factory=dict)
     tools: dict[str, ToolSpec] = Field(default_factory=dict)

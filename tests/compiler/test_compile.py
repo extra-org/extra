@@ -22,7 +22,6 @@ def test_root_is_main_router(graph: CompiledAgentGraph) -> None:
     assert graph.system_name == "Rami Levy AI System"
     assert graph.root.node_id == "main_router"
     assert isinstance(graph.root.declaration, OrchestratorDeclaration)
-    assert graph.root.parent_node_path is None
 
 
 def test_tree_topology(graph: CompiledAgentGraph) -> None:
@@ -37,7 +36,6 @@ def test_tree_topology(graph: CompiledAgentGraph) -> None:
 def test_node_paths_are_full_paths(graph: CompiledAgentGraph) -> None:
     domestic = graph.nodes_by_id["main_router/flights_router/domestic_flights_agent"]
     assert domestic.node_id == "domestic_flights_agent"
-    assert domestic.parent_node_path == "main_router/flights_router"
 
 
 def test_references_resolve_to_specs(graph: CompiledAgentGraph) -> None:

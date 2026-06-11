@@ -108,7 +108,6 @@ class AgentNode:
 
     node_path: str
     node_id: str
-    parent_node_path: str | None
     declaration: NodeDeclaration
     child_nodes: tuple[AgentNode, ...]
 

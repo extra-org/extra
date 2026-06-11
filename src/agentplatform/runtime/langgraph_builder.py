@@ -101,9 +101,9 @@ def build_langgraph(
     for agent_node in graph.nodes_by_id.values():
         if agent_node.child_nodes:
             assert isinstance(agent_node.declaration, OrchestratorDeclaration)
-            routes: dict[Hashable, str] = {
-                child.node_path: child.node_path for child in agent_node.child_nodes
-            }
+            routes: dict[Hashable, str] = {}
+            for child in agent_node.child_nodes:
+                routes[child.node_path] = child.node_path
             builder.add_conditional_edges(
                 agent_node.node_path,
                 _make_router(agent_node, agent_node.declaration, model_factory, base_dir),
@@ -215,9 +215,10 @@ def _make_router(
     """
     first_child_id = agent_node.child_nodes[0].node_path
     valid_node_ids = {child.node_id for child in agent_node.child_nodes}
-    children_desc = "\n".join(
-        f"- {child.node_id}: {child.declaration.description}" for child in agent_node.child_nodes
-    )
+    child_lines: list[str] = []
+    for child in agent_node.child_nodes:
+        child_lines.append(f"- {child.node_id}: {child.declaration.description}")
+    children_desc = "\n".join(child_lines)
 
     # Build the LLM routing chain once at graph-build time (only with base_dir).
     routing_chain = None
@@ -316,10 +317,9 @@ def _as_text(content: object) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = [
-            block["text"]
-            for block in content
-            if isinstance(block, dict) and isinstance(block.get("text"), str)
-        ]
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
         return "".join(parts)
     return str(content)
