@@ -12,11 +12,9 @@ from agentplatform.spec import SpecValidationError, load_spec
 def minimal_valid_config() -> dict[str, Any]:
     return {
         "system": {"name": "demo"},
-        "resolvers": {
-            "current_date": {"class": "Resolvers", "method": "current_date"},
-        },
+        "resolvers": ["current_date"],
         "tools": {
-            "count_words": {"class": "Tools", "method": "count_words"},
+            "count_words": {"description": "Count words in a text string"},
         },
         "mcps": {
             "local_mcp": {"url": "https://example.com/mcp/sse"},
@@ -128,7 +126,8 @@ def test_missing_prompt_path_fails(tmp_path: Path) -> None:
 
 def test_hardcoded_secret_is_rejected(tmp_path: Path) -> None:
     data = minimal_valid_config()
-    data["resolvers"]["api_key_lookup"] = {"class": "Resolvers", "method": "api_key_lookup"}
+    # A resolver id that looks like a secret should be rejected.
+    data["resolvers"].append("api_key_lookup")
 
     with pytest.raises(SpecValidationError, match="Hardcoded secret-like"):
         load_tmp_config(tmp_path, data)

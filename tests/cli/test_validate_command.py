@@ -17,7 +17,8 @@ def test_validate_command_succeeds_for_example() -> None:
     assert "YAML loaded" in result.output
     assert "JSON schema valid" in result.output
     assert "Semantic validation passed" in result.output
-    assert "Configuration is valid: examples/agents.yml" in result.output
+    assert "Configuration is valid:" in result.output
+    assert "agents.yml" in result.output
 
 
 def test_validate_command_exits_nonzero_for_invalid_config(tmp_path: Path) -> None:

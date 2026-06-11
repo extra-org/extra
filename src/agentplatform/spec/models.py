@@ -33,17 +33,8 @@ class McpSpec(StrictSpecModel):
     url: str
 
 
-class PluginRefSpec(StrictSpecModel):
-    class_name: str = Field(alias="class")
-    method: str
-
-
-class ToolSpec(PluginRefSpec):
-    pass
-
-
-class ResolverSpec(PluginRefSpec):
-    pass
+class ToolSpec(StrictSpecModel):
+    description: str
 
 
 class PromptSpec(StrictSpecModel):
@@ -85,7 +76,7 @@ class AgentEngineSpec(StrictSpecModel):
     defaults: DefaultsSpec | None = None
     mcps: dict[str, McpSpec] = Field(default_factory=dict)
     tools: dict[str, ToolSpec] = Field(default_factory=dict)
-    resolvers: dict[str, ResolverSpec] = Field(default_factory=dict)
+    resolvers: list[str] = Field(default_factory=list)
     orchestrators: dict[str, OrchestratorSpec] = Field(default_factory=dict)
     agents: dict[str, AgentSpec] = Field(default_factory=dict)
 

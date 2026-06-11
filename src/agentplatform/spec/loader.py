@@ -48,7 +48,7 @@ def load_yaml_data(path: Path | str) -> dict[str, Any]:
 
 def load_spec(path: Path | str) -> LoadedSpec:
     """Load, schema-validate, model-validate, and semantically validate a spec."""
-    source_path = Path(path)
+    source_path = Path(path).resolve()
     data = load_yaml_data(source_path)
     validate_json_schema(data)
     try:

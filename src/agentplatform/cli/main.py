@@ -1,16 +1,22 @@
 """CLI entrypoint for the declarative AI-agent platform.
 
-The validation command is implemented for the YAML specification layer. Runtime
-commands (``graph``, ``run``, ``serve``, ``deploy``) are intentionally not
-implemented yet.
+This module is intentionally thin: it owns only the Typer app wiring, argument
+parsing, user-facing output, and exit codes.  All logic lives in dedicated
+modules next to this file (``generate.py``, ``run.py``).
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import typer
+from dotenv import load_dotenv
 
 from agentplatform import __version__
+from agentplatform.runtime.engine import Engine
 from agentplatform.spec import SpecError, load_spec
+from agentplatform.spec.stubs import generate_stubs
 
 app = typer.Typer(
     name="agentctl",
@@ -29,6 +35,68 @@ def main() -> None:
 def version() -> None:
     """Print the installed agentplatform version."""
     typer.echo(__version__)
+
+
+@app.command()
+def generate(path: str) -> None:
+    """Generate plugin stubs for tools and resolvers declared in the YAML.
+
+    Creates ``plugins/tools/{id}.py`` and ``plugins/resolvers/{id}.py`` next to
+    the YAML file. Existing files are never overwritten — only missing stubs are
+    added. Run once after adding a new tool or resolver to the YAML.
+    """
+    try:
+        loaded = load_spec(path)
+    except SpecError as exc:
+        typer.echo("✗ Configuration validation failed", err=True)
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    result = generate_stubs(loaded.source_path.parent, loaded.spec)
+
+    for rel in result.created:
+        typer.echo(f"  create  {rel}")
+
+    if result.created:
+        typer.echo(f"\n✓ Generated {len(result.created)} stub(s). Fill in the function bodies.")
+
+
+@app.command()
+def run(
+    path: str = typer.Argument(..., help="Path to agents.yml"),
+    message: str = typer.Argument(..., help="Message to send to the agent system"),
+    env: str | None = typer.Option(None, "--env", help="Path to .env (default: next to YAML)"),
+) -> None:
+    """Run a message through the agent system defined in the YAML.
+
+    Loads the YAML, compiles the graph in memory, loads plugins and prompts,
+    then invokes the agent with the given message and prints the answer.
+
+    API keys are read from the .env file next to the YAML (or --env path).
+    """
+    env_path = Path(env) if env else Path(path).resolve().parent / ".env"
+    load_dotenv(env_path, override=True)
+    typer.echo(f"  env    : {env_path}", file=sys.stderr)
+
+    try:
+        loaded = load_spec(path)
+    except SpecError as exc:
+        typer.echo("✗ Configuration invalid", err=True)
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        result = Engine(loaded).run(message)
+    except Exception as exc:
+        typer.echo(f"✗ Runtime error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"  system : {result.system_name}", err=True)
+    typer.echo(f"  message: {message}", err=True)
+    typer.echo("", err=True)
+    typer.echo(f"  route  : {' → '.join(result.visited)}", err=True)
+    typer.echo("", err=True)
+    typer.echo(result.answer)  # stdout — pipeable
 
 
 @app.command()

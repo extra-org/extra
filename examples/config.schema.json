@@ -56,17 +56,28 @@
     },
     "tools": {
       "type": "object",
-      "description": "Declarations of tools. A tool is a Python plugin method exposed to the LLM and invoked by the LLM at runtime (consumes tokens). Each declaration references a class + method in the customer's plugins. Tools are the runtime-decision counterpart to resolvers.",
+      "description": "Declarations of tools. A tool is a Python function the LLM may call at runtime. Each key is the tool id; the implementation lives in plugins/tools/{id}.py. Run `agentctl generate` to create stubs.",
       "additionalProperties": {
-        "$ref": "#/$defs/pluginRef"
+        "type": "object",
+        "required": ["description"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "What this tool does. Shown to the LLM so it can decide when to call it.",
+            "minLength": 1
+          }
+        }
       }
     },
     "resolvers": {
-      "type": "object",
-      "description": "Declarations of resolvers. A resolver is a Python plugin method that fills a {{variable}} in a prompt BEFORE the node runs. It is deterministic, runs without the LLM, and consumes no tokens. The method receives a `ctx` argument (built by the engine from request headers and other request data) and returns the value for the variable. The declaration key is the variable name used as {{key}} in prompt files.",
-      "additionalProperties": {
-        "$ref": "#/$defs/pluginRef"
-      }
+      "type": "array",
+      "description": "Declarations of resolver ids. A resolver is a Python function in plugins/resolvers/{id}.py that returns a value injected as {{id}} into prompt templates before the node runs. Run `agentctl generate` to create stubs.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
     },
     "orchestrators": {
       "type": "object",
@@ -88,27 +99,6 @@
     }
   },
   "$defs": {
-    "pluginRef": {
-      "type": "object",
-      "description": "A reference to a Python plugin method. Plugins are always classes with an __init__ (for shared state such as db/rest/auth clients, built once and reused) and methods (one capability each). This class+method shape is uniform across tools, resolvers, and access_resolver.",
-      "required": [
-        "class",
-        "method"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "class": {
-          "type": "string",
-          "description": "Name of the plugin class defined in the customer's plugins directory.",
-          "minLength": 1
-        },
-        "method": {
-          "type": "string",
-          "description": "Name of the method on the class that implements this capability.",
-          "minLength": 1
-        }
-      }
-    },
     "model": {
       "type": "object",
       "description": "A complete model configuration. Used as a default and as a full-replacement override on a node.",

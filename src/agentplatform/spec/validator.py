@@ -6,6 +6,7 @@ from pathlib import Path
 
 from agentplatform.spec.errors import SpecValidationError, ValidationIssue
 from agentplatform.spec.models import AgentEngineSpec, AgentSpec, OrchestratorSpec, PromptSpec
+from agentplatform.utils import ProjectPaths
 
 SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
 
@@ -213,8 +214,7 @@ def _validate_protected_access(
     if not protected_nodes:
         return
 
-    access_plugin = base_dir / "plugins" / "access.py"
-    if not access_plugin.is_file():
+    if not ProjectPaths(base_dir).access_plugin.is_file():
         issues.append(
             ValidationIssue(
                 path="$.agents",

@@ -9,6 +9,9 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.poetry]
+package-mode = false
+
 [project]
 name = "agentplatform"
 description = "A declarative platform for building AI agent systems (foundation phase)."
@@ -41,6 +44,10 @@ dependencies = [
     "uvicorn>=0.30",
     "httpx>=0.27",
     "jinja2>=3.1",
+    "langgraph>=0.2",
+    "langchain>=0.3",
+    "langchain-core>=0.3",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -50,6 +57,10 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.10",
 ]
+# Provider integrations are optional — install the one your YAML's
+# `model.provider` references. `init_chat_model` imports it lazily.
+anthropic = ["langchain-anthropic>=0.3"]
+openai = ["langchain-openai>=0.3"]
 
 # CLI entrypoint. `agentctl` is the working CLI name used throughout the docs
 # (see docs/ARCHITECTURE.md and docs/ROADMAP.md); `agent-platform` is provided as

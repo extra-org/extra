@@ -13,7 +13,7 @@ system:
 defaults:
   model:
     provider: anthropic
-    name: claude-sonnet-4-6
+    name: claude-haiku-4-5   # cheap model for development; upgrade per-node for production
     temperature: 0.7
 
 # ---- 2. DECLARATIONS ----
@@ -26,22 +26,14 @@ mcps:
 
 tools:
   book_flight:
-    class: FlightTools
-    method: book_flight
+    description: "Search and book a flight given origin, destination and travel date"
   add_to_cart:
-    class: SuperTools
-    method: add_to_cart
+    description: "Add a product to the customer's supermarket cart by item name and quantity"
 
 resolvers:
-  current_date:
-    class: Resolvers
-    method: current_date
-  user_name:
-    class: Resolvers
-    method: user_name
-  subscription:
-    class: Resolvers
-    method: subscription
+  - current_date
+  - user_name
+  - subscription
 
 orchestrators:
   main_router:
@@ -60,7 +52,7 @@ orchestrators:
       system:       "prompts/flights_router/system.md"
     model:
       provider: anthropic
-      name: claude-haiku-4-5
+      name: claude-sonnet-4-6  # per-node override — demonstrates model per node
       temperature: 0.0
 
 agents:
