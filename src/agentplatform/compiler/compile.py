@@ -40,7 +40,7 @@ def compile_spec(spec: AgentEngineSpec) -> CompiledAgentGraph:
     default_model = spec.defaults.model if spec.defaults else None
     declarations = _build_declarations(spec, default_model)
 
-    (root_id, root_children), = spec.graph.items()
+    root_id, root_children = next(iter(spec.graph.items()))
     root = _expand_node(
         node_id=root_id,
         children=root_children,
