@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from typer.testing import CliRunner
 
@@ -126,15 +126,24 @@ def test_execution_context_does_not_contain_mcp_connections() -> None:
 
 def test_cli_run_still_works_without_starting_real_mcp_client(monkeypatch: Any) -> None:
     class FakeEngine:
+        calls: ClassVar[list[str]] = []
+
         def __init__(self, loaded: object) -> None:
             self.loaded = loaded
 
+        def start(self) -> None:
+            self.calls.append("start")
+
         def run(self, message: str) -> RunResult:
+            self.calls.append("run")
             return RunResult(
                 system_name="Rami Levy AI System",
                 visited=["main_router", "main_router/flights_router"],
                 answer=f"echo:{message}",
             )
+
+        def stop(self) -> None:
+            self.calls.append("stop")
 
     monkeypatch.setattr(cli_main, "Engine", FakeEngine)
     result = CliRunner().invoke(cli_main.app, ["run", str(EXAMPLE), "hello"])
@@ -142,3 +151,29 @@ def test_cli_run_still_works_without_starting_real_mcp_client(monkeypatch: Any) 
     assert result.exit_code == 0
     assert "echo:hello" in result.stdout
     assert "route  : main_router" in result.stderr
+    assert FakeEngine.calls == ["start", "run", "stop"]
+
+
+def test_cli_run_stops_engine_when_run_raises(monkeypatch: Any) -> None:
+    class FailingEngine:
+        calls: ClassVar[list[str]] = []
+
+        def __init__(self, loaded: object) -> None:
+            self.loaded = loaded
+
+        def start(self) -> None:
+            self.calls.append("start")
+
+        def run(self, message: str) -> RunResult:
+            self.calls.append("run")
+            raise RuntimeError("boom")
+
+        def stop(self) -> None:
+            self.calls.append("stop")
+
+    monkeypatch.setattr(cli_main, "Engine", FailingEngine)
+    result = CliRunner().invoke(cli_main.app, ["run", str(EXAMPLE), "hello"])
+
+    assert result.exit_code == 1
+    assert "Runtime error: boom" in result.stderr
+    assert FailingEngine.calls == ["start", "run", "stop"]

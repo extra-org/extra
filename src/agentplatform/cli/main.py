@@ -132,7 +132,12 @@ def run(
         raise typer.Exit(code=1) from exc
 
     try:
-        result = Engine(loaded).run(message)
+        engine = Engine(loaded)
+        try:
+            engine.start()
+            result = engine.run(message)
+        finally:
+            engine.stop()
     except Exception as exc:
         typer.echo(f"✗ Runtime error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
