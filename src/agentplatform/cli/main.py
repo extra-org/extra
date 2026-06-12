@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from agentplatform import __version__
 from agentplatform.runtime.engine import Engine
 from agentplatform.spec import SpecError, load_spec
-from agentplatform.spec.stubs import generate_stubs
+from agentplatform.spec.stubs import ResolverGenerateMode, generate_stubs
 
 app = typer.Typer(
     name="agentctl",
@@ -38,13 +38,44 @@ def version() -> None:
 
 
 @app.command()
-def generate(path: str) -> None:
+def generate(
+    path: str = typer.Argument(..., help="Path to agents.yml"),
+    mode: str = typer.Option(
+        "all",
+        "--mode",
+        help="Resolver generation mode: 'all', 'children', or 'child'.",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent id to generate (required when --mode=child).",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "--overwrite",
+        help="Overwrite existing generated files instead of preserving them.",
+    ),
+) -> None:
     """Generate plugin stubs for tools and resolvers declared in the YAML.
 
     Creates ``plugins/tools/{id}.py`` plus the resolver class/config files next
-    to the YAML file. Existing files are never overwritten — only missing stubs
-    are added. Run once after adding a new tool or resolver to the YAML.
+    to the YAML file. Existing files are never overwritten by default — only
+    missing stubs are added. Use --force to regenerate.
+
+    Generation modes control which resolver files are affected:
+
+    \b
+      --mode all       Regenerate everything (base, all children, TOML).
+      --mode children  Generate/update all child resolver classes only.
+      --mode child     Generate/update one specific child (requires --agent).
     """
+    try:
+        resolver_mode = ResolverGenerateMode(mode)
+    except ValueError as exc:
+        typer.echo(f"✗ Invalid mode '{mode}'. Must be one of: all, children, child.", err=True)
+        raise typer.Exit(code=1) from exc
+
     try:
         loaded = load_spec(path)
     except SpecError as exc:
@@ -52,7 +83,17 @@ def generate(path: str) -> None:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    result = generate_stubs(loaded.source_path.parent, loaded.spec)
+    try:
+        result = generate_stubs(
+            loaded.source_path.parent,
+            loaded.spec,
+            resolver_mode=resolver_mode,
+            resolver_agent_id=agent,
+            overwrite=force,
+        )
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
     for rel in result.created:
         typer.echo(f"  create  {rel}")

@@ -43,6 +43,13 @@ class ResolverSpec(StrictSpecModel):
     scope: str = "agent"
     return_type: str = "str"
 
+    @field_validator("scope")
+    @classmethod
+    def _validate_scope(cls, value: str) -> str:
+        if value not in ("agent", "shared"):
+            raise ValueError(f"Invalid resolver scope '{value}'. Must be 'agent' or 'shared'.")
+        return value
+
 
 class PromptSpec(StrictSpecModel):
     orchestrator: str | None = None

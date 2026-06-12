@@ -157,12 +157,14 @@ def _expand_node(
 
     child_nodes: list[AgentNode] = []
     for child_id, grandchildren in (children or {}).items():
-        child_nodes.append(_expand_node(
-            node_id=child_id,
-            children=grandchildren,
-            parent_path=node_path,
-            declarations=declarations,
-        ))
+        child_nodes.append(
+            _expand_node(
+                node_id=child_id,
+                children=grandchildren,
+                parent_path=node_path,
+                declarations=declarations,
+            )
+        )
 
     return AgentNode(
         node_path=node_path,

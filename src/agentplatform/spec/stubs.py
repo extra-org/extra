@@ -74,6 +74,14 @@ def generate_stubs(
         for resolver_id, resolver in spec.resolvers.items()
         if resolver.scope == "shared"
     }
+    for agent_id, agent_resolver_ids in resolver_agents.items():
+        for resolver_id in agent_resolver_ids:
+            if resolver_id not in spec.resolvers:
+                raise ValueError(
+                    f"Agent '{agent_id}' references resolver '{resolver_id}' "
+                    "which is not defined in the resolvers section."
+                )
+
     selected_agents = _select_resolver_agents(
         resolver_agents,
         mode=resolver_mode,
