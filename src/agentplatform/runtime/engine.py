@@ -9,6 +9,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 import threading
 from collections.abc import Coroutine, Iterator
@@ -22,6 +23,8 @@ from agentplatform.runtime.streaming import RunStreamEvent
 from agentplatform.runtime.tool_models import ToolUsageRecord
 from agentplatform.runtime.tool_registry import LocalToolProvider, MCPToolProvider, ToolRegistry
 from agentplatform.spec.loader import LoadedSpec
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -60,6 +63,7 @@ class Engine:
         *,
         mcp_client_factory: MCPClientFactory | None = None,
     ) -> None:
+        logger.info("Initializing engine for config=%s", loaded.source_path)
         graph = compile_spec(loaded.spec)
         self._system_name = graph.system_name
         self._mcp_manager = MCPManager(
@@ -83,6 +87,7 @@ class Engine:
             agents_yml=loaded.source_path,
             tool_registry=self._tool_registry,
         )
+        logger.info("Engine initialization completed system=%s", self._system_name)
 
     @property
     def system_name(self) -> str:
@@ -112,14 +117,17 @@ class Engine:
         if self._mcp_loop is not None:
             return
 
+        logger.info("Engine.start() — starting runtime infrastructure")
         loop = _EngineAsyncLoop()
         try:
             loop.run(self._mcp_manager.start())
         except Exception:
+            logger.exception("Engine.start() failed while starting MCP infrastructure")
             loop.close()
             raise
 
         self._mcp_loop = loop
+        logger.debug("Engine.start() completed")
 
     def stop(self) -> None:
         """Stop long-lived runtime infrastructure."""
@@ -129,23 +137,29 @@ class Engine:
         if loop is None:
             return
 
+        logger.info("Engine.stop() — stopping runtime infrastructure")
         try:
             loop.run(self._mcp_manager.stop())
         finally:
             loop.close()
+            logger.debug("Engine.stop() completed")
 
     def run(self, message: str) -> RunResult:
         """Invoke the agent system with *message* and return the result."""
+        logger.info("Engine.run() invoked system=%s", self._system_name)
         used_tools: list[ToolUsageRecord] = []
         input_state: dict[str, object] = {"message": message, "used_tools": used_tools}
         try:
             result = self._app.invoke(cast(Any, input_state))
         except Exception as exc:
+            logger.error("Engine.run() failed: %s", exc)
             raise EngineRunError(str(exc), used_tools=tuple(used_tools)) from exc
 
+        visited = result.get("visited", [])
+        logger.info("Engine.run() completed route=%s", " → ".join(visited))
         return RunResult(
             system_name=self._system_name,
-            visited=result.get("visited", []),
+            visited=visited,
             answer=result.get("answer", ""),
             used_tools=tuple(result.get("used_tools", used_tools)),
         )
@@ -157,6 +171,7 @@ class Engine:
         before streaming when runtime infrastructure such as MCP is needed, and
         must call ``stop()`` in their own ``finally`` block.
         """
+        logger.info("Engine.stream() started system=%s", self._system_name)
         event_queue: queue.Queue[RunStreamEvent | BaseException | None] = queue.Queue()
         used_tools: list[ToolUsageRecord] = []
 
@@ -176,9 +191,11 @@ class Engine:
             try:
                 result = self._app.invoke(cast(Any, input_state))
             except Exception as exc:
+                logger.error("Engine.stream() run failed: %s", exc)
                 event_queue.put(exc)
                 return
 
+            logger.debug("Engine.stream() emitting final event")
             event_queue.put(
                 RunStreamEvent(
                     type="final",
@@ -201,6 +218,7 @@ class Engine:
             while True:
                 item = event_queue.get()
                 if item is None:
+                    logger.info("Engine.stream() completed")
                     break
                 if isinstance(item, BaseException):
                     raise EngineRunError(str(item), used_tools=tuple(used_tools)) from item

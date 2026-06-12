@@ -16,6 +16,8 @@ one graph root, every graph id is declared, all references resolve, no cycles.
 
 from __future__ import annotations
 
+import logging
+
 from agentplatform.graph.models import (
     AgentDeclaration,
     AgentNode,
@@ -34,9 +36,19 @@ from agentplatform.spec.models import (
     OrchestratorSpec,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def compile_spec(spec: AgentEngineSpec) -> CompiledAgentGraph:
     """Compile a validated spec into an immutable compiled graph."""
+    logger.info(
+        "Compiling spec system=%s agents=%d orchestrators=%d mcps=%d tools=%d",
+        spec.system.name,
+        len(spec.agents),
+        len(spec.orchestrators),
+        len(spec.mcps),
+        len(spec.tools),
+    )
     default_model = spec.defaults.model if spec.defaults else None
     declarations = _build_declarations(spec, default_model)
 
@@ -51,6 +63,12 @@ def compile_spec(spec: AgentEngineSpec) -> CompiledAgentGraph:
     nodes_by_id: dict[str, AgentNode] = {}
     _index_nodes(root, nodes_by_id)
 
+    logger.info(
+        "Compile completed system=%s root=%s nodes=%d",
+        spec.system.name,
+        root.node_path,
+        len(nodes_by_id),
+    )
     return CompiledAgentGraph(
         system_name=spec.system.name,
         root=root,

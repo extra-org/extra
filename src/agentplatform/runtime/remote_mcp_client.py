@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol
 from urllib.parse import urlparse
 
+from agentplatform.logging_setup import sanitize_url_for_logging
 from agentplatform.runtime.mcp_manager import MCPClientProtocol
 from agentplatform.runtime.tool_models import MCPToolDefinition
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteMCPClientError(RuntimeError):
@@ -56,10 +60,22 @@ class GenericRemoteMCPClient(MCPClientProtocol):
         self._session_factory = session_factory or _client_session
         self._commands: asyncio.Queue[_ClientCommand] | None = None
         self._session_task: asyncio.Task[None] | None = None
+        logger.debug(
+            "Initialized remote MCP client server=%s url=%s transport=%s",
+            server_id,
+            sanitize_url_for_logging(self.url),
+            self.transport,
+        )
 
     async def connect(self) -> None:
         if self._session_task is not None:
             return
+
+        logger.debug(
+            "Connecting remote MCP client server=%s url=%s",
+            self.server_id,
+            sanitize_url_for_logging(self.url),
+        )
 
         commands: asyncio.Queue[_ClientCommand] = asyncio.Queue()
         ready: asyncio.Future[object] = asyncio.get_running_loop().create_future()
@@ -80,6 +96,7 @@ class GenericRemoteMCPClient(MCPClientProtocol):
         if task is None or commands is None:
             return
 
+        logger.debug("Closing remote MCP client server=%s", self.server_id)
         future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
         await commands.put(_ClientCommand(kind="close", future=future))
         await future
@@ -129,6 +146,7 @@ class GenericRemoteMCPClient(MCPClientProtocol):
                         f"MCP server '{self.server_id}' failed to initialize MCP session: {exc}"
                     ) from exc
 
+                logger.debug("MCP session established server=%s", self.server_id)
                 ready.set_result(None)
 
                 while True:
@@ -155,12 +173,14 @@ class GenericRemoteMCPClient(MCPClientProtocol):
     async def _handle_command(self, session: Any, command: _ClientCommand) -> None:
         try:
             if command.kind == "list_tools":
+                logger.debug("tools/list started server=%s", self.server_id)
                 result = await session.list_tools()
                 tools = getattr(result, "tools", None)
                 if not isinstance(tools, list):
                     raise RemoteMCPClientError(
                         f"MCP server '{self.server_id}' returned invalid tools/list response."
                     )
+                logger.debug("tools/list completed server=%s tools=%d", self.server_id, len(tools))
                 command.future.set_result(
                     [_tool_definition_from_sdk_tool(self.server_id, tool) for tool in tools]
                 )
@@ -171,7 +191,13 @@ class GenericRemoteMCPClient(MCPClientProtocol):
                     raise RemoteMCPClientError(
                         f"MCP server '{self.server_id}' received invalid tool command."
                     )
+                logger.debug(
+                    "tools/call started server=%s tool=%s", self.server_id, command.tool_name
+                )
                 result = await session.call_tool(command.tool_name, command.arguments)
+                logger.debug(
+                    "tools/call completed server=%s tool=%s", self.server_id, command.tool_name
+                )
                 command.future.set_result(
                     _normalize_call_tool_result(self.server_id, command.tool_name, result)
                 )

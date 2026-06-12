@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -7,6 +8,8 @@ from agentplatform.runtime.context import ExecutionContext
 from agentplatform.runtime.mcp_manager import MCPManager
 from agentplatform.runtime.tool_models import RuntimeTool, RuntimeToolBinding
 from agentplatform.spec.models import AgentEngineSpec
+
+logger = logging.getLogger(__name__)
 
 
 class ToolRegistryError(RuntimeError):
@@ -139,6 +142,7 @@ class ToolRegistry:
 
     def get_tool_bindings_for_agent(self, agent_id: str) -> list[RuntimeToolBinding]:
         by_name: dict[str, RuntimeToolBinding] = {}
+        counts: dict[str, int] = {}
 
         for provider in self._providers:
             for binding in provider.get_tool_bindings_for_agent(agent_id):
@@ -146,13 +150,28 @@ class ToolRegistry:
 
                 if name in by_name:
                     existing = by_name[name]
+                    logger.error(
+                        "Duplicate tool name=%s for agent=%s providers=%s,%s",
+                        name,
+                        agent_id,
+                        existing.provider_id,
+                        binding.provider_id,
+                    )
                     raise ToolRegistryError(
                         f"Duplicate runtime tool name '{name}' exposed by "
                         f"'{existing.provider_id}' and '{binding.provider_id}'."
                     )
 
                 by_name[name] = binding
+                counts[binding.provider_id] = counts.get(binding.provider_id, 0) + 1
 
+        logger.debug(
+            "Resolved tools for agent=%s local=%d mcp=%d total=%d",
+            agent_id,
+            counts.get("local", 0),
+            counts.get("mcp", 0),
+            len(by_name),
+        )
         return list(by_name.values())
 
     def get_tools_for_agent(self, agent_id: str) -> list[RuntimeTool]:
@@ -172,8 +191,16 @@ class ToolRegistry:
 
         binding = bindings.get(tool_name)
         if binding is None:
+            logger.error("Tool=%s is not allowed for agent=%s", tool_name, agent_id)
             raise ToolRegistryError(f"Tool '{tool_name}' is not allowed for agent '{agent_id}'.")
 
+        logger.info(
+            "Routing tool=%s for agent=%s provider=%s server=%s",
+            tool_name,
+            agent_id,
+            binding.provider_id,
+            binding.server_id or "-",
+        )
         for provider in self._providers:
             if provider.provider_id == binding.provider_id:
                 return await provider.call_tool(

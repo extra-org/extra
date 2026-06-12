@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from agentplatform.spec.errors import SpecLoadError, SpecSchemaError, Validation
 from agentplatform.spec.models import AgentEngineSpec
 from agentplatform.spec.schema import validate_json_schema
 from agentplatform.spec.validator import validate_spec
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -49,21 +52,26 @@ def load_yaml_data(path: Path | str) -> dict[str, Any]:
 def load_spec(path: Path | str) -> LoadedSpec:
     """Load, schema-validate, model-validate, and semantically validate a spec."""
     source_path = Path(path).resolve()
+    logger.info("Loading spec YAML path=%s", source_path)
     data = load_yaml_data(source_path)
+    logger.debug("Validating spec against JSON schema path=%s", source_path)
     validate_json_schema(data)
     try:
         spec = AgentEngineSpec.model_validate(data)
     except ValidationError as exc:
+        issues = exc.errors()
+        logger.error("Spec validation failed path=%s issues=%d", source_path, len(issues))
         raise SpecSchemaError(
             [
                 ValidationIssue(
                     path=_pydantic_path(issue["loc"]),
                     message=str(issue["msg"]),
                 )
-                for issue in exc.errors()
+                for issue in issues
             ]
         ) from exc
     validate_spec(spec, base_dir=source_path.parent)
+    logger.info("Spec validation completed path=%s", source_path)
     return LoadedSpec(spec=spec, source_path=source_path)
 
 

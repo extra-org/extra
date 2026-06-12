@@ -36,6 +36,7 @@ fake that stays offline.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Hashable
 from pathlib import Path
 from typing import Any, cast
@@ -63,6 +64,8 @@ from agentplatform.runtime.plugin_loader import PluginLoader
 from agentplatform.runtime.state import GraphState
 from agentplatform.runtime.tool_models import ToolProviderName, ToolUsageRecord, ToolUsageStatus
 from agentplatform.runtime.tool_registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 ModelFactory = Callable[[str, str, float | None], BaseChatModel]
 
@@ -149,6 +152,7 @@ def _make_node(
     match agent_node.declaration:
         case OrchestratorDeclaration():
             node_path = agent_node.node_path
+            logger.debug("Creating orchestrator node=%s", node_path)
 
             def orchestrator_node(state: GraphState) -> dict[str, object]:
                 return {"visited": [*state.get("visited", []), node_path]}
@@ -180,6 +184,12 @@ def _make_agent_node(
 ) -> Callable[[GraphState], dict[str, object]]:
     """Agent (leaf) node: resolves context, builds prompt, calls model in a loop."""
     node_path = agent_node.node_path
+    logger.debug(
+        "Creating agent node=%s model_provider=%s model_name=%s",
+        node_path,
+        declaration.model_provider,
+        declaration.model_name,
+    )
 
     # Build local Python tools once at graph-build time. MCP runtime tools need
     # the per-request ExecutionContext, so they are adapted inside the node.
@@ -227,6 +237,12 @@ def _make_agent_node(
             )
 
         tools = [*local_tools, *runtime_tools]
+        logger.debug(
+            "Agent node=%s binding tools local=%d mcp=%d",
+            node_path,
+            len(local_tools),
+            len(runtime_tools),
+        )
         model = base_model.bind_tools(tools) if tools else base_model
         tool_map: dict[str, BaseTool] = {t.name: t for t in tools}
         tool_descriptors = {
@@ -261,8 +277,14 @@ def _make_agent_node(
         _stream_route(state, route)
 
         # Tool-call loop: run until the model stops requesting tools.
+        logger.info("Agent node=%s invoking model", node_path)
         response = cast(Any, _invoke_model(model, messages, state))
         while getattr(response, "tool_calls", None):
+            logger.debug(
+                "Agent node=%s received tool_calls=%s",
+                node_path,
+                [tc["name"] for tc in response.tool_calls],
+            )
             messages.append(response)
             for tc in response.tool_calls:
                 tool_name = tc["name"]
@@ -297,6 +319,7 @@ def _make_agent_node(
                 messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
             response = cast(Any, _invoke_model(model, messages, state))
 
+        logger.info("Agent node=%s produced final answer", node_path)
         return {
             "visited": list(route),
             "answer": _as_text(response.content),
@@ -364,11 +387,23 @@ def _make_router(
                 if isinstance(decision, _RouteDecision) and decision.next in valid_node_ids:
                     for child in agent_node.child_nodes:
                         if child.node_id == decision.next:
+                            logger.info(
+                                "Orchestrator=%s routed to child=%s",
+                                agent_node.node_path,
+                                child.node_path,
+                            )
                             return child.node_path
             except Exception:  # routing failure → fall through to first-child fallback
-                pass
+                logger.warning(
+                    "Orchestrator=%s LLM routing failed; falling back to first child=%s",
+                    agent_node.node_path,
+                    first_child_id,
+                )
 
         # 2. Fallback.
+        logger.debug(
+            "Orchestrator=%s using fallback child=%s", agent_node.node_path, first_child_id
+        )
         return first_child_id
 
     return route

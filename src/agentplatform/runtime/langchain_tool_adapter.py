@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Coroutine, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol
@@ -10,6 +11,8 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from agentplatform.runtime.context import ExecutionContext
 from agentplatform.runtime.tool_models import RuntimeTool
+
+logger = logging.getLogger(__name__)
 
 
 class LangChainToolAdapterError(RuntimeError):
@@ -37,6 +40,7 @@ def build_langchain_tools_from_runtime_tools(
     """Adapt source-agnostic runtime tool metadata into executable LangChain tools."""
     _ensure_unique_runtime_tool_names(agent_id, runtime_tools)
 
+    logger.debug("Adapting runtime tools for agent=%s count=%d", agent_id, len(runtime_tools))
     return [
         _build_langchain_tool(
             agent_id=agent_id,
@@ -78,6 +82,7 @@ def _build_langchain_tool(
     ctx: ExecutionContext,
 ) -> BaseTool:
     def run_tool(**arguments: object) -> str:
+        logger.debug("Executing adapted tool=%s for agent=%s", runtime_tool.name, agent_id)
         try:
             result = _run_async_tool_call(
                 tool_registry.call_tool(
@@ -88,13 +93,21 @@ def _build_langchain_tool(
                 )
             )
         except Exception as exc:
+            logger.error("Adapted tool=%s failed for agent=%s", runtime_tool.name, agent_id)
             raise LangChainToolAdapterError(
                 f"Tool '{runtime_tool.name}' failed for agent '{agent_id}': {exc}"
             ) from exc
 
+        logger.debug(
+            "Adapted tool=%s succeeded for agent=%s result_type=%s",
+            runtime_tool.name,
+            agent_id,
+            type(result).__name__,
+        )
         return normalize_tool_result(result)
 
     async def arun_tool(**arguments: object) -> str:
+        logger.debug("Executing adapted tool=%s for agent=%s", runtime_tool.name, agent_id)
         try:
             result = await tool_registry.call_tool(
                 agent_id=agent_id,
@@ -103,10 +116,17 @@ def _build_langchain_tool(
                 ctx=ctx,
             )
         except Exception as exc:
+            logger.error("Adapted tool=%s failed for agent=%s", runtime_tool.name, agent_id)
             raise LangChainToolAdapterError(
                 f"Tool '{runtime_tool.name}' failed for agent '{agent_id}': {exc}"
             ) from exc
 
+        logger.debug(
+            "Adapted tool=%s succeeded for agent=%s result_type=%s",
+            runtime_tool.name,
+            agent_id,
+            type(result).__name__,
+        )
         return normalize_tool_result(result)
 
     return StructuredTool.from_function(

@@ -7,6 +7,7 @@ modules next to this file (``generate.py``, ``run.py``).
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -14,11 +15,15 @@ import typer
 from dotenv import load_dotenv
 
 from agentplatform import __version__
+from agentplatform.logging_setup import configure_logging
 from agentplatform.runtime.engine import Engine, EngineRunError
 from agentplatform.runtime.streaming import RunStreamEvent
 from agentplatform.runtime.tool_models import ToolUsageRecord
 from agentplatform.spec import SpecError, load_spec
 from agentplatform.spec.stubs import ResolverGenerateMode, generate_stubs
+
+# need to configure it correctly (should be __name__)
+logger = logging.getLogger("agentplatform.cli.main")
 
 app = typer.Typer(
     name="agentctl",
@@ -115,6 +120,13 @@ def run(
     message: str = typer.Argument(..., help="Message to send to the agent system"),
     env: str | None = typer.Option(None, "--env", help="Path to .env (default: next to YAML)"),
     stream: bool = typer.Option(False, "--stream", help="Stream the final assistant answer."),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable INFO-level diagnostic logs on stderr."
+    ),
+    debug: bool = typer.Option(
+        False, "--debug", help="Enable DEBUG-level diagnostic logs on stderr."
+    ),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-error diagnostic logs."),
 ) -> None:
     """Run a message through the agent system defined in the YAML.
 
@@ -123,35 +135,46 @@ def run(
 
     API keys are read from the .env file next to the YAML (or --env path).
     """
+    configure_logging(verbose=verbose, debug=debug, quiet=quiet)
+
     env_path = Path(env) if env else Path(path).resolve().parent / ".env"
     load_dotenv(env_path, override=True)
+    logger.info("Loaded environment from env file=%s", env_path)
+    logger.info("Loading agent spec from config=%s", path)
     typer.echo(f"  env    : {env_path}", file=sys.stderr)
 
     try:
         loaded = load_spec(path)
     except SpecError as exc:
+        logger.error("Configuration invalid for config=%s", path)
         typer.echo("✗ Configuration invalid", err=True)
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
+    logger.info("Starting agent run mode=%s", "streaming" if stream else "non-streaming")
     try:
         engine = Engine(loaded)
         try:
             engine.start()
             if stream:
                 _run_streaming(engine, loaded.spec.system.name, message)
+                logger.info("Agent run completed")
                 return
             result = engine.run(message)
         finally:
             engine.stop()
     except EngineRunError as exc:
+        logger.error("Agent run failed: %s", exc)
         if exc.used_tools:
             _print_tool_usage(exc.used_tools)
         typer.echo(f"✗ Runtime error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     except Exception as exc:
+        logger.exception("Agent run failed unexpectedly")
         typer.echo(f"✗ Runtime error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+
+    logger.info("Agent run completed route=%s", " → ".join(result.visited))
 
     typer.echo(f"  system : {result.system_name}", err=True)
     typer.echo(f"  message: {message}", err=True)
@@ -181,6 +204,7 @@ def _run_streaming(engine: Engine, system_name: str, message: str) -> None:
 
         if event.type == "answer_delta" and event.content:
             if not answer_started:
+                logger.debug("First answer delta received")
                 typer.echo("answer :", err=True)
                 answer_started = True
             sys.stdout.write(event.content)
