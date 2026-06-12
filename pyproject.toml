@@ -47,6 +47,7 @@ dependencies = [
     "langgraph>=0.2",
     "langchain>=0.3",
     "langchain-core>=0.3",
+    "mcp>=1.27,<2",
     "python-dotenv>=1.0",
 ]
 
