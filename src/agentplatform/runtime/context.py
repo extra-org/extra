@@ -18,3 +18,8 @@ class ExecutionContext:
     message: str
     state: dict[str, Any]
     resolved_context: dict[str, Any] = field(default_factory=dict)
+    request_id: str | None = None
+    trace_events: list[dict[str, Any]] = field(default_factory=list)
+
+    def add_trace_event(self, event: dict[str, Any]) -> None:
+        self.trace_events.append(event)

@@ -56,6 +56,7 @@ from agentplatform.models import build_chat_model
 from agentplatform.runtime.context import ExecutionContext
 from agentplatform.runtime.plugin_loader import PluginLoader
 from agentplatform.runtime.state import GraphState
+from agentplatform.runtime.tool_registry import ToolRegistry
 
 ModelFactory = Callable[[str, str, float | None], BaseChatModel]
 
@@ -72,6 +73,7 @@ def build_langgraph(
     *,
     agents_yml: Path | None = None,
     model_factory: ModelFactory = build_chat_model,
+    tool_registry: ToolRegistry | None = None,
 ) -> CompiledStateGraph:
     """Build and compile a LangGraph from the compiled agent graph.
 
@@ -87,12 +89,23 @@ def build_langgraph(
     model_factory:
         Builds a ``BaseChatModel`` from ``(provider, name, temperature)``.
         Override in tests.
+    tool_registry:
+        Optional runtime tool registry. When provided, agent nodes can ask for
+        only the tools allowed for their declaration id. This does not yet bind
+        tools to LangGraph/LLM tool calling; it only provides the clean runtime
+        boundary.
     """
     loader = PluginLoader(agents_yml.parent) if agents_yml is not None else None
     builder = StateGraph(GraphState)
 
     for agent_node in graph.nodes_by_id.values():
-        node = _make_node(agent_node, model_factory, loader, agents_yml)
+        node = _make_node(
+            agent_node,
+            model_factory,
+            loader,
+            agents_yml,
+            tool_registry=tool_registry,
+        )
         builder.add_node(agent_node.node_path, node)  # type: ignore[call-overload]
 
     builder.add_edge(START, graph.root.node_path)
@@ -103,6 +116,7 @@ def build_langgraph(
             routes: dict[Hashable, str] = {}
             for child in agent_node.child_nodes:
                 routes[child.node_path] = child.node_path
+
             builder.add_conditional_edges(
                 agent_node.node_path,
                 _make_router(agent_node, agent_node.declaration, model_factory, agents_yml),
@@ -124,6 +138,8 @@ def _make_node(
     model_factory: ModelFactory,
     loader: PluginLoader | None,
     agents_yml: Path | None,
+    *,
+    tool_registry: "ToolRegistry | None" = None,
 ) -> Callable[[GraphState], dict[str, object]]:
     match agent_node.declaration:
         case OrchestratorDeclaration():
@@ -135,7 +151,15 @@ def _make_node(
             return orchestrator_node
 
         case AgentDeclaration() as decl:
-            return _make_agent_node(agent_node, decl, model_factory, loader, agents_yml)
+            return _make_agent_node(
+                agent_node,
+                decl,
+                model_factory,
+                loader,
+                agents_yml,
+                tool_registry=tool_registry,
+            )
+
         case _:
             raise TypeError(f"Unknown declaration type: {type(agent_node.declaration)}")
 
@@ -146,11 +170,19 @@ def _make_agent_node(
     model_factory: ModelFactory,
     loader: PluginLoader | None,
     agents_yml: Path | None,
+    *,
+    tool_registry: "ToolRegistry | None" = None,
 ) -> Callable[[GraphState], dict[str, object]]:
     """Agent (leaf) node: resolves context, builds prompt, calls model in a loop."""
     node_path = agent_node.node_path
 
-    # Build tools once at graph-build time.
+    # Build local Python tools once at graph-build time.
+    #
+    # Important:
+    # These are only the local tools declared directly on this agent.
+    # MCP tools are not bound here yet. They are exposed through ToolRegistry
+    # as RuntimeTool metadata and will be wired to LangGraph tool-calling in a
+    # later phase.
     tools: list[BaseTool] = []
     if loader is not None:
         for resolved_tool in declaration.tools:
@@ -166,6 +198,7 @@ def _make_agent_node(
         # Resolve context variables (called once per request, before LLM).
         ctx = ExecutionContext(message=state.get("message", ""), state=dict(state))
         context: dict[str, str] = {}
+
         if loader is not None:
             for resolved_resolver in declaration.resolvers:
                 fn = loader.load_resolver(declaration.node_id, resolved_resolver.id)
@@ -173,13 +206,28 @@ def _make_agent_node(
                 ctx.resolved_context[resolved_resolver.id] = value
                 context[resolved_resolver.id] = str(value)
 
+        # Clean tool-runtime boundary.
+        #
+        # This retrieves the generic runtime tool metadata allowed for this agent:
+        # - local tools from agent.tools
+        # - MCP tools from agent.mcps, if MCPManager has been started/discovered
+        #
+        # We do not bind these RuntimeTool objects to the model yet. That is the
+        # next phase, where RuntimeTool will be adapted into LangGraph/LangChain
+        # executable tools.
+        allowed_runtime_tools = (
+            tool_registry.get_tools_for_agent(declaration.node_id)
+            if tool_registry is not None
+            else []
+        )
+
         system_prompt = _load_system_prompt(declaration, context, agents_yml)
         messages: list = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=state.get("message", "")),
         ]
 
-        # Tool-call loop: run until the model stops requesting tools.
+        # Tool-call loop: run until the model stops requesting local Python tools.
         response = model.invoke(messages)
         while getattr(response, "tool_calls", None):
             messages.append(response)
@@ -191,6 +239,7 @@ def _make_agent_node(
         return {
             "visited": [*state.get("visited", []), node_path],
             "answer": _as_text(response.content),
+            "allowed_tools": [tool.name for tool in allowed_runtime_tools],
         }
 
     return node
