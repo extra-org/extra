@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from agentplatform.runtime.context import ExecutionContext
 from agentplatform.runtime.mcp_manager import MCPManager
 from agentplatform.runtime.tool_models import RuntimeTool, RuntimeToolBinding
 from agentplatform.spec.models import AgentEngineSpec
-from collections.abc import Sequence
 
 
 class ToolRegistryError(RuntimeError):

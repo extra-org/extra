@@ -139,7 +139,7 @@ def _make_node(
     loader: PluginLoader | None,
     agents_yml: Path | None,
     *,
-    tool_registry: "ToolRegistry | None" = None,
+    tool_registry: ToolRegistry | None = None,
 ) -> Callable[[GraphState], dict[str, object]]:
     match agent_node.declaration:
         case OrchestratorDeclaration():
@@ -171,7 +171,7 @@ def _make_agent_node(
     loader: PluginLoader | None,
     agents_yml: Path | None,
     *,
-    tool_registry: "ToolRegistry | None" = None,
+    tool_registry: ToolRegistry | None = None,
 ) -> Callable[[GraphState], dict[str, object]]:
     """Agent (leaf) node: resolves context, builds prompt, calls model in a loop."""
     node_path = agent_node.node_path

@@ -9,13 +9,13 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-from typing import Any, cast
 from dataclasses import dataclass
+from typing import Any, cast
 
 from agentplatform.compiler import compile_spec
 from agentplatform.runtime.langgraph_builder import build_langgraph
 from agentplatform.runtime.mcp_manager import MCPClientFactory, MCPManager
-from agentplatform.runtime.tool_registry import MCPToolProvider, ToolRegistry, LocalToolProvider
+from agentplatform.runtime.tool_registry import LocalToolProvider, MCPToolProvider, ToolRegistry
 from agentplatform.spec.loader import LoadedSpec
 
 
