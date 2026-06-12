@@ -54,6 +54,10 @@ from agentplatform.graph.models import (
 )
 from agentplatform.models import build_chat_model
 from agentplatform.runtime.context import ExecutionContext
+from agentplatform.runtime.langchain_tool_adapter import (
+    build_langchain_tools_from_runtime_tools,
+    ensure_no_duplicate_tool_names,
+)
 from agentplatform.runtime.plugin_loader import PluginLoader
 from agentplatform.runtime.state import GraphState
 from agentplatform.runtime.tool_registry import ToolRegistry
@@ -90,10 +94,9 @@ def build_langgraph(
         Builds a ``BaseChatModel`` from ``(provider, name, temperature)``.
         Override in tests.
     tool_registry:
-        Optional runtime tool registry. When provided, agent nodes can ask for
-        only the tools allowed for their declaration id. This does not yet bind
-        tools to LangGraph/LLM tool calling; it only provides the clean runtime
-        boundary.
+        Optional runtime tool registry. When provided, agent nodes adapt
+        MCP-backed RuntimeTool metadata into executable LangChain tools that
+        delegate back through ToolRegistry.
     """
     loader = PluginLoader(agents_yml.parent) if agents_yml is not None else None
     builder = StateGraph(GraphState)
@@ -176,23 +179,14 @@ def _make_agent_node(
     """Agent (leaf) node: resolves context, builds prompt, calls model in a loop."""
     node_path = agent_node.node_path
 
-    # Build local Python tools once at graph-build time.
-    #
-    # Important:
-    # These are only the local tools declared directly on this agent.
-    # MCP tools are not bound here yet. They are exposed through ToolRegistry
-    # as RuntimeTool metadata and will be wired to LangGraph tool-calling in a
-    # later phase.
-    tools: list[BaseTool] = []
+    # Build local Python tools once at graph-build time. MCP runtime tools need
+    # the per-request ExecutionContext, so they are adapted inside the node.
+    local_tools: list[BaseTool] = []
     if loader is not None:
         for resolved_tool in declaration.tools:
-            tools.append(loader.load_tool(resolved_tool.id, resolved_tool.description))
+            local_tools.append(loader.load_tool(resolved_tool.id, resolved_tool.description))
 
-    model: BaseChatModel = _build_node_model(declaration, model_factory)
-    if tools:
-        model = model.bind_tools(tools)  # type: ignore[assignment]
-
-    tool_map: dict[str, BaseTool] = {t.name: t for t in tools}
+    base_model: BaseChatModel = _build_node_model(declaration, model_factory)
 
     def node(state: GraphState) -> dict[str, object]:
         # Resolve context variables (called once per request, before LLM).
@@ -206,20 +200,33 @@ def _make_agent_node(
                 ctx.resolved_context[resolved_resolver.id] = value
                 context[resolved_resolver.id] = str(value)
 
-        # Clean tool-runtime boundary.
-        #
-        # This retrieves the generic runtime tool metadata allowed for this agent:
-        # - local tools from agent.tools
-        # - MCP tools from agent.mcps, if MCPManager has been started/discovered
-        #
-        # We do not bind these RuntimeTool objects to the model yet. That is the
-        # next phase, where RuntimeTool will be adapted into LangGraph/LangChain
-        # executable tools.
-        allowed_runtime_tools = (
-            tool_registry.get_tools_for_agent(declaration.node_id)
-            if tool_registry is not None
-            else []
-        )
+        allowed_runtime_tools = []
+        runtime_tools: list[BaseTool] = []
+        if tool_registry is not None:
+            bindings = tool_registry.get_tool_bindings_for_agent(declaration.node_id)
+            # Local plugin tools are still bound through PluginLoader above. To
+            # avoid double-binding local tools, this step adapts only
+            # MCP-backed runtime tools while keeping execution source-agnostic
+            # through ToolRegistry.call_tool.
+            allowed_runtime_tools = [binding.tool for binding in bindings]
+            mcp_runtime_tools = [
+                binding.tool for binding in bindings if binding.provider_id == "mcp"
+            ]
+            ensure_no_duplicate_tool_names(
+                agent_id=declaration.node_id,
+                local_tools=local_tools,
+                runtime_tools=mcp_runtime_tools,
+            )
+            runtime_tools = build_langchain_tools_from_runtime_tools(
+                agent_id=declaration.node_id,
+                runtime_tools=mcp_runtime_tools,
+                tool_registry=tool_registry,
+                ctx=ctx,
+            )
+
+        tools = [*local_tools, *runtime_tools]
+        model = base_model.bind_tools(tools) if tools else base_model
+        tool_map: dict[str, BaseTool] = {t.name: t for t in tools}
 
         system_prompt = _load_system_prompt(declaration, context, agents_yml)
         messages: list = [
@@ -227,12 +234,18 @@ def _make_agent_node(
             HumanMessage(content=state.get("message", "")),
         ]
 
-        # Tool-call loop: run until the model stops requesting local Python tools.
+        # Tool-call loop: run until the model stops requesting tools.
         response = model.invoke(messages)
         while getattr(response, "tool_calls", None):
             messages.append(response)
             for tc in response.tool_calls:
-                tool_result = tool_map[tc["name"]].invoke(tc["args"])
+                tool_name = tc["name"]
+                tool = tool_map.get(tool_name)
+                if tool is None:
+                    raise RuntimeError(
+                        f"Agent '{declaration.node_id}' received unknown tool call '{tool_name}'."
+                    )
+                tool_result = tool.invoke(tc["args"])
                 messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
             response = model.invoke(messages)
 
