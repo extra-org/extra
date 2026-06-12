@@ -268,3 +268,163 @@ def test_generate_stubs_rejects_invalid_agent_resolver_class_name(tmp_path: Path
 
     with pytest.raises(ValueError, match="Cannot generate resolver class name"):
         generate_stubs(tmp_path, spec)
+
+
+def test_generate_stubs_rejects_invalid_resolver_scope() -> None:
+    with pytest.raises(ValueError, match="Invalid resolver scope"):
+        ResolverSpec(scope="global")
+
+
+def test_generate_stubs_rejects_agent_referencing_undefined_resolver(tmp_path: Path) -> None:
+    spec = AgentEngineSpec(
+        system=SystemSpec(name="demo"),
+        graph={"worker": None},
+        resolvers={"current_date": ResolverSpec()},
+        agents={
+            "worker": AgentSpec(
+                description="Worker.",
+                resolvers=["current_date", "nonexistent"],
+            ),
+        },
+    )
+
+    with pytest.raises(ValueError, match="references resolver 'nonexistent'"):
+        generate_stubs(tmp_path, spec)
+
+
+def test_generate_stubs_child_mode_without_agent_raises(tmp_path: Path) -> None:
+    spec = _spec_with_resolver_agents()
+
+    with pytest.raises(ValueError, match="resolver_agent_id is required"):
+        generate_stubs(
+            tmp_path,
+            spec,
+            resolver_mode=ResolverGenerateMode.CHILD,
+            resolver_agent_id=None,
+        )
+
+
+def test_generate_stubs_child_mode_unknown_agent_raises(tmp_path: Path) -> None:
+    spec = _spec_with_resolver_agents()
+
+    with pytest.raises(ValueError, match="does not declare resolvers"):
+        generate_stubs(
+            tmp_path,
+            spec,
+            resolver_mode=ResolverGenerateMode.CHILD,
+            resolver_agent_id="nonexistent_agent",
+        )
+
+
+def test_generate_stubs_child_mode_agent_without_resolvers_raises(tmp_path: Path) -> None:
+    spec = _spec_with_resolver_agents()
+
+    with pytest.raises(ValueError, match="does not declare resolvers"):
+        generate_stubs(
+            tmp_path,
+            spec,
+            resolver_mode=ResolverGenerateMode.CHILD,
+            resolver_agent_id="admin_agent",
+        )
+
+
+def test_generate_stubs_child_mode_does_not_modify_unrelated_agents(tmp_path: Path) -> None:
+    spec = _spec_with_resolver_agents()
+    paths = ProjectPaths(tmp_path)
+    paths.resolvers_dir.mkdir(parents=True)
+    paths.resolver_agent("domestic_flights_agent").write_text("# customer code\n", encoding="utf-8")
+
+    generate_stubs(
+        tmp_path,
+        spec,
+        resolver_mode=ResolverGenerateMode.CHILD,
+        resolver_agent_id="super_agent",
+    )
+
+    assert (
+        paths.resolver_agent("domestic_flights_agent").read_text(encoding="utf-8")
+        == "# customer code\n"
+    )
+    assert not paths.resolver_agent("international_flights_agent").exists()
+    assert paths.resolver_agent("super_agent").is_file()
+
+
+def test_generate_stubs_force_overwrites_existing_files(tmp_path: Path) -> None:
+    spec = AgentEngineSpec(
+        system=SystemSpec(name="demo"),
+        graph={"worker": None},
+        resolvers={
+            "shared_r": ResolverSpec(scope="shared"),
+            "agent_r": ResolverSpec(scope="agent"),
+        },
+        agents={
+            "worker": AgentSpec(
+                description="Worker.",
+                resolvers=["shared_r", "agent_r"],
+            ),
+        },
+    )
+    paths = ProjectPaths(tmp_path)
+    paths.resolvers_dir.mkdir(parents=True)
+    paths.resolver_base.write_text("# old base\n", encoding="utf-8")
+    paths.resolver_agent("worker").write_text("# old worker\n", encoding="utf-8")
+    paths.resolver_config.write_text("# old config\n", encoding="utf-8")
+
+    result = generate_stubs(tmp_path, spec, overwrite=True)
+
+    assert ProjectPaths.resolver_base_rel() in result.updated
+    assert ProjectPaths.resolver_agent_rel("worker") in result.updated
+    assert ProjectPaths.resolver_config_rel() in result.updated
+    assert "class BaseResolver(ABC):" in paths.resolver_base.read_text(encoding="utf-8")
+    assert "class WorkerResolver(BaseResolver):" in paths.resolver_agent("worker").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_generate_stubs_reports_stale_scope_migration_on_base(tmp_path: Path) -> None:
+    spec = AgentEngineSpec(
+        system=SystemSpec(name="demo"),
+        graph={"worker": None},
+        resolvers={
+            "current_date": ResolverSpec(scope="agent"),
+        },
+        agents={
+            "worker": AgentSpec(
+                description="Worker.",
+                resolvers=["current_date"],
+            ),
+        },
+    )
+    paths = ProjectPaths(tmp_path)
+    paths.resolvers_dir.mkdir(parents=True)
+    paths.resolver_base.write_text(
+        "from agentplatform.runtime import ExecutionContext\n\n"
+        "class BaseResolver:\n"
+        "    def current_date(self, ctx: ExecutionContext) -> str:\n"
+        "        return 'was shared'\n",
+        encoding="utf-8",
+    )
+
+    result = generate_stubs(tmp_path, spec)
+
+    assert any("current_date" in s and "no longer shared" in s for s in result.stale)
+
+
+def test_generate_stubs_agent_id_for_non_child_mode_raises(tmp_path: Path) -> None:
+    spec = _spec_with_resolver_agents()
+
+    with pytest.raises(ValueError, match="can only be used"):
+        generate_stubs(
+            tmp_path,
+            spec,
+            resolver_mode=ResolverGenerateMode.ALL,
+            resolver_agent_id="super_agent",
+        )
+
+    with pytest.raises(ValueError, match="can only be used"):
+        generate_stubs(
+            tmp_path,
+            spec,
+            resolver_mode=ResolverGenerateMode.CHILDREN,
+            resolver_agent_id="super_agent",
+        )

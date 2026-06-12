@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 import yaml
 
-from agentplatform.spec import SpecValidationError, load_spec
+from agentplatform.spec import SpecSchemaError, SpecValidationError, load_spec
 
 
 def minimal_valid_config() -> dict[str, Any]:
@@ -104,7 +104,7 @@ def test_invalid_resolver_scope_fails(tmp_path: Path) -> None:
     data = minimal_valid_config()
     data["resolvers"] = {"current_date": {"scope": "global"}}
 
-    with pytest.raises(SpecValidationError, match="invalid scope 'global'"):
+    with pytest.raises(SpecSchemaError, match="Invalid resolver scope 'global'"):
         load_tmp_config(tmp_path, data)
 
 

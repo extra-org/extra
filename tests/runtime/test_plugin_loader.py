@@ -184,3 +184,70 @@ def test_load_resolver_rejects_signature_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ResolverPluginError, match="must accept exactly one ctx argument"):
         PluginLoader(tmp_path).load_resolver("domestic_flights_agent", "current_date")
+
+
+def test_load_resolver_invokes_shared_method_inherited_from_base(tmp_path: Path) -> None:
+    _write_resolver_plugin(
+        tmp_path,
+        base_body=(
+            "class BaseResolver:\n"
+            "    def __init__(self, **kwargs: object) -> None:\n"
+            "        pass\n"
+            "    def shared_date(self, ctx: ExecutionContext) -> str:\n"
+            "        return f'shared:{ctx.message}'\n"
+        ),
+        agent_body=(
+            "class DomesticFlightsAgentResolver(BaseResolver):\n"
+            "    def agent_specific(self, ctx: ExecutionContext) -> str:\n"
+            "        return 'agent_only'\n"
+        ),
+    )
+    loader = PluginLoader(tmp_path)
+    ctx = ExecutionContext(message="test", state={})
+
+    shared_fn = loader.load_resolver("domestic_flights_agent", "shared_date")
+    assert shared_fn(ctx) == "shared:test"
+
+    agent_fn = loader.load_resolver("domestic_flights_agent", "agent_specific")
+    assert agent_fn(ctx) == "agent_only"
+
+
+def test_load_resolver_multiple_agents_share_base_method(tmp_path: Path) -> None:
+    resolvers_dir = tmp_path / "plugins" / "resolvers"
+    resolvers_dir.mkdir(parents=True)
+    (resolvers_dir / "__init__.py").write_text('"""Resolvers."""\n', encoding="utf-8")
+    (resolvers_dir / "base.py").write_text(
+        "from agentplatform.runtime import ExecutionContext\n\n"
+        "class BaseResolver:\n"
+        "    def __init__(self, **kwargs: object) -> None:\n"
+        "        pass\n"
+        "    def shared_resolver(self, ctx: ExecutionContext) -> str:\n"
+        "        return 'shared_value'\n",
+        encoding="utf-8",
+    )
+    (resolvers_dir / "agent_a.py").write_text(
+        "from plugins.resolvers.base import BaseResolver\n\n"
+        "class AgentAResolver(BaseResolver):\n    pass\n",
+        encoding="utf-8",
+    )
+    (resolvers_dir / "agent_b.py").write_text(
+        "from plugins.resolvers.base import BaseResolver\n\n"
+        "class AgentBResolver(BaseResolver):\n    pass\n",
+        encoding="utf-8",
+    )
+    (resolvers_dir / "resolvers.toml").write_text(
+        '[resolvers]\nbase_class = "plugins.resolvers.base.BaseResolver"\n'
+        "[resolvers.agents.agent_a]\n"
+        'class = "plugins.resolvers.agent_a.AgentAResolver"\n'
+        "[resolvers.agents.agent_b]\n"
+        'class = "plugins.resolvers.agent_b.AgentBResolver"\n',
+        encoding="utf-8",
+    )
+    loader = PluginLoader(tmp_path)
+    ctx = ExecutionContext(message="hi", state={})
+
+    result_a = loader.load_resolver("agent_a", "shared_resolver")(ctx)
+    result_b = loader.load_resolver("agent_b", "shared_resolver")(ctx)
+
+    assert result_a == "shared_value"
+    assert result_b == "shared_value"

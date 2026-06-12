@@ -58,8 +58,7 @@ def repo():
     workflows = repo_path / ".ai" / "workflows"
     workflows.mkdir()
     (workflows / "feature-task.md").write_text(
-        "# Workflow: Feature Task\n\n"
-        "Canonical workflow guidance lives here.\n"
+        "# Workflow: Feature Task\n\nCanonical workflow guidance lives here.\n"
     )
     yield repo_path
     shutil.rmtree(repo_path, ignore_errors=True)
