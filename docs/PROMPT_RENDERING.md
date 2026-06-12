@@ -55,10 +55,8 @@ node:
 resolvers:
   current_date:
     scope: shared
-    return_type: str
   user_name:
     scope: shared
-    return_type: str
 
 agents:
   domestic_flights_agent:

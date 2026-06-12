@@ -110,7 +110,7 @@ def test_invalid_resolver_scope_fails(tmp_path: Path) -> None:
 
 def test_scoped_resolver_mapping_loads(tmp_path: Path) -> None:
     data = minimal_valid_config()
-    data["resolvers"] = {"current_date": {"scope": "shared", "return_type": "str"}}
+    data["resolvers"] = {"current_date": {"scope": "shared"}}
 
     loaded = load_tmp_config(tmp_path, data)
 

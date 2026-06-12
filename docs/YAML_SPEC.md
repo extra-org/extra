@@ -41,7 +41,6 @@ tools:
 resolvers:
   current_date:
     scope: shared
-    return_type: str
 
 orchestrators:
   main_router:
@@ -177,10 +176,8 @@ Resolvers are declared as ids in YAML. Each resolver has a **scope**:
 resolvers:
   current_date:
     scope: shared
-    return_type: str
   subscription:
     scope: agent
-    return_type: str
 ```
 
 Resolver classes are configured in `plugins/resolvers/resolvers.toml`, one file

@@ -33,13 +33,10 @@ tools:
 resolvers:
   current_date:
     scope: shared
-    return_type: str
   user_name:
     scope: shared
-    return_type: str
   subscription:
     scope: agent
-    return_type: str
 
 orchestrators:
   main_router:

@@ -16,10 +16,10 @@ def _spec_with_resolver_agents() -> AgentEngineSpec:
         system=SystemSpec(name="demo"),
         graph={"worker": None},
         resolvers={
-            "current_date": ResolverSpec(scope="shared", return_type="str"),
-            "user_name": ResolverSpec(scope="shared", return_type="str"),
-            "domestic_specific": ResolverSpec(scope="agent", return_type="str"),
-            "subscription": ResolverSpec(scope="agent", return_type="str"),
+            "current_date": ResolverSpec(scope="shared"),
+            "user_name": ResolverSpec(scope="shared"),
+            "domestic_specific": ResolverSpec(scope="agent"),
+            "subscription": ResolverSpec(scope="agent"),
         },
         agents={
             "domestic_flights_agent": AgentSpec(
@@ -60,21 +60,21 @@ def test_generate_stubs_emits_split_base_and_agent_resolver_files(tmp_path: Path
 
     base = paths.resolver_base.read_text(encoding="utf-8")
     assert "class BaseResolver(ABC):" in base
-    assert "def current_date(self, ctx: ExecutionContext) -> str:" in base
-    assert "def user_name(self, ctx: ExecutionContext) -> str:" in base
+    assert "def current_date(self, ctx: ExecutionContext) -> object:" in base
+    assert "def user_name(self, ctx: ExecutionContext) -> object:" in base
     assert "Customer must implement shared resolver current_date" in base
 
     domestic = paths.resolver_agent("domestic_flights_agent").read_text(encoding="utf-8")
     assert "class DomesticFlightsAgentResolver(BaseResolver):" in domestic
     assert "def current_date(" not in domestic
     assert "def user_name(" not in domestic
-    assert "def domestic_specific(self, ctx: ExecutionContext) -> str:" in domestic
+    assert "def domestic_specific(self, ctx: ExecutionContext) -> object:" in domestic
     assert "def subscription(" not in domestic
 
     super_agent = paths.resolver_agent("super_agent").read_text(encoding="utf-8")
     assert "class SuperAgentResolver(BaseResolver):" in super_agent
     assert "def user_name(" not in super_agent
-    assert "def subscription(self, ctx: ExecutionContext) -> str:" in super_agent
+    assert "def subscription(self, ctx: ExecutionContext) -> object:" in super_agent
     assert "def current_date(" not in super_agent
 
     international = paths.resolver_agent("international_flights_agent").read_text(encoding="utf-8")
@@ -150,7 +150,7 @@ def test_generate_stubs_adds_missing_method_to_existing_agent_file(tmp_path: Pat
         "from agentplatform.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n\n"
         "class WorkerResolver(BaseResolver):\n"
-        "    def current_date(self, ctx: ExecutionContext) -> str:\n"
+        "    def current_date(self, ctx: ExecutionContext) -> object:\n"
         "        return 'implemented'\n",
         encoding="utf-8",
     )
@@ -160,7 +160,7 @@ def test_generate_stubs_adds_missing_method_to_existing_agent_file(tmp_path: Pat
     assert ProjectPaths.resolver_agent_rel("worker") in result.updated
     content = paths.resolver_agent("worker").read_text(encoding="utf-8")
     assert "return 'implemented'" in content
-    assert "def user_name(self, ctx: ExecutionContext) -> str:" in content
+    assert "def user_name(self, ctx: ExecutionContext) -> object:" in content
 
 
 def test_generate_stubs_children_mode_does_not_touch_base(tmp_path: Path) -> None:
@@ -221,7 +221,7 @@ def test_generate_stubs_reports_stale_duplicated_shared_child_method(tmp_path: P
         "from agentplatform.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n\n"
         "class DomesticFlightsAgentResolver(BaseResolver):\n"
-        "    def current_date(self, ctx: ExecutionContext) -> str:\n"
+        "    def current_date(self, ctx: ExecutionContext) -> object:\n"
         "        return 'duplicate'\n",
         encoding="utf-8",
     )
@@ -240,7 +240,7 @@ def test_generate_stubs_preserves_existing_base_implementation(tmp_path: Path) -
     paths.resolver_base.write_text(
         "from agentplatform.runtime import ExecutionContext\n\n"
         "class BaseResolver:\n"
-        "    def current_date(self, ctx: ExecutionContext) -> str:\n"
+        "    def current_date(self, ctx: ExecutionContext) -> object:\n"
         "        return 'implemented'\n",
         encoding="utf-8",
     )
@@ -249,7 +249,7 @@ def test_generate_stubs_preserves_existing_base_implementation(tmp_path: Path) -
 
     content = paths.resolver_base.read_text(encoding="utf-8")
     assert "return 'implemented'" in content
-    assert "def user_name(self, ctx: ExecutionContext) -> str:" in content
+    assert "def user_name(self, ctx: ExecutionContext) -> object:" in content
     assert ProjectPaths.resolver_base_rel() in result.updated
 
 
@@ -400,7 +400,7 @@ def test_generate_stubs_reports_stale_scope_migration_on_base(tmp_path: Path) ->
     paths.resolver_base.write_text(
         "from agentplatform.runtime import ExecutionContext\n\n"
         "class BaseResolver:\n"
-        "    def current_date(self, ctx: ExecutionContext) -> str:\n"
+        "    def current_date(self, ctx: ExecutionContext) -> object:\n"
         "        return 'was shared'\n",
         encoding="utf-8",
     )

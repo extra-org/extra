@@ -41,7 +41,6 @@ class ToolSpec(StrictSpecModel):
 
 class ResolverSpec(StrictSpecModel):
     scope: str = "agent"
-    return_type: str = "str"
 
     @field_validator("scope")
     @classmethod

@@ -44,13 +44,10 @@ Each resolver has a **scope** (`shared` or `agent`) and a return type:
 resolvers:
   current_date:
     scope: shared        # generated on BaseResolver, inherited by all agents
-    return_type: str
   user_name:
     scope: shared
-    return_type: str
   subscription:
     scope: agent         # generated only on the declaring agent's subclass
-    return_type: str
 
 agents:
   super_agent:

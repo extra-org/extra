@@ -93,7 +93,6 @@ def generate_stubs(
             _write_resolver_base(
                 paths,
                 shared_resolver_ids,
-                spec,
                 created,
                 updated,
                 overwrite=overwrite,
@@ -102,7 +101,6 @@ def generate_stubs(
             paths,
             selected_agents,
             shared_resolver_ids,
-            spec,
             created,
             updated,
             overwrite=overwrite,
@@ -155,13 +153,12 @@ def _write_resolver_init(paths: ProjectPaths, created: list[str]) -> None:
 def _write_resolver_base(
     paths: ProjectPaths,
     shared_resolver_ids: set[str],
-    spec: AgentEngineSpec,
     created: list[str],
     updated: list[str],
     *,
     overwrite: bool,
 ) -> None:
-    content = _resolver_base_stub(shared_resolver_ids, spec)
+    content = _resolver_base_stub(shared_resolver_ids)
     if not paths.resolver_base.exists():
         paths.resolver_base.write_text(content, encoding="utf-8")
         created.append(ProjectPaths.resolver_base_rel())
@@ -178,7 +175,7 @@ def _write_resolver_base(
         if missing_methods:
             with paths.resolver_base.open("a", encoding="utf-8") as f:
                 for resolver_id in missing_methods:
-                    f.write(_shared_resolver_method_stub(resolver_id, spec))
+                    f.write(_shared_resolver_method_stub(resolver_id))
             updated.append(ProjectPaths.resolver_base_rel())
 
 
@@ -186,7 +183,6 @@ def _write_agent_resolver_files(
     paths: ProjectPaths,
     resolver_agents: dict[str, list[str]],
     shared_resolver_ids: set[str],
-    spec: AgentEngineSpec,
     created: list[str],
     updated: list[str],
     *,
@@ -200,7 +196,7 @@ def _write_agent_resolver_files(
             for resolver_id in dict.fromkeys(resolver_ids)
             if resolver_id not in shared_resolver_ids
         ]
-        content = _agent_resolver_file_stub(agent_id, agent_specific_resolvers, spec)
+        content = _agent_resolver_file_stub(agent_id, agent_specific_resolvers)
         if not path.exists():
             path.write_text(content, encoding="utf-8")
             created.append(rel)
@@ -216,7 +212,7 @@ def _write_agent_resolver_files(
             if missing_methods:
                 with path.open("a", encoding="utf-8") as f:
                     for resolver_id in missing_methods:
-                        f.write(_resolver_method_stub(agent_id, resolver_id, spec))
+                        f.write(_resolver_method_stub(agent_id, resolver_id))
                 updated.append(rel)
 
 
@@ -299,13 +295,12 @@ def _stale_resolver_items(
     return stale
 
 
-def _resolver_base_stub(shared_resolver_ids: set[str], spec: AgentEngineSpec) -> str:
+def _resolver_base_stub(shared_resolver_ids: set[str]) -> str:
     imports = (
         "from agentplatform.runtime import ExecutionContext\n\n" if shared_resolver_ids else ""
     )
     methods = "".join(
-        _shared_resolver_method_stub(resolver_id, spec)
-        for resolver_id in sorted(shared_resolver_ids)
+        _shared_resolver_method_stub(resolver_id) for resolver_id in sorted(shared_resolver_ids)
     )
     return (
         '"""Shared base class for customer-owned resolver implementations."""\n\n'
@@ -326,12 +321,10 @@ def _resolver_base_stub(shared_resolver_ids: set[str], spec: AgentEngineSpec) ->
 def _agent_resolver_file_stub(
     agent_id: str,
     resolver_ids: list[str],
-    spec: AgentEngineSpec,
 ) -> str:
     class_name = _resolver_class_name(agent_id)
     methods = "\n".join(
-        _resolver_method_stub(agent_id, resolver_id, spec)
-        for resolver_id in dict.fromkeys(resolver_ids)
+        _resolver_method_stub(agent_id, resolver_id) for resolver_id in dict.fromkeys(resolver_ids)
     )
     body = methods if methods else "\n    pass\n"
     return (
@@ -347,33 +340,24 @@ def _agent_resolver_file_stub(
     )
 
 
-def _shared_resolver_method_stub(resolver_id: str, spec: AgentEngineSpec) -> str:
+def _shared_resolver_method_stub(resolver_id: str) -> str:
     error = f"Customer must implement shared resolver {resolver_id}"
-    return_type = _resolver_return_type(resolver_id, spec)
     return (
         "\n"
-        f"    def {resolver_id}(self, ctx: ExecutionContext) -> {return_type}:\n"
+        f"    def {resolver_id}(self, ctx: ExecutionContext) -> object:\n"
         f'        """Return the shared value for {{{{ {resolver_id} }}}}."""\n'
         f'        raise NotImplementedError("{error}")\n'
     )
 
 
-def _resolver_method_stub(agent_id: str, resolver_id: str, spec: AgentEngineSpec) -> str:
+def _resolver_method_stub(agent_id: str, resolver_id: str) -> str:
     error = f"Customer must implement {resolver_id} for {agent_id}"
-    return_type = _resolver_return_type(resolver_id, spec)
     return (
         "\n"
-        f"    def {resolver_id}(self, ctx: ExecutionContext) -> {return_type}:\n"
+        f"    def {resolver_id}(self, ctx: ExecutionContext) -> object:\n"
         f'        """Return the value for {{{{ {resolver_id} }}}}."""\n'
         f'        raise NotImplementedError("{error}")\n'
     )
-
-
-def _resolver_return_type(resolver_id: str, spec: AgentEngineSpec) -> str:
-    resolver = spec.resolvers.get(resolver_id)
-    if resolver is None:
-        raise ValueError(f"Unknown resolver '{resolver_id}' in generator input.")
-    return resolver.return_type
 
 
 def _method_names(source: str) -> set[str]:

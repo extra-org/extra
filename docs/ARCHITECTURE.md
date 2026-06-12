@@ -319,10 +319,8 @@ by the engine (not exposed to the LLM) and run **before** a node executes:
 resolvers:
   current_date:
     scope: shared        # generated once in BaseResolver
-    return_type: str
   subscription:
     scope: agent         # generated in each agent's resolver subclass
-    return_type: str
 
 agents:
   super_agent:
