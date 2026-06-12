@@ -20,7 +20,7 @@ from agentplatform.compiler import compile_spec
 from agentplatform.runtime import build_langgraph
 from agentplatform.runtime.context import ExecutionContext
 from agentplatform.runtime.langgraph_builder import _RouteDecision
-from agentplatform.runtime.tool_models import RuntimeTool, RuntimeToolBinding
+from agentplatform.runtime.tool_models import RuntimeTool, RuntimeToolBinding, ToolUsageRecord
 from agentplatform.spec import load_spec
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "agents.yml"
@@ -151,8 +151,9 @@ class ToolCallingFactory:
 
 
 class FakeRuntimeToolRegistry:
-    def __init__(self, bindings: list[RuntimeToolBinding]) -> None:
+    def __init__(self, bindings: list[RuntimeToolBinding], *, fail: bool = False) -> None:
         self.bindings = bindings
+        self.fail = fail
         self.calls: list[tuple[str, str, dict[str, object], ExecutionContext]] = []
 
     def get_tool_bindings_for_agent(self, agent_id: str) -> list[RuntimeToolBinding]:
@@ -170,6 +171,8 @@ class FakeRuntimeToolRegistry:
         ctx: ExecutionContext,
     ) -> object:
         self.calls.append((agent_id, tool_name, arguments, ctx))
+        if self.fail:
+            raise RuntimeError("registry failed")
         return {"source": "registry", "tool": tool_name, "arguments": arguments}
 
 
@@ -358,6 +361,108 @@ def test_mcp_tool_invocation_delegates_through_tool_registry(plugin_base_dir: Pa
     assert tool_name == "flights_search"
     assert arguments == {"origin": "TLV"}
     assert ctx.message == "book a flight"
+    assert result["used_tools"] == [
+        ToolUsageRecord(
+            name="flights_search",
+            provider="mcp",
+            status="succeeded",
+            agent_id="domestic_flights_agent",
+            server_id="flights_mcp",
+        )
+    ]
+
+
+def test_local_tool_usage_is_recorded(plugin_base_dir: Path) -> None:
+    factory = ToolCallingFactory(tool_call_name="book_flight")
+    graph = compile_spec(load_spec(EXAMPLE).spec)
+    app = build_langgraph(
+        graph,
+        agents_yml=plugin_base_dir / "agents.yml",
+        model_factory=factory,
+    )
+
+    result = app.invoke({"message": "book a flight"})
+
+    assert result["used_tools"] == [
+        ToolUsageRecord(
+            name="book_flight",
+            provider="local",
+            status="succeeded",
+            agent_id="domestic_flights_agent",
+        )
+    ]
+
+
+def test_failed_mcp_tool_usage_is_recorded_before_error(plugin_base_dir: Path) -> None:
+    factory = ToolCallingFactory(tool_call_name="flights_search")
+    runtime_tool = RuntimeTool(
+        name="flights_search",
+        description="Search flights through MCP",
+        parameters_schema={
+            "type": "object",
+            "properties": {"origin": {"type": "string"}},
+        },
+    )
+    registry = FakeRuntimeToolRegistry(
+        [
+            RuntimeToolBinding(
+                tool=runtime_tool,
+                provider_id="mcp",
+                internal_tool_name="flights_search",
+                server_id="flights_mcp",
+            )
+        ],
+        fail=True,
+    )
+    graph = compile_spec(load_spec(EXAMPLE).spec)
+    app = build_langgraph(
+        graph,
+        agents_yml=plugin_base_dir / "agents.yml",
+        model_factory=factory,
+        tool_registry=registry,  # type: ignore[arg-type]
+    )
+    used_tools: list[ToolUsageRecord] = []
+
+    with pytest.raises(RuntimeError, match="registry failed"):
+        app.invoke({"message": "book a flight", "used_tools": used_tools})
+
+    assert used_tools == [
+        ToolUsageRecord(
+            name="flights_search",
+            provider="mcp",
+            status="failed",
+            agent_id="domestic_flights_agent",
+            server_id="flights_mcp",
+            error=(
+                "Tool 'flights_search' failed for agent 'domestic_flights_agent': registry failed"
+            ),
+        )
+    ]
+
+
+def test_tool_usage_is_not_inferred_from_answer_text(plugin_base_dir: Path) -> None:
+    class ToolMentionFactory(ToolCallingFactory):
+        def __call__(
+            self,
+            provider: str,
+            name: str,
+            temperature: float | None,
+        ) -> ToolCallingFakeModel:
+            model = ToolCallingFakeModel(reply="I used ask_question [mcp: deepwiki] succeeded")
+            self.models.append(model)
+            return model
+
+    graph = compile_spec(load_spec(EXAMPLE).spec)
+    app = build_langgraph(
+        graph,
+        agents_yml=plugin_base_dir / "agents.yml",
+        model_factory=ToolMentionFactory(),
+    )
+
+    result = app.invoke({"message": "book a flight"})
+
+    assert "ask_question" in result["answer"]
+    assert result.get("used_tools", []) == []
 
 
 def test_agent_without_mcp_behaves_as_before(plugin_base_dir: Path) -> None:

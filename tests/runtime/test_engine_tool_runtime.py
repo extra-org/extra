@@ -9,9 +9,9 @@ from typer.testing import CliRunner
 
 from agentplatform.cli import main as cli_main
 from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.engine import Engine, RunResult
+from agentplatform.runtime.engine import Engine, EngineRunError, RunResult
 from agentplatform.runtime.mcp_manager import MCPClientProtocol
-from agentplatform.runtime.tool_models import MCPToolDefinition
+from agentplatform.runtime.tool_models import MCPToolDefinition, ToolUsageRecord
 from agentplatform.runtime.tool_registry import ToolRegistry
 from agentplatform.spec import load_spec
 from agentplatform.spec.models import McpSpec
@@ -103,6 +103,83 @@ def test_engine_run_does_not_automatically_start_mcp_manager(monkeypatch: Any) -
     assert clients["super_mcp"].connected is False
 
 
+def test_engine_run_exposes_tool_usage_from_graph_state(monkeypatch: Any) -> None:
+    class ToolUsingApp:
+        def invoke(self, state: dict[str, object]) -> dict[str, object]:
+            return {
+                "visited": ["main_router", "main_router/super_agent"],
+                "answer": "done",
+                "used_tools": [
+                    ToolUsageRecord(
+                        name="ask_question",
+                        provider="mcp",
+                        status="succeeded",
+                        agent_id="super_agent",
+                        server_id="deepwiki",
+                    )
+                ],
+            }
+
+    monkeypatch.setattr(
+        "agentplatform.runtime.engine.build_langgraph",
+        lambda *args, **kwargs: ToolUsingApp(),
+    )
+    engine = Engine(load_spec(EXAMPLE), mcp_client_factory=_factory(_fake_clients()))
+
+    result = engine.run("hello")
+
+    assert result.used_tools == (
+        ToolUsageRecord(
+            name="ask_question",
+            provider="mcp",
+            status="succeeded",
+            agent_id="super_agent",
+            server_id="deepwiki",
+        ),
+    )
+
+
+def test_engine_run_error_exposes_partial_tool_usage(monkeypatch: Any) -> None:
+    class FailingToolApp:
+        def invoke(self, state: dict[str, object]) -> dict[str, object]:
+            used_tools = state["used_tools"]
+            assert isinstance(used_tools, list)
+            used_tools.append(
+                ToolUsageRecord(
+                    name="ask_question",
+                    provider="mcp",
+                    status="failed",
+                    agent_id="deepwiki_agent",
+                    server_id="deepwiki",
+                    error="tool failed",
+                )
+            )
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "agentplatform.runtime.engine.build_langgraph",
+        lambda *args, **kwargs: FailingToolApp(),
+    )
+    engine = Engine(load_spec(EXAMPLE), mcp_client_factory=_factory(_fake_clients()))
+
+    try:
+        engine.run("hello")
+    except EngineRunError as exc:
+        assert str(exc) == "boom"
+        assert exc.used_tools == (
+            ToolUsageRecord(
+                name="ask_question",
+                provider="mcp",
+                status="failed",
+                agent_id="deepwiki_agent",
+                server_id="deepwiki",
+                error="tool failed",
+            ),
+        )
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("EngineRunError was not raised")
+
+
 def test_engine_start_starts_mcp_manager(monkeypatch: Any) -> None:
     clients = _fake_clients()
     engine = _engine(monkeypatch, clients)
@@ -170,7 +247,93 @@ def test_cli_run_still_works_without_starting_real_mcp_client(monkeypatch: Any) 
     assert result.exit_code == 0
     assert "echo:hello" in result.stdout
     assert "route  : main_router" in result.stderr
+    assert "tools used: none" in result.stderr
     assert FakeEngine.calls == ["start", "run", "stop"]
+
+
+def test_cli_run_prints_tool_usage(monkeypatch: Any) -> None:
+    class FakeEngine:
+        calls: ClassVar[list[str]] = []
+
+        def __init__(self, loaded: object) -> None:
+            self.loaded = loaded
+
+        def start(self) -> None:
+            self.calls.append("start")
+
+        def run(self, message: str) -> RunResult:
+            self.calls.append("run")
+            return RunResult(
+                system_name="DeepWiki Repository Research Smoke Test",
+                visited=["deepwiki_agent"],
+                answer=f"echo:{message}",
+                used_tools=(
+                    ToolUsageRecord(
+                        name="ask_question",
+                        provider="mcp",
+                        status="succeeded",
+                        agent_id="deepwiki_agent",
+                        server_id="deepwiki",
+                    ),
+                    ToolUsageRecord(
+                        name="book_flight",
+                        provider="local",
+                        status="failed",
+                        agent_id="deepwiki_agent",
+                        error="tool failed",
+                    ),
+                ),
+            )
+
+        def stop(self) -> None:
+            self.calls.append("stop")
+
+    monkeypatch.setattr(cli_main, "Engine", FakeEngine)
+    result = CliRunner().invoke(cli_main.app, ["run", str(EXAMPLE), "hello"])
+
+    assert result.exit_code == 0
+    assert "tools used:" in result.stderr
+    assert "* ask_question [mcp: deepwiki] succeeded" in result.stderr
+    assert "* book_flight [local] failed: tool failed" in result.stderr
+    assert FakeEngine.calls == ["start", "run", "stop"]
+
+
+def test_cli_run_prints_tool_usage_when_engine_run_fails(monkeypatch: Any) -> None:
+    class FailingEngine:
+        calls: ClassVar[list[str]] = []
+
+        def __init__(self, loaded: object) -> None:
+            self.loaded = loaded
+
+        def start(self) -> None:
+            self.calls.append("start")
+
+        def run(self, message: str) -> RunResult:
+            self.calls.append("run")
+            raise EngineRunError(
+                "boom",
+                used_tools=(
+                    ToolUsageRecord(
+                        name="ask_question",
+                        provider="mcp",
+                        status="failed",
+                        agent_id="deepwiki_agent",
+                        server_id="deepwiki",
+                        error="tool failed",
+                    ),
+                ),
+            )
+
+        def stop(self) -> None:
+            self.calls.append("stop")
+
+    monkeypatch.setattr(cli_main, "Engine", FailingEngine)
+    result = CliRunner().invoke(cli_main.app, ["run", str(EXAMPLE), "hello"])
+
+    assert result.exit_code == 1
+    assert "* ask_question [mcp: deepwiki] failed: tool failed" in result.stderr
+    assert "Runtime error: boom" in result.stderr
+    assert FailingEngine.calls == ["start", "run", "stop"]
 
 
 def test_cli_run_stops_engine_when_run_raises(monkeypatch: Any) -> None:

@@ -108,8 +108,48 @@ Per-agent access is enforced from declarations:
 and one `ToolRegistry`; `MCPManager` owns the long-lived MCP clients.
 
 `Engine.start()` and `Engine.stop()` are the lifecycle hooks for MCP
-connections. `Engine.run()` does not auto-start MCP clients yet, so ordinary CLI
-run behavior remains usable without making remote MCP connections.
+connections. `Engine.run()` does not auto-start MCP clients; callers that need
+MCP tools, including `agentctl run`, call `start()` before `run()` and `stop()`
+in a `finally` block.
+
+## Runtime Tool Usage Summary
+
+`agentctl run` prints a deterministic tool usage section after each run. The
+records are collected by the runtime tool execution path, not inferred from the
+final answer and not requested from the model.
+
+Example:
+
+```text
+tools used:
+
+* ask_question [mcp: deepwiki] succeeded
+* read_wiki_structure [mcp: deepwiki] succeeded
+```
+
+Local plugin tools are shown as `[local]`:
+
+```text
+tools used:
+
+* book_flight [local] succeeded
+```
+
+If no tool was called, the CLI prints:
+
+```text
+tools used: none
+```
+
+Failed calls are shown with a concise error, without full tracebacks or tool
+arguments:
+
+```text
+* ask_question [mcp: deepwiki] failed: request timed out
+```
+
+Every actual tool call is printed in call order. Repeated calls to the same
+tool are printed repeatedly rather than collapsed into a count.
 
 ---
 

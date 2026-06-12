@@ -14,7 +14,8 @@ import typer
 from dotenv import load_dotenv
 
 from agentplatform import __version__
-from agentplatform.runtime.engine import Engine
+from agentplatform.runtime.engine import Engine, EngineRunError
+from agentplatform.runtime.tool_models import ToolUsageRecord
 from agentplatform.spec import SpecError, load_spec
 from agentplatform.spec.stubs import ResolverGenerateMode, generate_stubs
 
@@ -138,6 +139,10 @@ def run(
             result = engine.run(message)
         finally:
             engine.stop()
+    except EngineRunError as exc:
+        _print_tool_usage(exc.used_tools)
+        typer.echo(f"✗ Runtime error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     except Exception as exc:
         typer.echo(f"✗ Runtime error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -148,6 +153,32 @@ def run(
     typer.echo(f"  route  : {' → '.join(result.visited)}", err=True)
     typer.echo("", err=True)
     typer.echo(result.answer)  # stdout — pipeable
+    typer.echo("", err=True)
+    _print_tool_usage(result.used_tools)
+
+
+def _print_tool_usage(used_tools: tuple[ToolUsageRecord, ...]) -> None:
+    if not used_tools:
+        typer.echo("tools used: none", err=True)
+        return
+
+    typer.echo("tools used:", err=True)
+    typer.echo("", err=True)
+    for record in used_tools:
+        line = f"* {record.name} {_format_tool_provider(record)} {record.status}"
+        if record.status == "failed" and record.error:
+            line = f"{line}: {record.error}"
+        typer.echo(line, err=True)
+
+
+def _format_tool_provider(record: ToolUsageRecord) -> str:
+    if record.provider == "mcp" and record.server_id:
+        return f"[mcp: {record.server_id}]"
+    if record.provider == "local":
+        return "[local]"
+    if record.provider == "mcp":
+        return "[mcp]"
+    return "[unknown]"
 
 
 @app.command()

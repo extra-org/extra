@@ -60,6 +60,7 @@ from agentplatform.runtime.langchain_tool_adapter import (
 )
 from agentplatform.runtime.plugin_loader import PluginLoader
 from agentplatform.runtime.state import GraphState
+from agentplatform.runtime.tool_models import ToolProviderName, ToolUsageRecord, ToolUsageStatus
 from agentplatform.runtime.tool_registry import ToolRegistry
 
 ModelFactory = Callable[[str, str, float | None], BaseChatModel]
@@ -227,6 +228,28 @@ def _make_agent_node(
         tools = [*local_tools, *runtime_tools]
         model = base_model.bind_tools(tools) if tools else base_model
         tool_map: dict[str, BaseTool] = {t.name: t for t in tools}
+        tool_descriptors = {
+            tool.name: ToolUsageRecord(
+                name=tool.name,
+                provider="local",
+                status="started",
+                agent_id=declaration.node_id,
+            )
+            for tool in local_tools
+        }
+        if tool_registry is not None:
+            tool_descriptors.update(
+                {
+                    binding.tool.name: ToolUsageRecord(
+                        name=binding.tool.name,
+                        provider=_tool_provider(binding.provider_id),
+                        status="started",
+                        agent_id=declaration.node_id,
+                        server_id=binding.server_id,
+                    )
+                    for binding in bindings
+                }
+            )
 
         system_prompt = _load_system_prompt(declaration, context, agents_yml)
         messages: list = [
@@ -245,7 +268,29 @@ def _make_agent_node(
                     raise RuntimeError(
                         f"Agent '{declaration.node_id}' received unknown tool call '{tool_name}'."
                     )
-                tool_result = tool.invoke(tc["args"])
+                try:
+                    tool_result = tool.invoke(tc["args"])
+                except Exception as exc:
+                    _record_tool_usage(
+                        state,
+                        _completed_tool_usage(
+                            tool_descriptors.get(tool_name),
+                            fallback_tool_name=tool_name,
+                            agent_id=declaration.node_id,
+                            status="failed",
+                            error=_short_error(exc),
+                        ),
+                    )
+                    raise
+                _record_tool_usage(
+                    state,
+                    _completed_tool_usage(
+                        tool_descriptors.get(tool_name),
+                        fallback_tool_name=tool_name,
+                        agent_id=declaration.node_id,
+                        status="succeeded",
+                    ),
+                )
                 messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
             response = model.invoke(messages)
 
@@ -253,6 +298,7 @@ def _make_agent_node(
             "visited": [*state.get("visited", []), node_path],
             "answer": _as_text(response.content),
             "allowed_tools": [tool.name for tool in allowed_runtime_tools],
+            "used_tools": state.get("used_tools", []),
         }
 
     return node
@@ -383,3 +429,50 @@ def _as_text(content: object) -> str:
                 parts.append(block["text"])
         return "".join(parts)
     return str(content)
+
+
+def _record_tool_usage(state: GraphState, record: ToolUsageRecord) -> None:
+    used_tools = state.setdefault("used_tools", [])
+    used_tools.append(record)
+
+
+def _completed_tool_usage(
+    descriptor: ToolUsageRecord | None,
+    *,
+    fallback_tool_name: str,
+    agent_id: str,
+    status: ToolUsageStatus,
+    error: str | None = None,
+) -> ToolUsageRecord:
+    if descriptor is None:
+        return ToolUsageRecord(
+            name=fallback_tool_name,
+            provider="unknown",
+            status=status,
+            agent_id=agent_id,
+            error=error,
+        )
+
+    return ToolUsageRecord(
+        name=descriptor.name,
+        provider=descriptor.provider,
+        status=status,
+        agent_id=descriptor.agent_id,
+        server_id=descriptor.server_id,
+        error=error,
+    )
+
+
+def _tool_provider(provider_id: str) -> ToolProviderName:
+    if provider_id == "local":
+        return "local"
+    if provider_id == "mcp":
+        return "mcp"
+    return "unknown"
+
+
+def _short_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    if not message:
+        message = exc.__class__.__name__
+    return message.splitlines()[0][:200]

@@ -17,6 +17,7 @@ from typing import Any, TypeVar, cast
 from agentplatform.compiler import compile_spec
 from agentplatform.runtime.langgraph_builder import build_langgraph
 from agentplatform.runtime.mcp_manager import MCPClientFactory, MCPManager
+from agentplatform.runtime.tool_models import ToolUsageRecord
 from agentplatform.runtime.tool_registry import LocalToolProvider, MCPToolProvider, ToolRegistry
 from agentplatform.spec.loader import LoadedSpec
 
@@ -30,6 +31,15 @@ class RunResult:
     system_name: str
     visited: list[str]
     answer: str
+    used_tools: tuple[ToolUsageRecord, ...] = ()
+
+
+class EngineRunError(RuntimeError):
+    """Raised when a graph run fails after collecting partial run metadata."""
+
+    def __init__(self, message: str, *, used_tools: tuple[ToolUsageRecord, ...]) -> None:
+        super().__init__(message)
+        self.used_tools = used_tools
 
 
 class Engine:
@@ -124,13 +134,18 @@ class Engine:
 
     def run(self, message: str) -> RunResult:
         """Invoke the agent system with *message* and return the result."""
-        input_state: dict[str, object] = {"message": message}
-        result = self._app.invoke(cast(Any, input_state))
+        used_tools: list[ToolUsageRecord] = []
+        input_state: dict[str, object] = {"message": message, "used_tools": used_tools}
+        try:
+            result = self._app.invoke(cast(Any, input_state))
+        except Exception as exc:
+            raise EngineRunError(str(exc), used_tools=tuple(used_tools)) from exc
 
         return RunResult(
             system_name=self._system_name,
             visited=result.get("visited", []),
             answer=result.get("answer", ""),
+            used_tools=tuple(result.get("used_tools", used_tools)),
         )
 
 

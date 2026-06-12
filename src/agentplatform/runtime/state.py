@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TypedDict
 
+from agentplatform.runtime.tool_models import ToolUsageRecord
+
 
 class GraphState(TypedDict, total=False):
     """Mutable state carried through one run of the compiled LangGraph."""
@@ -20,3 +22,6 @@ class GraphState(TypedDict, total=False):
 
     answer: str
     """The final answer produced by the agent (leaf) node that handled it."""
+
+    used_tools: list[ToolUsageRecord]
+    """Runtime-observed tool calls, in call order."""
