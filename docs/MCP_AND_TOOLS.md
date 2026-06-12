@@ -1,8 +1,9 @@
 # MCP & Tools
 
 This document defines how executor agents use Python plugin tools and MCP
-servers. Python plugin tools are implemented; MCP client integration is planned
-(task `0007`).
+servers. Python plugin tools, the generic tool-runtime boundary, a generic
+URL-based remote MCP client, and LangGraph/LangChain binding for discovered MCP
+tools are implemented.
 
 ---
 
@@ -13,7 +14,7 @@ MCP servers are declared once and referenced by agents:
 ```yaml
 mcps:
   flights_mcp:
-    url: "https://company.com/mcp/flights/sse"
+    url: "https://company.com/mcp/flights"
 
 agents:
   domestic_flights_agent:
@@ -21,8 +22,15 @@ agents:
     mcps: [flights_mcp]
 ```
 
-MCP servers may be implemented in any language. The engine connects to them from
-the long-lived runtime and exposes their discovered tools to configured agents.
+MCP servers may be implemented in any language. Users only declare the server
+URL in YAML; they do not write MCP client classes. At startup, `Engine.start()`
+asks `MCPManager` to create one `GenericRemoteMCPClient` per configured MCP
+server URL, connect and initialize the MCP session, discover tools, and cache
+the discovered metadata.
+
+The default remote transport is the official MCP Streamable HTTP transport.
+The YAML contract remains URL-based; local process / stdio MCP servers are not
+supported yet.
 
 ---
 
@@ -58,6 +66,53 @@ the model stops requesting tools.
 
 ---
 
+## Runtime Tool Boundary
+
+The runtime-facing abstraction is `ToolRegistry`. It exposes model-facing
+`RuntimeTool` metadata:
+
+- `name`
+- `description`
+- `parameters_schema`
+
+The model-facing metadata intentionally hides whether a tool came from a local
+Python plugin or an MCP server. Internal routing metadata stays in
+`RuntimeToolBinding`, `ToolRegistry`, `MCPToolProvider`, and `MCPManager`.
+
+MCP-backed `RuntimeTool` values are adapted into executable LangChain tools at
+agent-node execution time, when the per-request `ExecutionContext` exists. Tool
+calls made by the model flow through:
+
+```text
+LLM tool call
+  → LangChain tool adapter
+  → ToolRegistry.call_tool(agent_id, tool_name, arguments, ctx)
+  → MCPToolProvider
+  → MCPManager
+  → GenericRemoteMCPClient
+  → remote MCP server
+```
+
+LangGraph nodes do not call `MCPManager` or `GenericRemoteMCPClient` directly.
+The current agent-node tool loop is synchronous, so the LangChain adapter owns
+the sync-to-async bridge into `ToolRegistry.call_tool`. Async-native graph
+execution can replace that bridge in a later lifecycle task.
+
+Per-agent access is enforced from declarations:
+
+- local tools come from the selected agent's `tools`;
+- MCP tools come only from servers listed in the selected agent's `mcps`;
+- duplicate runtime tool names fail clearly.
+
+`ExecutionContext` does not own MCP connections. `Engine` owns one `MCPManager`
+and one `ToolRegistry`; `MCPManager` owns the long-lived MCP clients.
+
+`Engine.start()` and `Engine.stop()` are the lifecycle hooks for MCP
+connections. `Engine.run()` does not auto-start MCP clients yet, so ordinary CLI
+run behavior remains usable without making remote MCP connections.
+
+---
+
 ## Resolver vs. Tool Boundary
 
 | | Resolver | Tool |
@@ -84,6 +139,10 @@ For the MVP:
 - load tool plugins from `plugins/tools/{tool_id}.py` (✅ implemented);
 - bind only the agent's declared tools per node (✅ implemented);
 - pass request context through `ctx` (✅ implemented);
+- create generic URL-based remote MCP clients from `mcps.<id>.url` (✅ implemented);
+- discover and cache remote MCP tool metadata on `Engine.start()` (✅ implemented);
+- hide local-vs-MCP origin behind `ToolRegistry` and `RuntimeTool` (✅ implemented);
+- bind discovered MCP tools into LangGraph/LangChain tool-calling (✅ implemented);
 - redact secrets from traces (⏳ planned, task 0011);
 - keep prompt wording out of the enforcement path.
 

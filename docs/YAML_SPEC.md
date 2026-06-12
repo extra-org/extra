@@ -32,7 +32,7 @@ defaults:
 
 mcps:
   flights_mcp:
-    url: "https://company.com/mcp/flights/sse"
+    url: "https://company.com/mcp/flights"
 
 tools:
   book_flight:
@@ -72,7 +72,7 @@ graph:
 | --------------- | -------- | ------- |
 | `system`        | yes      | Human-readable system metadata. |
 | `defaults`      | no       | System-wide defaults, currently `defaults.model`. |
-| `mcps`          | no       | MCP server declarations keyed by id. |
+| `mcps`          | no       | URL-based MCP server declarations keyed by id. |
 | `tools`         | no       | Python plugin tools exposed to LLM agents. |
 | `resolvers`     | no       | Deterministic prompt-variable resolvers. |
 | `orchestrators` | no       | Router nodes. |
@@ -123,6 +123,18 @@ agents:
 
 Every id referenced in `graph`, `resolvers`, `tools`, or `mcps` must be declared
 in the corresponding top-level section.
+
+MCP declarations are URL-only today:
+
+```yaml
+mcps:
+  flights_mcp:
+    url: "https://company.com/mcp/flights"
+```
+
+The platform creates a generic remote MCP client for each configured URL during
+`Engine.start()`. Users do not implement MCP client classes, and stdio/local
+process MCP servers are not part of the current YAML contract.
 
 ---
 

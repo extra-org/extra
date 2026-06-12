@@ -27,6 +27,12 @@ read-only, across all requests. Expensive setup (parsing the graph, preparing
 provider clients, loading and parsing prompt templates, opening MCP connections)
 happens here — not on the request path.
 
+MCP connections are explicit lifecycle work: `Engine.start()` asks the
+engine-owned `MCPManager` to create one generic URL-based remote MCP client per
+configured MCP server, initialize the sessions, and cache discovered tool
+metadata. `Engine.stop()` closes those clients. `Engine.run()` does not
+implicitly start MCP clients.
+
 ### Per request (many)
 
 ```
