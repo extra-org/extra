@@ -71,13 +71,35 @@
       }
     },
     "resolvers": {
-      "type": "array",
-      "description": "Declarations of resolver ids. A resolver is a Python function in plugins/resolvers/{id}.py that returns a value injected as {{id}} into prompt templates before the node runs. Run `agentctl generate` to create stubs.",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "uniqueItems": true
+      "description": "Declarations of resolver ids. Prefer the object form to declare scope: `shared` methods are generated on BaseResolver, `agent` methods are generated on agent resolver classes. A legacy array of ids is accepted as agent-scoped shorthand.",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "description": "Resolver generation scope: `shared` goes on BaseResolver, `agent` goes on child resolver classes."
+              },
+              "return_type": {
+                "type": "string",
+                "description": "Python return type annotation for generated resolver stubs.",
+                "default": "str"
+              }
+            }
+          }
+        }
+      ]
     },
     "orchestrators": {
       "type": "object",

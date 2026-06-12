@@ -31,9 +31,15 @@ tools:
     description: "Add a product to the customer's supermarket cart by item name and quantity"
 
 resolvers:
-  - current_date
-  - user_name
-  - subscription
+  current_date:
+    scope: shared
+    return_type: str
+  user_name:
+    scope: shared
+    return_type: str
+  subscription:
+    scope: agent
+    return_type: str
 
 orchestrators:
   main_router:
