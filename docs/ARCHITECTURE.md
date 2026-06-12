@@ -305,8 +305,8 @@ Dynamic values may originate from:
 - a third-party API
 - an MCP tool
 - a sidecar (optional/future)
-- a generated resolver function
-- a plugin
+- a generated resolver class method
+- a plugin dependency configured outside the runtime
 
 In the current model, resolvers are **in-process Python plugin methods** chosen
 by the engine (not exposed to the LLM) and run **before** a node executes:
@@ -314,8 +314,8 @@ by the engine (not exposed to the LLM) and run **before** a node executes:
 ```yaml
 resolvers:
   current_date:
-    class: Resolvers
-    method: current_date
+    scope: shared
+    return_type: str
 
 agents:
   super_agent:
@@ -325,7 +325,22 @@ agents:
     resolvers: [current_date]
 ```
 
+The resolver class is configured in `plugins/resolvers/resolvers.toml`:
+
+```toml
+[resolvers]
+base_class = "plugins.resolvers.base.BaseResolver"
+
+[resolvers.dependencies]
+rest_client = "internal_rest_client"
+
+[resolvers.agents.super_agent]
+class = "plugins.resolvers.super_agent.SuperAgentResolver"
+```
+
 Resolver outputs are request-scoped and land on the `ExecutionContext`.
+Shared resolver methods are implemented once on `BaseResolver`; agent-specific
+resolver methods live only on the relevant agent resolver subclass.
 
 ---
 

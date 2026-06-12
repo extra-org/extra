@@ -42,8 +42,8 @@ tools:
 
 resolvers:
   current_date:
-    class: Resolvers
-    method: current_date
+    scope: shared
+    return_type: str
 
 orchestrators:
   main_router:
@@ -170,22 +170,29 @@ different times and have different trust boundaries.
 | Token cost | None | Yes |
 | Purpose | Fill `{{variables}}` | Perform actions |
 
-Both use the same plugin reference shape:
+Resolvers are declared as ids in YAML and implemented as methods on the
+agent-specific class configured in `plugins/resolvers/resolvers.toml`:
 
 ```yaml
 resolvers:
   current_date:
-    class: Resolvers
-    method: current_date
-
-tools:
-  book_flight:
-    class: FlightTools
-    method: book_flight
+    scope: shared
+    return_type: str
 ```
 
-The engine loads customer plugin classes once. Methods receive `ctx`, which the
-engine builds from request headers and request data.
+```toml
+[resolvers]
+base_class = "plugins.resolvers.base.BaseResolver"
+
+[resolvers.agents.domestic_flights_agent]
+class = "plugins.resolvers.domestic_flights_agent.DomesticFlightsAgentResolver"
+```
+
+The engine loads the selected agent's customer resolver class once. Methods
+receive `ctx`, which the engine builds from request headers and request data.
+Shared resolver methods are generated on `BaseResolver` and inherited by agent
+resolver classes; agent-scoped resolver methods are generated only on the
+relevant child class.
 
 ---
 

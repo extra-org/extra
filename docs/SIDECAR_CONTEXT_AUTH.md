@@ -39,14 +39,32 @@ the engine's point of view and are not exposed to the LLM.
 ```yaml
 resolvers:
   current_date:
-    class: Resolvers
-    method: current_date
+    scope: shared
+    return_type: str
+```
+
+```toml
+[resolvers]
+base_class = "plugins.resolvers.base.BaseResolver"
+
+[resolvers.agents.super_agent]
+class = "plugins.resolvers.super_agent.SuperAgentResolver"
 ```
 
 ```python
-class Resolvers:
-    def current_date(self, ctx):
+from agentplatform.runtime import ExecutionContext
+
+
+class BaseResolver:
+    def __init__(self, rest_client: object | None = None) -> None:
+        self.rest_client = rest_client
+
+    def current_date(self, ctx: ExecutionContext) -> str:
         return "2026-06-06"
+
+
+class SuperAgentResolver(BaseResolver):
+    pass
 ```
 
 A node opts into resolver values:

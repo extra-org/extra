@@ -52,11 +52,11 @@ node:
 ```yaml
 resolvers:
   current_date:
-    class: Resolvers
-    method: current_date
+    scope: shared
+    return_type: str
   user_name:
-    class: Resolvers
-    method: user_name
+    scope: shared
+    return_type: str
 
 agents:
   domestic_flights_agent:
@@ -66,6 +66,7 @@ agents:
     resolvers: [current_date, user_name]
 ```
 
+The resolver class is configured separately in `plugins/resolvers/resolvers.toml`.
 Resolver methods receive `ctx` and return values before the node runs. Resolvers
 are not exposed to the LLM and do not consume tokens.
 
