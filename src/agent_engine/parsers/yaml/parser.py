@@ -34,10 +34,6 @@ class YAMLParser(Parser):
             raise ParseError(errors)
         return self._build(data)
 
-    # ------------------------------------------------------------------
-    # _load
-    # ------------------------------------------------------------------
-
     def _load(self, path: str) -> dict[str, Any]:
         source = Path(path)
         if not source.is_file():
@@ -53,10 +49,6 @@ class YAMLParser(Parser):
         if not isinstance(data, dict):
             raise ParseError([ValidationError("yaml", "Root must be a mapping")])
         return data
-
-    # ------------------------------------------------------------------
-    # _validate — structural + semantic, agnostic to source format
-    # ------------------------------------------------------------------
 
     def _validate(self, data: dict[str, Any]) -> list[ValidationError]:
         errors: list[ValidationError] = []
@@ -183,10 +175,6 @@ class YAMLParser(Parser):
                 self._validate_no_secrets(item, errors, f"{path}[{i}]")
         elif isinstance(data, str) and _looks_secret(data):
             errors.append(ValidationError(path, "Hardcoded secret-like value is not allowed"))
-
-    # ------------------------------------------------------------------
-    # _build — resolves defaults, constructs SystemSpec tree
-    # ------------------------------------------------------------------
 
     def _build(self, data: dict[str, Any]) -> SystemSpec:
         defaults = self._build_defaults(data.get("defaults"))
