@@ -1,6 +1,6 @@
 """Compiled agent graph — typed, immutable models consumed by the runtime."""
 
-from agentplatform.graph.models import (
+from agent_engine.graph.models import (
     AgentDeclaration,
     AgentNode,
     CompiledAgentGraph,

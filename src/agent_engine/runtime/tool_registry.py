@@ -4,10 +4,10 @@ import logging
 from collections.abc import Sequence
 from typing import Protocol
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.mcp_manager import MCPManager
-from agentplatform.runtime.tool_models import RuntimeTool, RuntimeToolBinding
-from agentplatform.spec.models import AgentEngineSpec
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.mcp_manager import MCPManager
+from agent_engine.runtime.tool_models import RuntimeTool, RuntimeToolBinding
+from agent_engine.spec.models import AgentEngineSpec
 
 logger = logging.getLogger(__name__)
 

@@ -48,22 +48,22 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel
 
-from agentplatform.graph.models import (
+from agent_engine.graph.models import (
     AgentDeclaration,
     AgentNode,
     CompiledAgentGraph,
     OrchestratorDeclaration,
 )
-from agentplatform.models import build_chat_model
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.langchain_tool_adapter import (
+from agent_engine.models import build_chat_model
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.langchain_tool_adapter import (
     build_langchain_tools_from_runtime_tools,
     ensure_no_duplicate_tool_names,
 )
-from agentplatform.runtime.plugin_loader import PluginLoader
-from agentplatform.runtime.state import GraphState
-from agentplatform.runtime.tool_models import ToolProviderName, ToolUsageRecord, ToolUsageStatus
-from agentplatform.runtime.tool_registry import ToolRegistry
+from agent_engine.runtime.plugin_loader import PluginLoader
+from agent_engine.runtime.state import GraphState
+from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord, ToolUsageStatus
+from agent_engine.runtime.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

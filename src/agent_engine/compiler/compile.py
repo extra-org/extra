@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from agentplatform.graph.models import (
+from agent_engine.graph.models import (
     AgentDeclaration,
     AgentNode,
     CompiledAgentGraph,
@@ -28,7 +28,7 @@ from agentplatform.graph.models import (
     ResolvedResolver,
     ResolvedTool,
 )
-from agentplatform.spec.models import (
+from agent_engine.spec.models import (
     AgentEngineSpec,
     AgentSpec,
     GraphChildren,

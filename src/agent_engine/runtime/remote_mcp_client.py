@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol
 from urllib.parse import urlparse
 
-from agentplatform.logging_setup import sanitize_url_for_logging
-from agentplatform.runtime.mcp_manager import MCPClientProtocol
-from agentplatform.runtime.tool_models import MCPToolDefinition
+from agent_engine.logging_setup import sanitize_url_for_logging
+from agent_engine.runtime.mcp_manager import MCPClientProtocol
+from agent_engine.runtime.tool_models import MCPToolDefinition
 
 logger = logging.getLogger(__name__)
 

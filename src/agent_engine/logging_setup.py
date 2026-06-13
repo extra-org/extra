@@ -21,7 +21,7 @@ import sys
 from typing import TextIO
 from urllib.parse import urlsplit, urlunsplit
 
-PACKAGE_LOGGER_NAME = "agentplatform"
+PACKAGE_LOGGER_NAME = "agent_engine"
 LOG_FORMAT = "%(levelname)s %(name)s - %(message)s"
 
 _managed_handler: logging.StreamHandler[TextIO] | None = None

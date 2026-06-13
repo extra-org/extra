@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentplatform.spec.errors import SpecValidationError, ValidationIssue
-from agentplatform.spec.models import AgentEngineSpec, AgentSpec, OrchestratorSpec, PromptSpec
-from agentplatform.utils import ProjectPaths
+from agent_engine.spec.errors import SpecValidationError, ValidationIssue
+from agent_engine.spec.models import AgentEngineSpec, AgentSpec, OrchestratorSpec, PromptSpec
+from agent_engine.utils import ProjectPaths
 
 SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
 

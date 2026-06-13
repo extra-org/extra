@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from agentplatform.graph import AgentDeclaration, AgentNode, CompiledAgentGraph
+from agent_engine.graph import AgentDeclaration, AgentNode, CompiledAgentGraph
 
 
 def _leaf_declaration() -> AgentDeclaration:

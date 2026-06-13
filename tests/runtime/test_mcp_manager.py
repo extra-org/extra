@@ -7,10 +7,10 @@ import threading
 
 import pytest
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.mcp_manager import MCPManager, MCPManagerError
-from agentplatform.runtime.tool_models import MCPToolDefinition
-from agentplatform.spec.models import McpSpec
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.mcp_manager import MCPManager, MCPManagerError
+from agent_engine.runtime.tool_models import MCPToolDefinition
+from agent_engine.spec.models import McpSpec
 
 
 class FakeMCPClient:

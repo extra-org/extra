@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from agentplatform.spec.models import AgentEngineSpec, AgentSpec, ResolverSpec, SystemSpec
-from agentplatform.spec.stubs import ResolverGenerateMode, generate_stubs
-from agentplatform.utils import ProjectPaths
+from agent_engine.spec.models import AgentEngineSpec, AgentSpec, ResolverSpec, SystemSpec
+from agent_engine.spec.stubs import ResolverGenerateMode, generate_stubs
+from agent_engine.utils import ProjectPaths
 
 
 def _spec_with_resolver_agents() -> AgentEngineSpec:
@@ -147,7 +147,7 @@ def test_generate_stubs_adds_missing_method_to_existing_agent_file(tmp_path: Pat
     paths = ProjectPaths(tmp_path)
     paths.resolvers_dir.mkdir(parents=True)
     paths.resolver_agent("worker").write_text(
-        "from agentplatform.runtime import ExecutionContext\n"
+        "from agent_engine.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n\n"
         "class WorkerResolver(BaseResolver):\n"
         "    def current_date(self, ctx: ExecutionContext) -> object:\n"
@@ -218,7 +218,7 @@ def test_generate_stubs_reports_stale_duplicated_shared_child_method(tmp_path: P
     paths = ProjectPaths(tmp_path)
     paths.resolvers_dir.mkdir(parents=True)
     paths.resolver_agent("domestic_flights_agent").write_text(
-        "from agentplatform.runtime import ExecutionContext\n"
+        "from agent_engine.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n\n"
         "class DomesticFlightsAgentResolver(BaseResolver):\n"
         "    def current_date(self, ctx: ExecutionContext) -> object:\n"
@@ -238,7 +238,7 @@ def test_generate_stubs_preserves_existing_base_implementation(tmp_path: Path) -
     paths = ProjectPaths(tmp_path)
     paths.resolvers_dir.mkdir(parents=True)
     paths.resolver_base.write_text(
-        "from agentplatform.runtime import ExecutionContext\n\n"
+        "from agent_engine.runtime import ExecutionContext\n\n"
         "class BaseResolver:\n"
         "    def current_date(self, ctx: ExecutionContext) -> object:\n"
         "        return 'implemented'\n",
@@ -398,7 +398,7 @@ def test_generate_stubs_reports_stale_scope_migration_on_base(tmp_path: Path) ->
     paths = ProjectPaths(tmp_path)
     paths.resolvers_dir.mkdir(parents=True)
     paths.resolver_base.write_text(
-        "from agentplatform.runtime import ExecutionContext\n\n"
+        "from agent_engine.runtime import ExecutionContext\n\n"
         "class BaseResolver:\n"
         "    def current_date(self, ctx: ExecutionContext) -> object:\n"
         "        return 'was shared'\n",

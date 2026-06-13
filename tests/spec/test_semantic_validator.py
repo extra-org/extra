@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 import yaml
 
-from agentplatform.spec import SpecSchemaError, SpecValidationError, load_spec
+from agent_engine.spec import SpecSchemaError, SpecValidationError, load_spec
 
 
 def minimal_valid_config() -> dict[str, Any]:

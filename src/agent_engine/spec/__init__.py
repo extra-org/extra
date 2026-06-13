@@ -1,15 +1,15 @@
 """YAML specification loading and validation."""
 
-from agentplatform.spec.errors import (
+from agent_engine.spec.errors import (
     SpecError,
     SpecLoadError,
     SpecSchemaError,
     SpecValidationError,
     ValidationIssue,
 )
-from agentplatform.spec.loader import LoadedSpec, load_spec
-from agentplatform.spec.models import AgentEngineSpec
-from agentplatform.spec.validator import validate_spec
+from agent_engine.spec.loader import LoadedSpec, load_spec
+from agent_engine.spec.models import AgentEngineSpec
+from agent_engine.spec.validator import validate_spec
 
 __all__ = [
     "AgentEngineSpec",

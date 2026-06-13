@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import agentplatform.models.factory as factory
+import agent_engine.models.factory as factory
 
 
 def test_passes_provider_name_and_temperature(monkeypatch) -> None:

@@ -7,9 +7,9 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Protocol, runtime_checkable
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.tool_models import MCPToolDefinition
-from agentplatform.spec.models import McpSpec
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.tool_models import MCPToolDefinition
+from agent_engine.spec.models import McpSpec
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ MCPClientFactory = Callable[[str, McpSpec], MCPClientProtocol]
 
 
 def _default_client_factory(server_id: str, config: McpSpec) -> MCPClientProtocol:
-    from agentplatform.runtime.remote_mcp_client import GenericRemoteMCPClient
+    from agent_engine.runtime.remote_mcp_client import GenericRemoteMCPClient
 
     return GenericRemoteMCPClient(
         server_id=server_id,

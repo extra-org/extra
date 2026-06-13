@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 from langchain_core.tools import BaseTool, StructuredTool
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.langchain_tool_adapter import (
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.langchain_tool_adapter import (
     LangChainToolAdapterError,
     build_langchain_tools_from_runtime_tools,
     ensure_no_duplicate_tool_names,
 )
-from agentplatform.runtime.tool_models import RuntimeTool
+from agent_engine.runtime.tool_models import RuntimeTool
 
 
 class FakeToolRegistry:

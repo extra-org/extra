@@ -7,13 +7,13 @@ from __future__ import annotations
 
 
 def test_package_imports() -> None:
-    import agentplatform
+    import agent_engine as agentplatform
 
     assert isinstance(agentplatform.__version__, str)
     assert agentplatform.__version__
 
 
 def test_cli_app_imports() -> None:
-    from agentplatform.cli.main import app
+    from agent_engine.cli.main import app
 
     assert app is not None

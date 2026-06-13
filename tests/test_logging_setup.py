@@ -6,7 +6,7 @@ import logging
 
 import pytest
 
-from agentplatform.logging_setup import (
+from agent_engine.logging_setup import (
     PACKAGE_LOGGER_NAME,
     configure_logging,
     sanitize_url_for_logging,
@@ -48,7 +48,7 @@ def test_configure_logging_is_idempotent_about_handlers() -> None:
 
 def test_logs_go_to_stderr_not_stdout(capsys: pytest.CaptureFixture[str]) -> None:
     configure_logging(verbose=True)
-    logging.getLogger("agentplatform.example").info("hello-on-stderr")
+    logging.getLogger("agent_engine.example").info("hello-on-stderr")
     captured = capsys.readouterr()
     assert "hello-on-stderr" in captured.err
     assert "hello-on-stderr" not in captured.out
@@ -56,7 +56,7 @@ def test_logs_go_to_stderr_not_stdout(capsys: pytest.CaptureFixture[str]) -> Non
 
 def test_default_suppresses_info_and_debug(capsys: pytest.CaptureFixture[str]) -> None:
     configure_logging()
-    log = logging.getLogger("agentplatform.example")
+    log = logging.getLogger("agent_engine.example")
     log.debug("debug-line")
     log.info("info-line")
     captured = capsys.readouterr()
@@ -66,7 +66,7 @@ def test_default_suppresses_info_and_debug(capsys: pytest.CaptureFixture[str]) -
 
 def test_debug_emits_debug_records(capsys: pytest.CaptureFixture[str]) -> None:
     configure_logging(debug=True)
-    logging.getLogger("agentplatform.example").debug("debug-visible")
+    logging.getLogger("agent_engine.example").debug("debug-visible")
     assert "debug-visible" in capsys.readouterr().err
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agentplatform.spec import AgentEngineSpec, SpecLoadError, load_spec
+from agent_engine.spec import AgentEngineSpec, SpecLoadError, load_spec
 
 
 def test_examples_agents_yml_validates_successfully() -> None:

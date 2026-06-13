@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 from typer.testing import CliRunner
 
-from agentplatform.cli.main import app
+from agent_engine.cli.main import app
 
 runner = CliRunner()
 
@@ -36,7 +36,7 @@ def test_run_verbose_emits_info_logs_on_stderr(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", str(config), "hi", "--verbose"])
 
     assert result.exit_code == 1
-    assert "INFO agentplatform.cli.main - Loading agent spec from config" in result.stderr
+    assert "INFO agent_engine.cli.main - Loading agent spec from config" in result.stderr
     # Diagnostics stay off stdout.
     assert "Loading agent spec from config" not in result.stdout
 
@@ -47,4 +47,4 @@ def test_run_debug_emits_debug_logs(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", str(config), "hi", "--debug"])
 
     assert result.exit_code == 1
-    assert "DEBUG agentplatform.spec.loader - Validating spec against JSON schema" in result.stderr
+    assert "DEBUG agent_engine.spec.loader - Validating spec against JSON schema" in result.stderr

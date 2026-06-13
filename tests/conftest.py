@@ -1,7 +1,7 @@
 """Shared pytest fixtures.
 
 The platform configures a single managed handler on the ``agentplatform``
-package logger (see ``agentplatform.logging_setup``). Because that handler and
+package logger (see ``agent_engine.logging_setup``). Because that handler and
 the logger's ``propagate``/level are process-global, a test that configures
 logging could otherwise leak state into unrelated tests. This autouse fixture
 snapshots and restores that state around every test so the suite stays
@@ -15,7 +15,7 @@ from collections.abc import Iterator
 
 import pytest
 
-import agentplatform.logging_setup as logging_setup
+import agent_engine.logging_setup as logging_setup
 
 
 @pytest.fixture(autouse=True)

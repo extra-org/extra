@@ -7,15 +7,15 @@ from typing import Any, ClassVar
 
 from typer.testing import CliRunner
 
-from agentplatform.cli import main as cli_main
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.engine import Engine, EngineRunError, RunResult
-from agentplatform.runtime.mcp_manager import MCPClientProtocol
-from agentplatform.runtime.streaming import RunStreamEvent
-from agentplatform.runtime.tool_models import MCPToolDefinition, ToolUsageRecord
-from agentplatform.runtime.tool_registry import ToolRegistry
-from agentplatform.spec import load_spec
-from agentplatform.spec.models import McpSpec
+from agent_engine.cli import main as cli_main
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.engine import Engine, EngineRunError, RunResult
+from agent_engine.runtime.mcp_manager import MCPClientProtocol
+from agent_engine.runtime.streaming import RunStreamEvent
+from agent_engine.runtime.tool_models import MCPToolDefinition, ToolUsageRecord
+from agent_engine.runtime.tool_registry import ToolRegistry
+from agent_engine.spec import load_spec
+from agent_engine.spec.models import McpSpec
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "agents.yml"
 
@@ -70,7 +70,7 @@ def _factory(clients: dict[str, FakeMCPClient]) -> Any:
 
 def _engine(monkeypatch: Any, clients: dict[str, FakeMCPClient]) -> Engine:
     monkeypatch.setattr(
-        "agentplatform.runtime.engine.build_langgraph",
+        "agent_engine.runtime.engine.build_langgraph",
         lambda *args, **kwargs: FakeApp(),
     )
     return Engine(load_spec(EXAMPLE), mcp_client_factory=_factory(clients))
@@ -122,7 +122,7 @@ def test_engine_run_exposes_tool_usage_from_graph_state(monkeypatch: Any) -> Non
             }
 
     monkeypatch.setattr(
-        "agentplatform.runtime.engine.build_langgraph",
+        "agent_engine.runtime.engine.build_langgraph",
         lambda *args, **kwargs: ToolUsingApp(),
     )
     engine = Engine(load_spec(EXAMPLE), mcp_client_factory=_factory(_fake_clients()))
@@ -158,7 +158,7 @@ def test_engine_run_error_exposes_partial_tool_usage(monkeypatch: Any) -> None:
             raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "agentplatform.runtime.engine.build_langgraph",
+        "agent_engine.runtime.engine.build_langgraph",
         lambda *args, **kwargs: FailingToolApp(),
     )
     engine = Engine(load_spec(EXAMPLE), mcp_client_factory=_factory(_fake_clients()))
@@ -206,7 +206,7 @@ def test_engine_stream_yields_answer_delta_and_final_events(monkeypatch: Any) ->
             }
 
     monkeypatch.setattr(
-        "agentplatform.runtime.engine.build_langgraph",
+        "agent_engine.runtime.engine.build_langgraph",
         lambda *args, **kwargs: StreamingApp(),
     )
     engine = Engine(load_spec(EXAMPLE), mcp_client_factory=_factory(_fake_clients()))

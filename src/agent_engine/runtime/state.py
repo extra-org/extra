@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypedDict
 
-from agentplatform.runtime.tool_models import ToolUsageRecord
+from agent_engine.runtime.tool_models import ToolUsageRecord
 
 
 class GraphState(TypedDict, total=False):

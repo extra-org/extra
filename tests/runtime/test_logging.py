@@ -7,14 +7,14 @@ import logging
 
 import pytest
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.mcp_manager import MCPManager
-from agentplatform.runtime.tool_models import MCPToolDefinition
-from agentplatform.runtime.tool_registry import (
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.mcp_manager import MCPManager
+from agent_engine.runtime.tool_models import MCPToolDefinition
+from agent_engine.runtime.tool_registry import (
     MCPToolProvider,
     ToolRegistry,
 )
-from agentplatform.spec.models import AgentEngineSpec, AgentSpec, McpSpec, SystemSpec
+from agent_engine.spec.models import AgentEngineSpec, AgentSpec, McpSpec, SystemSpec
 
 
 class FakeMCPClient:
@@ -67,8 +67,8 @@ def _manager() -> MCPManager:
 def test_mcp_manager_logs_lifecycle(caplog: pytest.LogCaptureFixture) -> None:
     manager = _manager()
 
-    with caplog.at_level(logging.INFO, logger="agentplatform.runtime.mcp_manager"):
-        logging.getLogger("agentplatform").propagate = True
+    with caplog.at_level(logging.INFO, logger="agent_engine.runtime.mcp_manager"):
+        logging.getLogger("agent_engine").propagate = True
         asyncio.run(manager.start())
         asyncio.run(manager.stop())
 
@@ -95,8 +95,8 @@ def test_mcp_manager_logs_tool_call(caplog: pytest.LogCaptureFixture) -> None:
         finally:
             await manager.stop()
 
-    with caplog.at_level(logging.INFO, logger="agentplatform.runtime.mcp_manager"):
-        logging.getLogger("agentplatform").propagate = True
+    with caplog.at_level(logging.INFO, logger="agent_engine.runtime.mcp_manager"):
+        logging.getLogger("agent_engine").propagate = True
         asyncio.run(scenario())
 
     messages = "\n".join(record.getMessage() for record in caplog.records)
@@ -121,8 +121,8 @@ def test_mcp_manager_does_not_log_argument_values(caplog: pytest.LogCaptureFixtu
             await manager.stop()
 
     # Even at DEBUG, argument keys are logged but never values.
-    with caplog.at_level(logging.DEBUG, logger="agentplatform.runtime.mcp_manager"):
-        logging.getLogger("agentplatform").propagate = True
+    with caplog.at_level(logging.DEBUG, logger="agent_engine.runtime.mcp_manager"):
+        logging.getLogger("agent_engine").propagate = True
         asyncio.run(scenario())
 
     messages = "\n".join(record.getMessage() for record in caplog.records)
@@ -147,8 +147,8 @@ def test_tool_registry_logs_routing_decision(caplog: pytest.LogCaptureFixture) -
         finally:
             await manager.stop()
 
-    with caplog.at_level(logging.INFO, logger="agentplatform.runtime.tool_registry"):
-        logging.getLogger("agentplatform").propagate = True
+    with caplog.at_level(logging.INFO, logger="agent_engine.runtime.tool_registry"):
+        logging.getLogger("agent_engine").propagate = True
         asyncio.run(scenario())
 
     messages = "\n".join(record.getMessage() for record in caplog.records)

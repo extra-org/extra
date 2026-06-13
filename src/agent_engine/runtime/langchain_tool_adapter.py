@@ -9,8 +9,8 @@ from typing import Any, Protocol
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.tool_models import RuntimeTool
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.tool_models import RuntimeTool
 
 logger = logging.getLogger(__name__)
 

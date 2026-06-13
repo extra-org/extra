@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agentplatform.spec import SpecSchemaError, load_spec
+from agent_engine.spec import SpecSchemaError, load_spec
 
 
 def test_json_schema_violation_fails_clearly(tmp_path: Path) -> None:

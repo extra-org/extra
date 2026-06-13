@@ -16,13 +16,13 @@ from collections.abc import Coroutine, Iterator
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
-from agentplatform.compiler import compile_spec
-from agentplatform.runtime.langgraph_builder import build_langgraph
-from agentplatform.runtime.mcp_manager import MCPClientFactory, MCPManager
-from agentplatform.runtime.streaming import RunStreamEvent
-from agentplatform.runtime.tool_models import ToolUsageRecord
-from agentplatform.runtime.tool_registry import LocalToolProvider, MCPToolProvider, ToolRegistry
-from agentplatform.spec.loader import LoadedSpec
+from agent_engine.compiler import compile_spec
+from agent_engine.runtime.langgraph_builder import build_langgraph
+from agent_engine.runtime.mcp_manager import MCPClientFactory, MCPManager
+from agent_engine.runtime.streaming import RunStreamEvent
+from agent_engine.runtime.tool_models import ToolUsageRecord
+from agent_engine.runtime.tool_registry import LocalToolProvider, MCPToolProvider, ToolRegistry
+from agent_engine.spec.loader import LoadedSpec
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ class Engine:
 
         worker = threading.Thread(
             target=run_graph,
-            name="agentplatform-engine-stream",
+            name="agent_engine-engine-stream",
             daemon=True,
         )
         worker.start()
@@ -234,7 +234,7 @@ class _EngineAsyncLoop:
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run_forever,
-            name="agentplatform-engine-async-loop",
+            name="agent_engine-engine-async-loop",
             daemon=True,
         )
         self._thread.start()

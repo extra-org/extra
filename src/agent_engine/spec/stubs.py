@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from agentplatform.spec.models import AgentEngineSpec
-from agentplatform.utils import ProjectPaths
+from agent_engine.spec.models import AgentEngineSpec
+from agent_engine.utils import ProjectPaths
 
 
 class ResolverGenerateMode(StrEnum):
@@ -297,7 +297,7 @@ def _stale_resolver_items(
 
 def _resolver_base_stub(shared_resolver_ids: set[str]) -> str:
     imports = (
-        "from agentplatform.runtime import ExecutionContext\n\n" if shared_resolver_ids else ""
+        "from agent_engine.runtime import ExecutionContext\n\n" if shared_resolver_ids else ""
     )
     methods = "".join(
         _shared_resolver_method_stub(resolver_id) for resolver_id in sorted(shared_resolver_ids)
@@ -330,7 +330,7 @@ def _agent_resolver_file_stub(
     return (
         f'"""Resolver implementation surface for {agent_id}."""\n\n'
         "from __future__ import annotations\n\n"
-        "from agentplatform.runtime import ExecutionContext\n"
+        "from agent_engine.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n\n"
         f"class {class_name}(BaseResolver):\n"
         f'    """Resolver implementation surface for {agent_id}.\n\n'

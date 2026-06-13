@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from agentplatform.runtime import ExecutionContext
-from agentplatform.runtime.plugin_loader import PluginLoader, ResolverPluginError
+from agent_engine.runtime import ExecutionContext
+from agent_engine.runtime.plugin_loader import PluginLoader, ResolverPluginError
 
 
 def _write_resolver_plugin(
@@ -23,11 +23,11 @@ def _write_resolver_plugin(
     resolvers_dir.mkdir(parents=True)
     (resolvers_dir / "__init__.py").write_text('"""Resolvers."""\n', encoding="utf-8")
     (resolvers_dir / "base.py").write_text(
-        f"from agentplatform.runtime import ExecutionContext\n\n{base_body}",
+        f"from agent_engine.runtime import ExecutionContext\n\n{base_body}",
         encoding="utf-8",
     )
     (resolvers_dir / "domestic_flights_agent.py").write_text(
-        "from agentplatform.runtime import ExecutionContext\n"
+        "from agent_engine.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n"
         f"{agent_body}",
         encoding="utf-8",
@@ -217,7 +217,7 @@ def test_load_resolver_multiple_agents_share_base_method(tmp_path: Path) -> None
     resolvers_dir.mkdir(parents=True)
     (resolvers_dir / "__init__.py").write_text('"""Resolvers."""\n', encoding="utf-8")
     (resolvers_dir / "base.py").write_text(
-        "from agentplatform.runtime import ExecutionContext\n\n"
+        "from agent_engine.runtime import ExecutionContext\n\n"
         "class BaseResolver:\n"
         "    def __init__(self, **kwargs: object) -> None:\n"
         "        pass\n"

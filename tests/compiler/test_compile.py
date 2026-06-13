@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from agentplatform.compiler import compile_spec
-from agentplatform.graph import AgentDeclaration, CompiledAgentGraph, OrchestratorDeclaration
-from agentplatform.spec import load_spec
+from agent_engine.compiler import compile_spec
+from agent_engine.graph import AgentDeclaration, CompiledAgentGraph, OrchestratorDeclaration
+from agent_engine.spec import load_spec
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "agents.yml"
 

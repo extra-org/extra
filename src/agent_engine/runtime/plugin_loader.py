@@ -27,8 +27,8 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.utils import ProjectPaths
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.utils import ProjectPaths
 
 
 class ResolverPluginError(RuntimeError):

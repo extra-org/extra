@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.mcp_manager import MCPManager
-from agentplatform.runtime.tool_models import MCPToolDefinition
-from agentplatform.runtime.tool_registry import (
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.mcp_manager import MCPManager
+from agent_engine.runtime.tool_models import MCPToolDefinition
+from agent_engine.runtime.tool_registry import (
     LocalToolProvider,
     MCPToolProvider,
     ToolRegistry,
     ToolRegistryError,
 )
-from agentplatform.spec.models import AgentEngineSpec, AgentSpec, McpSpec, SystemSpec, ToolSpec
+from agent_engine.spec.models import AgentEngineSpec, AgentSpec, McpSpec, SystemSpec, ToolSpec
 
 
 class FakeMCPClient:

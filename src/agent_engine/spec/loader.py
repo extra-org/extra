@@ -10,10 +10,10 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from agentplatform.spec.errors import SpecLoadError, SpecSchemaError, ValidationIssue
-from agentplatform.spec.models import AgentEngineSpec
-from agentplatform.spec.schema import validate_json_schema
-from agentplatform.spec.validator import validate_spec
+from agent_engine.spec.errors import SpecLoadError, SpecSchemaError, ValidationIssue
+from agent_engine.spec.models import AgentEngineSpec
+from agent_engine.spec.schema import validate_json_schema
+from agent_engine.spec.validator import validate_spec
 
 logger = logging.getLogger(__name__)
 

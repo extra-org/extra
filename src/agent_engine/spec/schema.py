@@ -9,7 +9,7 @@ from typing import Any
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import ValidationError
 
-from agentplatform.spec.errors import SpecLoadError, SpecSchemaError, ValidationIssue
+from agent_engine.spec.errors import SpecLoadError, SpecSchemaError, ValidationIssue
 
 DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "examples" / "config.schema.json"
 

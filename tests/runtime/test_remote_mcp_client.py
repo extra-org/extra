@@ -7,9 +7,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from agentplatform.runtime.mcp_manager import MCPClientProtocol, _default_client_factory
-from agentplatform.runtime.remote_mcp_client import GenericRemoteMCPClient, RemoteMCPClientError
-from agentplatform.spec.models import McpSpec
+from agent_engine.runtime.mcp_manager import MCPClientProtocol, _default_client_factory
+from agent_engine.runtime.remote_mcp_client import GenericRemoteMCPClient, RemoteMCPClientError
+from agent_engine.spec.models import McpSpec
 
 
 class FakeTransportContext:

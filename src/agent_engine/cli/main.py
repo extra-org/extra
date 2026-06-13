@@ -14,16 +14,16 @@ from pathlib import Path
 import typer
 from dotenv import load_dotenv
 
-from agentplatform import __version__
-from agentplatform.logging_setup import configure_logging
-from agentplatform.runtime.engine import Engine, EngineRunError
-from agentplatform.runtime.streaming import RunStreamEvent
-from agentplatform.runtime.tool_models import ToolUsageRecord
-from agentplatform.spec import SpecError, load_spec
-from agentplatform.spec.stubs import ResolverGenerateMode, generate_stubs
+from agent_engine import __version__
+from agent_engine.logging_setup import configure_logging
+from agent_engine.runtime.engine import Engine, EngineRunError
+from agent_engine.runtime.streaming import RunStreamEvent
+from agent_engine.runtime.tool_models import ToolUsageRecord
+from agent_engine.spec import SpecError, load_spec
+from agent_engine.spec.stubs import ResolverGenerateMode, generate_stubs
 
 # need to configure it correctly (should be __name__)
-logger = logging.getLogger("agentplatform.cli.main")
+logger = logging.getLogger("agent_engine.cli.main")
 
 app = typer.Typer(
     name="agentctl",

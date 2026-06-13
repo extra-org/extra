@@ -16,12 +16,12 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import RunnableLambda
 from pydantic import PrivateAttr
 
-from agentplatform.compiler import compile_spec
-from agentplatform.runtime import build_langgraph
-from agentplatform.runtime.context import ExecutionContext
-from agentplatform.runtime.langgraph_builder import _RouteDecision
-from agentplatform.runtime.tool_models import RuntimeTool, RuntimeToolBinding, ToolUsageRecord
-from agentplatform.spec import load_spec
+from agent_engine.compiler import compile_spec
+from agent_engine.runtime import build_langgraph
+from agent_engine.runtime.context import ExecutionContext
+from agent_engine.runtime.langgraph_builder import _RouteDecision
+from agent_engine.runtime.tool_models import RuntimeTool, RuntimeToolBinding, ToolUsageRecord
+from agent_engine.spec import load_spec
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "agents.yml"
 
@@ -234,7 +234,7 @@ def plugin_base_dir(tmp_path: Path) -> Path:
 
     (resolvers_dir / "__init__.py").write_text('"""Resolvers."""\n')
     (resolvers_dir / "base.py").write_text(
-        "from agentplatform.runtime import ExecutionContext\n\n"
+        "from agent_engine.runtime import ExecutionContext\n\n"
         "class BaseResolver:\n"
         "    def current_date(self, ctx: ExecutionContext) -> str:\n"
         "        return 'current_date-value'\n"
@@ -242,19 +242,19 @@ def plugin_base_dir(tmp_path: Path) -> Path:
         "        return 'user_name-value'\n"
     )
     (resolvers_dir / "domestic_flights_agent.py").write_text(
-        "from agentplatform.runtime import ExecutionContext\n"
+        "from agent_engine.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n"
         "class DomesticFlightsAgentResolver(BaseResolver):\n"
         "    pass\n"
     )
     (resolvers_dir / "international_flights_agent.py").write_text(
-        "from agentplatform.runtime import ExecutionContext\n"
+        "from agent_engine.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n"
         "class InternationalFlightsAgentResolver(BaseResolver):\n"
         "    pass\n"
     )
     (resolvers_dir / "super_agent.py").write_text(
-        "from agentplatform.runtime import ExecutionContext\n"
+        "from agent_engine.runtime import ExecutionContext\n"
         "from plugins.resolvers.base import BaseResolver\n\n"
         "class SuperAgentResolver(BaseResolver):\n"
         "    def subscription(self, ctx: ExecutionContext) -> str:\n"
