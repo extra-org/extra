@@ -11,4 +11,4 @@ Return ``True`` to allow, ``False`` to deny.
 class AccessResolver:
     def can_access(self, ctx: dict, node_id: str) -> bool:
         # Demo: allow everyone.  Replace with real RBAC / policy logic.
-        return False
+        return True
