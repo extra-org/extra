@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -70,6 +71,10 @@ def generate(config: str) -> None:
 @click.option("--stream", is_flag=True, help="Stream the answer")
 def run(config: str, message: str, env: str | None, stream: bool) -> None:
     """Run a message through the agent system defined in the YAML."""
+    asyncio.run(_run_async(config, message, env, stream))
+
+
+async def _run_async(config: str, message: str, env: str | None, stream: bool) -> None:
     env_path = Path(env) if env else Path(config).resolve().parent / ".env"
     load_dotenv(env_path, override=True)
 
@@ -86,33 +91,29 @@ def run(config: str, message: str, env: str | None, stream: bool) -> None:
             click.echo(f"✗ {e}", err=True)
         sys.exit(1)
 
-    engine = LangGraphEngine(base_dir)
-    engine.build(spec)
-
     click.echo(f"  system : {spec.meta.name}", err=True)
     click.echo(f"  message: {message}", err=True)
     click.echo("", err=True)
 
     try:
-        engine.start()
-        if stream:
-            for event in engine.stream(message):
-                if event.type == "route" and event.route:
-                    click.echo(f"  route  : {' → '.join(event.route)}", err=True)
-                elif event.type == "answer_delta" and event.content:
-                    sys.stdout.write(event.content)
-                    sys.stdout.flush()
-            sys.stdout.write("\n")
-        else:
-            result = engine.run(message)
-            click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
-            click.echo("")
-            click.echo(result.answer)
+        async with LangGraphEngine(base_dir) as engine:
+            await engine.build(spec)
+            if stream:
+                async for event in await engine.stream(message):
+                    if event.type == "route" and event.route:
+                        click.echo(f"  route  : {' → '.join(event.route)}", err=True)
+                    elif event.type == "answer_delta" and event.content:
+                        sys.stdout.write(event.content)
+                        sys.stdout.flush()
+                sys.stdout.write("\n")
+            else:
+                result = await engine.run(message)
+                click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
+                click.echo("")
+                click.echo(result.answer)
     except Exception as exc:
         click.echo(f"✗ Runtime error: {exc}", err=True)
         sys.exit(1)
-    finally:
-        engine.stop()
 
 
 if __name__ == "__main__":

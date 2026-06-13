@@ -48,6 +48,7 @@ dependencies = [
     "langchain>=0.3",
     "langchain-core>=0.3",
     "mcp>=1.27,<2",
+    "langchain-mcp-adapters>=0.1",
     "python-dotenv>=1.0",
     "langchain-anthropic (>=1.4.5,<2.0.0)",
 ]

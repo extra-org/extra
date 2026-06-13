@@ -1,25 +1,28 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 
 from agent_engine.core.spec import SystemSpec
-from agent_engine.engine.types import Message, RunResult
+from agent_engine.engine.types import RunResult
 from agent_engine.runtime.streaming import RunStreamEvent
 
 
 class Engine(ABC):
     @abstractmethod
-    def build(self, spec: SystemSpec) -> None: ...
+    async def build(self, spec: SystemSpec) -> None: ...
 
     @abstractmethod
-    def run(self, message: str) -> RunResult: ...
+    async def run(self, message: str) -> RunResult: ...
 
     @abstractmethod
-    def stream(self, message: str) -> Iterator[RunStreamEvent]: ...
+    async def stream(self, message: str) -> AsyncIterator[RunStreamEvent]: ...
 
-    def start(self) -> None:
+    async def close(self) -> None:
         pass
 
-    def stop(self) -> None:
-        pass
+    async def __aenter__(self) -> Engine:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.close()

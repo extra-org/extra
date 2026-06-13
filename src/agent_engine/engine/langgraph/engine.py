@@ -4,14 +4,11 @@ import asyncio
 import importlib.util
 import logging
 import re
-import threading
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any, TypeVar, cast
-
-_T = TypeVar("_T")
+from typing import Any, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -26,7 +23,6 @@ from agent_engine.engine.types import RunResult, ToolUsageRecord
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.loaders.tool_loader import ToolLoader
 from agent_engine.models.factory import build_chat_model
-from agent_engine.runtime.mcp_manager import MCPManager, MCPClientFactory
 from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import RunStreamEvent
 
@@ -73,17 +69,15 @@ class LangGraphEngine(Engine):
         base_dir: Path,
         *,
         model_factory: ModelFactory = build_chat_model,
-        mcp_client_factory: MCPClientFactory | None = None,
     ) -> None:
         self._base_dir = base_dir
         self._model_factory = model_factory
-        self._mcp_manager: MCPManager | None = None
-        self._mcp_client_factory = mcp_client_factory
         self._app: CompiledStateGraph | None = None
         self._system_name = ""
         self._filters: list[RouteFilter] = []
+        self._mcp_clients: dict[str, Any] = {}
 
-    def build(self, spec: SystemSpec, filters: list[RouteFilter] | None = None) -> None:
+    async def build(self, spec: SystemSpec, filters: list[RouteFilter] | None = None) -> None:
         self._system_name = spec.meta.name
         self._filters = list(filters or [])
 
@@ -92,40 +86,31 @@ class LangGraphEngine(Engine):
             if access_plugin.is_file():
                 self._filters.insert(0, AccessFilter(self._base_dir))
 
-        mcp_configs = _collect_mcp_configs(spec.graph)
-        self._mcp_manager = MCPManager(mcp_configs, client_factory=self._mcp_client_factory)
+        # Open one MCP client per server, collect tools per server
+        mcp_tools_by_server = await self._connect_mcps(spec.graph)
 
         tool_loader = ToolLoader(self._base_dir)
         resolver_loader = ResolverLoader(self._base_dir)
 
         builder = StateGraph(GraphState)
-        self._add_nodes(builder, spec.graph, tool_loader, resolver_loader, parent_path=None)
+        self._add_nodes(builder, spec.graph, tool_loader, resolver_loader, mcp_tools_by_server, parent_path=None)
         builder.add_edge(START, _node_path(spec.graph, parent_path=None))
         self._add_edges(builder, spec.graph, parent_path=None)
         self._app = builder.compile()
 
-    def start(self) -> None:
-        if self._mcp_manager is None:
-            return
-        self._loop = _AsyncLoop()
-        self._loop.run(self._mcp_manager.start())
+    async def close(self) -> None:
+        for client in self._mcp_clients.values():
+            try:
+                await client.__aexit__(None, None, None)
+            except Exception:
+                logger.warning("Error closing MCP client", exc_info=True)
+        self._mcp_clients.clear()
 
-    def stop(self) -> None:
-        loop = getattr(self, "_loop", None)
-        if loop is None:
-            return
-        self._loop = None
-        try:
-            if self._mcp_manager:
-                loop.run(self._mcp_manager.stop())
-        finally:
-            loop.close()
-
-    def run(self, message: str) -> RunResult:
+    async def run(self, message: str) -> RunResult:
         assert self._app is not None, "call build() before run()"
         used_tools: list[ToolUsageRecord] = []
         state: dict[str, Any] = {"message": message, "used_tools": used_tools}
-        result = self._app.invoke(cast(Any, state))
+        result = await self._app.ainvoke(cast(Any, state))
         return RunResult(
             system_name=self._system_name,
             visited=result.get("visited", []),
@@ -133,47 +118,69 @@ class LangGraphEngine(Engine):
             used_tools=tuple(result.get("used_tools", used_tools)),
         )
 
-    def stream(self, message: str) -> Iterator[RunStreamEvent]:
+    async def stream(self, message: str) -> AsyncIterator[RunStreamEvent]:
         assert self._app is not None, "call build() before stream()"
-        import queue
-        import threading
 
-        event_queue: queue.Queue[RunStreamEvent | BaseException | None] = queue.Queue()
+        queue: asyncio.Queue[RunStreamEvent | BaseException | None] = asyncio.Queue()
+        loop = asyncio.get_event_loop()
         used_tools: list[ToolUsageRecord] = []
 
-        def run_graph() -> None:
-            state: dict[str, Any] = {
-                "message": message,
-                "used_tools": used_tools,
-                "answer_stream": lambda c: event_queue.put(RunStreamEvent(type="answer_delta", content=c)),
-                "route_stream": lambda r: event_queue.put(RunStreamEvent(type="route", route=r)),
-            }
-            try:
-                result = self._app.invoke(cast(Any, state))  # type: ignore[union-attr]
-            except Exception as exc:
-                event_queue.put(exc)
-                return
-            event_queue.put(RunStreamEvent(
-                type="final",
-                content=result.get("answer", ""),
-                route=tuple(result.get("visited", [])),
-                system_name=self._system_name,
-                used_tools=tuple(result.get("used_tools", used_tools)),
-            ))
-            event_queue.put(None)
+        def put(item: RunStreamEvent) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
 
-        worker = threading.Thread(target=run_graph, daemon=True)
-        worker.start()
+        state: dict[str, Any] = {
+            "message": message,
+            "used_tools": used_tools,
+            "answer_stream": lambda c: put(RunStreamEvent(type="answer_delta", content=c)),
+            "route_stream": lambda r: put(RunStreamEvent(type="route", route=r)),
+        }
+
+        async def run_graph() -> None:
+            try:
+                result = await self._app.ainvoke(cast(Any, state))  # type: ignore[union-attr]
+                queue.put_nowait(RunStreamEvent(
+                    type="final",
+                    content=result.get("answer", ""),
+                    route=tuple(result.get("visited", [])),
+                    system_name=self._system_name,
+                    used_tools=tuple(result.get("used_tools", used_tools)),
+                ))
+            except Exception as exc:
+                queue.put_nowait(exc)
+            finally:
+                queue.put_nowait(None)
+
+        task = asyncio.create_task(run_graph())
         try:
             while True:
-                item = event_queue.get()
+                item = await queue.get()
                 if item is None:
                     break
                 if isinstance(item, BaseException):
                     raise RuntimeError(str(item)) from item
                 yield item
         finally:
-            worker.join()
+            await task
+
+    # ------------------------------------------------------------------
+    # MCP connection management
+    # ------------------------------------------------------------------
+
+    async def _connect_mcps(self, graph: GraphNode) -> dict[str, list[BaseTool]]:
+        """Open one MultiServerMCPClient per MCP server, return tools grouped by server id."""
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+
+        all_mcps = _collect_all_mcps(graph)
+        mcp_tools_by_server: dict[str, list[BaseTool]] = {}
+
+        for server_id, url in all_mcps.items():
+            client = MultiServerMCPClient({server_id: {"url": url, "transport": "streamable_http"}})
+            await client.__aenter__()
+            self._mcp_clients[server_id] = client
+            mcp_tools_by_server[server_id] = await client.get_tools()
+            logger.info("MCP server=%s connected, tools=%d", server_id, len(mcp_tools_by_server[server_id]))
+
+        return mcp_tools_by_server
 
     # ------------------------------------------------------------------
     # Graph building helpers
@@ -185,6 +192,7 @@ class LangGraphEngine(Engine):
         node: GraphNode,
         tool_loader: ToolLoader,
         resolver_loader: ResolverLoader,
+        mcp_tools_by_server: dict[str, list[BaseTool]],
         parent_path: str | None,
     ) -> None:
         path = _node_path(node, parent_path)
@@ -194,31 +202,23 @@ class LangGraphEngine(Engine):
             assert isinstance(node.node, AgentSpec)
             builder.add_node(
                 path,
-                self._make_agent_node(node.node, path, tool_loader, resolver_loader),
+                self._make_agent_node(node.node, path, tool_loader, resolver_loader, mcp_tools_by_server),
             )
         for child in node.children:
-            self._add_nodes(builder, child, tool_loader, resolver_loader, parent_path=path)
+            self._add_nodes(builder, child, tool_loader, resolver_loader, mcp_tools_by_server, parent_path=path)
 
-    def _add_edges(
-        self, builder: StateGraph, node: GraphNode, parent_path: str | None
-    ) -> None:
+    def _add_edges(self, builder: StateGraph, node: GraphNode, parent_path: str | None) -> None:
         path = _node_path(node, parent_path)
         if node.children:
             routes = {_node_path(c, path): _node_path(c, path) for c in node.children}
             assert isinstance(node.node, OrchestratorSpec)
-            builder.add_conditional_edges(
-                path,
-                self._make_router(node, path),
-                routes,
-            )
+            builder.add_conditional_edges(path, self._make_router(node, path), routes)
             for child in node.children:
                 self._add_edges(builder, child, parent_path=path)
         else:
             builder.add_edge(path, END)
 
-    def _make_router(
-        self, node: GraphNode, node_path: str
-    ) -> Callable[[GraphState], str]:
+    def _make_router(self, node: GraphNode, node_path: str) -> Callable[[GraphState], str]:
         assert isinstance(node.node, OrchestratorSpec)
         spec = node.node
         first_child_path = _node_path(node.children[0], node_path)
@@ -241,9 +241,7 @@ class LangGraphEngine(Engine):
 
             if routing_chain is not None:
                 orchestrator_prompt = _load_file(self._base_dir, spec.prompts.orchestrator)
-                child_desc = "\n".join(
-                    f"- {c.node.id}: {c.node.description}" for c in candidates
-                )
+                child_desc = "\n".join(f"- {c.node.id}: {c.node.description}" for c in candidates)
                 system = (
                     f"{orchestrator_prompt}\n\nAvailable agents:\n{child_desc}\n\n"
                     "Respond with only the node_id of the best matching agent."
@@ -269,8 +267,9 @@ class LangGraphEngine(Engine):
         node_path: str,
         tool_loader: ToolLoader,
         resolver_loader: ResolverLoader,
+        mcp_tools_by_server: dict[str, list[BaseTool]],
     ) -> Callable[[GraphState], dict[str, object]]:
-        tools = self._build_tools(spec, tool_loader)
+        tools = self._build_tools(spec, tool_loader, mcp_tools_by_server)
         model = self._model_factory(spec.model.provider, spec.model.name, spec.model.temperature)
         bound_model = model.bind_tools(tools) if tools else model
         tool_map = {t.name: t for t in tools}
@@ -322,16 +321,20 @@ class LangGraphEngine(Engine):
 
         return node
 
-    def _build_tools(self, spec: AgentSpec, tool_loader: ToolLoader) -> list[BaseTool]:
+    def _build_tools(
+        self,
+        spec: AgentSpec,
+        tool_loader: ToolLoader,
+        mcp_tools_by_server: dict[str, list[BaseTool]],
+    ) -> list[BaseTool]:
         tools: list[BaseTool] = []
+
         for t in spec.tools:
             fn = tool_loader.load(t.id)
             tools.append(StructuredTool.from_function(fn, description=t.description))
 
-        if self._mcp_manager and spec.mcps:
-            for mcp in spec.mcps:
-                for tool_def in self._mcp_manager.list_tools(mcp.id):
-                    tools.append(_make_mcp_tool(tool_def, mcp.id, self._mcp_manager))
+        for mcp in spec.mcps:
+            tools.extend(mcp_tools_by_server.get(mcp.id, []))
 
         return tools
 
@@ -401,14 +404,15 @@ def _has_protected_nodes(node: GraphNode) -> bool:
     return any(_has_protected_nodes(c) for c in node.children)
 
 
-def _collect_mcp_configs(node: GraphNode) -> dict[str, Any]:
-    configs: dict[str, Any] = {}
+def _collect_all_mcps(node: GraphNode) -> dict[str, str]:
+    """Return {server_id: url} for every unique MCP server in the graph."""
+    result: dict[str, str] = {}
     if isinstance(node.node, AgentSpec):
         for mcp in node.node.mcps:
-            configs[mcp.id] = type("McpSpec", (), {"url": mcp.url})()
+            result.setdefault(mcp.id, mcp.url)
     for child in node.children:
-        configs.update(_collect_mcp_configs(child))
-    return configs
+        result.update(_collect_all_mcps(child))
+    return result
 
 
 def _load_access_resolver(base_dir: Path) -> Any:
@@ -422,47 +426,3 @@ def _load_access_resolver(base_dir: Path) -> Any:
     if cls is None:
         raise ImportError(f"{path} must define class AccessResolver")
     return cls()
-
-
-def _make_mcp_tool(tool_def: Any, server_id: str, mcp_manager: MCPManager) -> BaseTool:
-    import asyncio
-    from langchain_core.tools import tool as lc_tool
-
-    @lc_tool
-    def mcp_tool(**kwargs: Any) -> str:
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
-            mcp_manager.call_tool(
-                server_id=server_id,
-                tool_name=tool_def.name,
-                arguments=kwargs,
-            )
-        )
-        return str(result)
-
-    mcp_tool.name = tool_def.name
-    mcp_tool.description = tool_def.description
-    return mcp_tool
-
-
-class _AsyncLoop:
-    """Dedicated event loop on a background thread for async MCP operations."""
-
-    def __init__(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._run_forever, name="agent_engine-async-loop", daemon=True
-        )
-        self._thread.start()
-
-    def run(self, coro: Coroutine[Any, Any, _T]) -> _T:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
-
-    def close(self) -> None:
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join()
-        self._loop.close()
-
-    def _run_forever(self) -> None:
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
