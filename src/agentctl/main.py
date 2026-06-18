@@ -127,5 +127,23 @@ async def _run_async(config: str, message: str, env: str | None, stream: bool) -
         sys.exit(1)
 
 
+@cli.command()
+@click.option("--config", required=True, help="Path to agents.yml")
+@click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to")
+@click.option("--port", default=8080, show_default=True, help="Port to listen on")
+@click.option("--env", default=None, help="Path to .env file")
+def serve(config: str, host: str, port: int, env: str | None) -> None:
+    """Serve the agent system as an HTTP API."""
+    import uvicorn
+
+    from agent_engine.api.app import create_app
+
+    env_path = Path(env) if env else Path(config).resolve().parent / ".env"
+    load_dotenv(env_path, override=True)
+
+    app = create_app(config)
+    uvicorn.run(app, host=host, port=port)
+
+
 if __name__ == "__main__":
     cli()

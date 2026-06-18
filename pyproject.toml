@@ -79,7 +79,7 @@ Documentation = "https://github.com/example/agent-engine/tree/main/docs"
 path = "src/agent_engine/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_engine"]
+packages = ["src/agent_engine", "src/agentctl"]
 
 [tool.ruff]
 target-version = "py311"
