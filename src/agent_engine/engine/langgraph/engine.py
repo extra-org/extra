@@ -146,9 +146,10 @@ class LangGraphEngine(Engine):
     async def _connect_mcps(self, spec: SystemSpec) -> dict[str, list[BaseTool]]:
         """Create one MultiServerMCPClient per server and fetch its tools.
 
-        If plugins/mcp_auth/{server_id}.py exists, get_headers() is called and
-        the returned headers are attached to every request for that server.
-        Unreachable servers are logged as warnings and skipped.
+        If plugins/mcp_auth/{server_id}.py exists, its get_headers() is wired in
+        as per-request auth, so rotating credentials are resolved fresh on every
+        call rather than frozen at startup. Unreachable servers are logged as
+        warnings and skipped.
         """
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -158,10 +159,10 @@ class LangGraphEngine(Engine):
 
         mcp_tools: dict[str, list[BaseTool]] = {}
         for server_id, mcp_spec in collect_mcp_specs(spec.graph).items():
-            headers = await auth_loader.get_headers(server_id)
             config: dict[str, Any] = {"url": mcp_spec.url, "transport": "streamable_http"}
-            if headers:
-                config["headers"] = headers
+            auth = auth_loader.get_auth(server_id)
+            if auth is not None:
+                config["auth"] = auth
 
             client = MultiServerMCPClient({server_id: config})  # type: ignore[dict-item]
             self._mcp_clients[server_id] = client

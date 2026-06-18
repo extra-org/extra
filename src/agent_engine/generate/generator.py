@@ -189,7 +189,11 @@ def _access_stub() -> str:
 def _mcp_auth_stub(mcp_id: str) -> str:
     return (
         "from __future__ import annotations\n\n\n"
-        f"async def get_headers() -> dict[str, str]:\n"
-        f'    """Return HTTP headers to authenticate requests to the {mcp_id} MCP server."""\n'
+        "async def get_headers() -> dict[str, str]:\n"
+        f'    """Return HTTP headers to authenticate requests to the {mcp_id} MCP server.\n'
+        "\n"
+        "    Called on every request, so cache the token and only refresh it near\n"
+        "    expiry (e.g. for OAuth or other short-lived credentials).\n"
+        '    """\n'
         "    raise NotImplementedError\n"
     )
