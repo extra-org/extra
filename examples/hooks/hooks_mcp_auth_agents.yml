@@ -1,0 +1,72 @@
+# Enterprise MCP auth via runtime hooks.
+#
+# This example shows how a private application plugs its own authentication into
+# calls to a private MCP server using before_mcp_request hooks — with no
+# per-server client code in the platform and no token ever reaching the LLM.
+#
+# The hook callables live in examples/hooks/company_auth_hooks.py. In a real
+# deployment they would live in your own importable package; point each `ref` at
+# its dotted import path (module:attribute).
+#
+# Secrets are NEVER written here. Hooks read them from environment variables
+# (INTERNAL_MCP_CREDENTIAL below) resolved inside the hook code.
+#
+# Note: the platform's YAML secret scanner rejects keys/values containing words
+# like "token", "secret", "password", or "api_key" — even as plain env-var
+# references — to keep secrets out of YAML. Name your env-var references without
+# those words, e.g. `credential_env: INTERNAL_MCP_CREDENTIAL`.
+
+system:
+  name: "Enterprise MCP Auth (hooks demo)"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5
+    temperature: 0.0
+
+mcps:
+  # A private MCP server that requires an Authorization header. The platform
+  # connects by URL only; the before_mcp_request hook supplies credentials.
+  internal_docs:
+    url: "https://internal-docs.example.com/mcp"
+
+agents:
+  docs_agent:
+    name: "Internal Docs Researcher"
+    description: "Answers questions using the company's private docs MCP server."
+    prompts:
+      system: "prompts/deepwiki/system.md"
+    mcps: [internal_docs]
+
+graph:
+  docs_agent:
+
+hooks:
+  # Fail fast at build time if the credential env var is not configured.
+  on_engine_start:
+    - ref: "company_auth_hooks:validate_auth_setup"
+      config:
+        required_env: ["INTERNAL_MCP_CREDENTIAL"]
+
+  # Add correlation metadata to every run (identity is passed in by the app via
+  # engine.run(message, context=RunContext(...))).
+  on_run_start:
+    - ref: "company_auth_hooks:attach_user_context"
+      config:
+        app_name: "acme-portal"
+
+  # The key integration: inject the Authorization header before each MCP request.
+  # Swap for add_mcp_auth_headers (token exchange) or sign_mcp_request (HMAC).
+  before_mcp_request:
+    - ref: "company_auth_hooks:add_static_auth_header"
+      config:
+        credential_env: "INTERNAL_MCP_CREDENTIAL"
+
+  # Best-effort audit: log and continue even if the audit sink is down.
+  after_tool_call:
+    - ref: "company_auth_hooks:record_tool_call"
+      failure_policy: warn
+
+  on_run_error:
+    - ref: "company_auth_hooks:record_run_failure"
