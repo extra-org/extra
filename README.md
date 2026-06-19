@@ -135,7 +135,9 @@ business-data lookup code. Customers provide Python plugins.
 
 All customer extension code lives under one plugin package (`plugins/` —
 `hooks/`, `resolvers/`, `tools/`) described by a single manifest,
-`plugins/plugins.toml` (documentation/generation only; not read at runtime).
+`plugins/plugins.toml`. The runtime reads `[hooks.plugins]` to resolve managed
+hook plugin ids; the other manifest entries are documentation/generation
+metadata.
 See [examples/plugins/](examples/plugins/).
 
 **Resolver plugins** fill prompt variables before a node runs. Resolvers are

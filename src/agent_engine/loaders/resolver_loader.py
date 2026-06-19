@@ -37,8 +37,7 @@ class ResolverLoader:
         if method is None or not callable(method):
             cls_name = type(instance).__name__
             raise ResolverLoaderError(
-                f"Resolver class '{cls_name}' for agent '{agent_id}' "
-                f"has no method '{resolver_id}'"
+                f"Resolver class '{cls_name}' for agent '{agent_id}' has no method '{resolver_id}'"
             )
         return method
 

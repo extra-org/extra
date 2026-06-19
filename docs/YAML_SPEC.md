@@ -84,6 +84,28 @@ graph:
 Secrets must not appear in YAML. Hooks are **not** tools — they are never
 exposed to the LLM; see [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md).
 
+Hook entries support two forms. Generated/client-owned hooks should use logical
+plugin ids resolved through `plugins/plugins.toml`:
+
+```yaml
+hooks:
+  before_mcp_request:
+    - plugin: "mcp_auth"
+      method: "before_mcp_request"
+      config:
+        credential_env: "INTERNAL_MCP_CREDENTIAL"
+```
+
+Advanced/manual integrations may still use explicit import refs:
+
+```yaml
+hooks:
+  before_mcp_request:
+    - ref: "company.plugins.auth:add_headers"
+```
+
+An entry must use either `ref` or `plugin` + `method`, not both.
+
 ---
 
 ## Node Types
@@ -203,8 +225,9 @@ The runtime loads the agent's `Resolver` by file path and instantiates it once.
 
 The importable refs are catalogued in the single plugin manifest
 `plugins/plugins.toml` (see [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) →
-"The `plugins.toml` manifest") — a documentation/generation artifact, not a
-runtime input:
+"The `plugins.toml` manifest"). The runtime reads only `[hooks.plugins]` to
+resolve managed hook plugin ids; resolver/tool entries remain documentation and
+generation metadata:
 
 ```toml
 [resolvers]

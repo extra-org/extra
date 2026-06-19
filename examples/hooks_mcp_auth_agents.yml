@@ -4,12 +4,9 @@
 # calls to a private MCP server using before_mcp_request hooks — with no
 # per-server client code in the platform and no token ever reaching the LLM.
 #
-# The hook class lives in examples/plugins/hooks/mcp_auth.py and is referenced
-# by full Python import path. In a real deployment it lives in
-# your own importable package; point each `ref` at its dotted path
-# (module.path:attribute). For these refs to resolve, the package must be
-# importable — here the repo root is on sys.path so `examples.plugins.hooks...`
-# imports; see docs/RUNTIME_HOOKS.md ("Making your hooks importable").
+# The hook class lives in examples/plugins/hooks/mcp_auth.py and is registered
+# in examples/plugins/plugins.toml as plugin id `mcp_auth`. The YAML below uses
+# plugin + method names, not Python import paths.
 #
 # Secrets are NEVER written here. Hooks read them from environment variables
 # (INTERNAL_MCP_CREDENTIAL below) resolved inside the hook code.
@@ -22,7 +19,7 @@
 system:
   name: "Enterprise MCP Auth (hooks demo)"
 
-# Make the `examples.plugins.*` hook refs below importable no matter where the
+# Make the `examples.plugins.*` hook plugin class importable no matter where the
 # CLI is launched from. Roots are resolved relative to THIS file: this config
 # sits in examples/, so ".." is the repo root, which holds the `examples`
 # package. Without this you would have to set PYTHONPATH manually.
@@ -57,27 +54,32 @@ graph:
 hooks:
   # Fail fast at build time if the credential env var is not configured.
   on_engine_start:
-    - ref: "examples.plugins.hooks.mcp_auth:McpAuthHook.validate_auth_setup"
+    - plugin: "mcp_auth"
+      method: "validate_auth_setup"
       config:
         required_env: ["INTERNAL_MCP_CREDENTIAL"]
 
   # Add correlation metadata to every run (identity is passed in by the app via
   # engine.run(message, context=RunContext(...))).
   on_run_start:
-    - ref: "examples.plugins.hooks.mcp_auth:McpAuthHook.attach_user_context"
+    - plugin: "mcp_auth"
+      method: "attach_user_context"
       config:
         app_name: "acme-portal"
 
   # The key integration: inject the Authorization header before each MCP request.
   before_mcp_request:
-    - ref: "examples.plugins.hooks.mcp_auth:McpAuthHook.before_mcp_request"
+    - plugin: "mcp_auth"
+      method: "before_mcp_request"
       config:
         credential_env: "INTERNAL_MCP_CREDENTIAL"
 
   # Best-effort audit: log and continue even if the audit sink is down.
   after_tool_call:
-    - ref: "examples.plugins.hooks.mcp_auth:McpAuthHook.record_tool_call"
+    - plugin: "mcp_auth"
+      method: "record_tool_call"
       failure_policy: warn
 
   on_run_error:
-    - ref: "examples.plugins.hooks.mcp_auth:McpAuthHook.record_run_failure"
+    - plugin: "mcp_auth"
+      method: "record_run_failure"

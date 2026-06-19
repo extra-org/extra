@@ -1,8 +1,8 @@
 # plugins.toml — unified manifest for this client extension package.
 #
 # ONE manifest for ALL client extension code: hooks, resolvers, and tools.
-# It is a catalog/generation companion, NOT read by the runtime — hooks load
-# from the agent YAML `hooks:` refs, resolvers and tools load by file path.
+# It is a catalog/generation companion. The runtime reads only [hooks.plugins]
+# to resolve managed hook ids; resolvers and tools load by file path.
 # `agentctl generate` creates this file if missing and merges new entries in
 # without overwriting manual edits.
 #
@@ -19,11 +19,14 @@ resolvers = "examples.plugins.resolvers"
 tools = "examples.plugins.tools"
 
 [hooks]
-on_engine_start = ["examples.plugins.hooks.mcp_auth:McpAuthHook.validate_auth_setup"]
-on_run_start = ["examples.plugins.hooks.mcp_auth:McpAuthHook.attach_user_context"]
-before_mcp_request = ["examples.plugins.hooks.mcp_auth:McpAuthHook.before_mcp_request"]
-after_tool_call = ["examples.plugins.hooks.mcp_auth:McpAuthHook.record_tool_call"]
-on_run_error = ["examples.plugins.hooks.mcp_auth:McpAuthHook.record_run_failure"]
+on_engine_start = []
+on_run_start = []
+before_mcp_request = []
+after_tool_call = []
+on_run_error = []
+
+[hooks.plugins]
+mcp_auth = "examples.plugins.hooks.mcp_auth:McpAuthHook"
 
 [resolvers]
 domestic_flights_agent = "examples.plugins.resolvers.domestic_flights_agent:Resolver"
