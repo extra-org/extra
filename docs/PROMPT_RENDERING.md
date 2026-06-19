@@ -66,9 +66,10 @@ agents:
     resolvers: [current_date, user_name]
 ```
 
-The resolver class is configured separately in `plugins/resolvers/resolvers.toml`.
-Resolver methods receive `ctx` and return values before the node runs. Resolvers
-are not exposed to the LLM and do not consume tokens.
+Resolver classes are loaded by file path and catalogued in the single plugin
+manifest `plugins/plugins.toml` (documentation/generation only). Resolver methods
+receive `ctx` and return values before the node runs. Resolvers are not exposed
+to the LLM and do not consume tokens.
 
 ---
 

@@ -79,6 +79,7 @@ graph:
 | `agents`        | no       | Executor nodes. |
 | `graph`         | yes      | Runtime topology, with one root entrypoint. |
 | `hooks`         | no       | Trusted runtime hooks (auth/policy/audit). See [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md). |
+| `plugins`       | no       | Plugin loading config. `plugins.import_roots` lists dirs (resolved relative to this file) to put on `sys.path` so package-path plugin refs import reliably. See [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md). |
 
 Secrets must not appear in YAML. Hooks are **not** tools — they are never
 exposed to the LLM; see [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md).
@@ -184,7 +185,7 @@ different times and have different trust boundaries.
 
 Resolvers are declared as ids in YAML. Each resolver has a **scope**:
 
-- `shared` — generated once on `BaseResolver`; inherited by all agents.
+- `shared` — generated once on `SharedResolver`; inherited by all agents.
 - `agent` (default) — generated only on the declaring agent's resolver subclass.
 
 ```yaml
@@ -195,21 +196,25 @@ resolvers:
     scope: agent
 ```
 
-Resolver classes are configured in `plugins/resolvers/resolvers.toml`, one file
-per agent:
+Resolvers are generated one file per agent under `plugins/resolvers/`: each
+agent file defines a `Resolver` class, and shared methods live on a
+`SharedResolver` in `plugins/resolvers/shared.py` that agent classes inherit.
+The runtime loads the agent's `Resolver` by file path and instantiates it once.
+
+The importable refs are catalogued in the single plugin manifest
+`plugins/plugins.toml` (see [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) →
+"The `plugins.toml` manifest") — a documentation/generation artifact, not a
+runtime input:
 
 ```toml
 [resolvers]
-base_class = "plugins.resolvers.base.BaseResolver"
-
-[resolvers.agents.domestic_flights_agent]
-class = "plugins.resolvers.domestic_flights_agent.DomesticFlightsAgentResolver"
+shared = "examples.plugins.resolvers.shared:SharedResolver"
+domestic_flights_agent = "examples.plugins.resolvers.domestic_flights_agent:Resolver"
 ```
 
-The engine loads the selected agent's resolver class once. Methods receive `ctx`,
-which the engine builds from request headers and request data. Shared resolver
-methods live on `BaseResolver` and are inherited through normal Python
-inheritance; agent-scoped methods live only on the relevant child class.
+Methods receive `ctx`, which the engine builds from request headers and request
+data. Shared methods are inherited through normal Python inheritance;
+agent-scoped methods live only on the relevant agent class.
 
 Run `agentctl generate` to create resolver stubs. See
 [`SIDECAR_CONTEXT_AUTH.md`](SIDECAR_CONTEXT_AUTH.md) for the full resolver

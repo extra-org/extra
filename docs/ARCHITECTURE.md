@@ -321,7 +321,7 @@ by the engine (not exposed to the LLM) and run **before** a node executes:
 ```yaml
 resolvers:
   current_date:
-    scope: shared        # generated once in BaseResolver
+    scope: shared        # generated once in SharedResolver
   subscription:
     scope: agent         # generated in each agent's resolver subclass
 
@@ -333,35 +333,37 @@ agents:
     resolvers: [current_date, subscription]
 ```
 
-Each resolver has a **scope**: `shared` (generated on `BaseResolver`, inherited
+Each resolver has a **scope**: `shared` (generated on `SharedResolver`, inherited
 by all agents) or `agent` (generated only on the declaring agent's resolver
 subclass). Scope is validated at YAML load time.
 
-The resolver class mapping is configured in `plugins/resolvers/resolvers.toml`:
+Resolver classes are loaded by **file path** (one file per agent). Their
+importable refs are catalogued in the single plugin manifest
+`plugins/plugins.toml` — one manifest for hooks, resolvers, and tools — which is
+a documentation/generation artifact, not a runtime input (see
+[RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) → "The `plugins.toml` manifest"):
 
 ```toml
 [resolvers]
-base_class = "plugins.resolvers.base.BaseResolver"
-
-[resolvers.dependencies]
-rest_client = "internal_rest_client"
-
-[resolvers.agents.super_agent]
-class = "plugins.resolvers.super_agent.SuperAgentResolver"
+shared = "examples.plugins.resolvers.shared:SharedResolver"
+super_agent = "examples.plugins.resolvers.super_agent:Resolver"
 ```
 
 ### Resolver file layout
 
-Resolver stubs are generated into a **file-per-class** layout:
+Resolver stubs are generated into a **file-per-class** layout under the unified
+plugin package:
 
 ```text
-plugins/resolvers/
+plugins/
   __init__.py
-  base.py                        # BaseResolver with shared methods
-  domestic_flights_agent.py      # per-agent subclass
-  international_flights_agent.py
-  super_agent.py
-  resolvers.toml                 # maps agent ids → resolver class paths
+  plugins.toml                   # single manifest (hooks + resolvers + tools)
+  resolvers/
+    __init__.py
+    shared.py                    # SharedResolver with shared methods
+    domestic_flights_agent.py    # per-agent Resolver subclass
+    international_flights_agent.py
+    super_agent.py
 ```
 
 ### Resolver generation
@@ -370,8 +372,8 @@ plugins/resolvers/
 
 | Mode | Command | Effect |
 | ---- | ------- | ------ |
-| `all` | `agentctl generate agents.yml --mode all` | Regenerate `base.py`, all agent files, and TOML |
-| `children` | `agentctl generate agents.yml --mode children` | Generate/update agent files only; skip `base.py` |
+| `all` | `agentctl generate agents.yml --mode all` | Regenerate `shared.py`, all agent files, and TOML |
+| `children` | `agentctl generate agents.yml --mode children` | Generate/update agent files only; skip `shared.py` |
 | `child` | `agentctl generate agents.yml --mode child --agent super_agent` | Generate/update one agent file only |
 
 By default, existing customer implementations are preserved — only missing
@@ -384,7 +386,7 @@ method stubs are appended. Use `--force` to overwrite. Stale files and methods
 2. The resolver class is instantiated once per loader (with configured
    dependencies).
 3. Resolver methods are called by name; shared methods resolve through normal
-   Python inheritance from `BaseResolver`.
+   Python inheritance from `SharedResolver`.
 4. Resolver outputs are request-scoped and land on `ExecutionContext`.
 5. The runtime is generic — it has no knowledge of resolver business logic.
 
@@ -532,7 +534,7 @@ substituted with resolver values per request. No dedicated `prompts/` module,
 parsed-template cache, or strict missing-variable errors yet.
 
 **Resolver plugins (0006 — 🔶 partial, resolver side done):**
-Full resolver plugin system: TOML-configured `BaseResolver` + per-agent
+Full resolver plugin system: TOML-configured `SharedResolver` + per-agent
 subclasses, shared/agent-scoped resolvers, dynamic loading, generation modes
 (`--mode all/children/child`), overwrite protection, stale detection. The access
 plugin **is** wired: an `AccessFilter` removes protected children before they are

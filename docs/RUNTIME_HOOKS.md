@@ -56,10 +56,10 @@ hooks:
     - ref: "company.plugins.auth:attach_user_context"
 
   before_mcp_request:
-    - ref: "company.plugins.auth:add_mcp_auth_headers"
+    - ref: "company.plugins.auth:McpAuthHook.before_mcp_request"
       config:
         audience: "internal-docs-mcp"
-        token_exchange: true
+        credential_exchange: true
 
   after_tool_call:
     - ref: "company.plugins.audit:record_tool_call"
@@ -98,10 +98,91 @@ A `ref` may point to:
 - a callable object;
 - a class — it is instantiated once with no arguments and the instance (which
   must be callable) is used.
+- a class method, written as `module.path:Class.method`. The class is
+  instantiated once while the hook manager is built, `config` is passed into the
+  constructor when supported, and the same instance is reused for that hook's
+  later executions. Method-style hooks receive only their event/context
+  arguments; config belongs on the instance.
 
-The loader imports normal Python modules from the host application's
-environment, so hooks live in **your** package — they are not file-path plugins
-under `plugins/` like tools and resolvers.
+The loader imports normal Python modules with `importlib.import_module`, so
+hooks live in an **importable package** — unlike tools and resolvers, which the
+runtime loads by *file path* from `plugins/tools/` and `plugins/resolvers/`
+relative to the agent YAML. Hooks are referenced by import path because they are
+the integration seam for code the embedding application already owns.
+
+### Making your hooks importable
+
+A package-path `ref` only resolves if its top-level package is on `sys.path`.
+**Do not rely on the current working directory** — launching the CLI from another
+directory would otherwise break the import.
+
+The robust, recommended way is to declare **plugin import roots** in the spec:
+
+```yaml
+plugins:
+  import_roots:
+    - ".."        # resolved relative to THIS YAML file, not the shell's CWD
+```
+
+The engine resolves each root relative to the agent YAML's location and
+registers it on `sys.path` **before importing any plugin**, exactly once. In the
+bundled example, `examples/hooks_mcp_auth_agents.yml` sits in `examples/`, so
+`".."` is the repo root (which holds the `examples` package) — and
+`examples.plugins.hooks.mcp_auth:...` refs then import no matter where
+`agentctl` was launched from. **No `PYTHONPATH` needed.**
+
+Notes:
+
+- Roots are resolved against the YAML file, never the CWD. A missing root fails
+  with a clear error; duplicate roots are de-duplicated.
+- With no `import_roots` declared, nothing is added to `sys.path` (behavior is
+  unchanged) — useful when your package is already installed (`pip install -e .`)
+  or otherwise importable.
+- This is the single, centralized place that touches `sys.path` for plugins; do
+  not scatter manual `sys.path` edits. (The API server additionally inserts the
+  config's own directory, as before.)
+
+All client extension code lives under **one** plugin package so resolvers,
+tools, and hooks sit together, described by **one** manifest:
+
+```
+examples/
+  hooks_mcp_auth_agents.yml      # agent spec (NOT inside the Python package)
+  plugins/
+    __init__.py
+    plugins.toml                 # single unified manifest — NOT read at runtime
+    resolvers/   __init__.py …   # loaded by file path
+    tools/       __init__.py …   # loaded by file path
+    hooks/       __init__.py
+      mcp_auth.py                # loaded by import path
+```
+
+Hooks, resolvers, and tools remain separate runtime concepts but share one
+package and one manifest. The agent YAML stays **outside** the importable Python
+package (app config is not plugin code). Hook refs use the full package path,
+e.g. `examples.plugins.hooks.mcp_auth:McpAuthHook.before_mcp_request`, and so
+are unaffected when the YAML moves.
+
+Because the example declares `plugins.import_roots: [".."]`, these refs resolve
+from any working directory — `examples/`, `examples/plugins/`, and
+`examples/plugins/hooks/` are packages, and the repo root is registered on
+`sys.path` at build time. For your own project, declare an `import_roots` entry
+(or install the package with `pip install -e .`).
+
+### The `plugins.toml` manifest
+
+`examples/plugins/plugins.toml` is a single manifest for **all** client
+extension code — `[hooks]`, `[resolvers]`, `[tools]` (plus `[package]` and
+`[paths]`). There is intentionally **no** per-type file (`hooks.toml`,
+`resolvers.toml`, `tools.toml`).
+
+It is a **documentation / generation artifact**, not read by the runtime: hooks
+load from the YAML `hooks:` refs, resolvers and tools load by file path. The
+manifest records the package's importable refs. `agentctl generate` creates it
+automatically if missing and **merges** new entries into it on each run —
+existing entries are preserved (never overwritten without an explicit force),
+duplicates are not added, and output is deterministic. It must never contain
+secrets — only import refs and metadata.
 
 ---
 
@@ -131,6 +212,28 @@ def on_run_error(
 Convention: lifecycle hooks that own a single context get `(context, config)`;
 event hooks that fire *within* a run get `(run_context, event, config)` so they
 can read the active identity while acting on the event.
+
+Class-method hooks receive config at construction instead:
+
+```python
+class McpAuthHook:
+    def __init__(self, config: dict | None = None) -> None:
+        self.config = dict(config or {})
+        self._validated_credential_envs: set[str] = set()
+
+    async def before_mcp_request(
+        self, context: RunContext | None, request: McpRequestContext
+    ) -> McpRequestContext:
+        credential = os.environ[self.config["credential_env"]]
+        return request.with_headers({"Authorization": f"Bearer {credential}"})
+```
+
+Class-hook instances may keep safe long-lived state such as config, initialized
+clients, tenant metadata, or keyed caches. They must not store unsafe
+per-request state such as the current user, organization, inbound token,
+request object, or last request; that data must come from `RunContext` /
+`AuthContext` on each call. If a cache stores user- or tenant-derived data, key
+it safely and make it concurrency-safe.
 
 ### Context models
 
@@ -185,21 +288,29 @@ core needs no per-server code.**
 import os
 from agent_engine.runtime.hooks import McpRequestContext, RunContext
 
-def add_static_auth_header(
-    context: RunContext | None, request: McpRequestContext, config: dict
-) -> McpRequestContext:
-    token = os.environ[config["credential_env"]]     # secret from env, not YAML
-    return request.with_headers({"Authorization": f"Bearer {token}"})
+class McpAuthHook:
+    def __init__(self, config: dict | None = None) -> None:
+        self.config = dict(config or {})
+
+    async def before_mcp_request(
+        self, context: RunContext | None, request: McpRequestContext
+    ) -> McpRequestContext:
+        credential = os.environ[self.config["credential_env"]]
+        return request.with_headers({"Authorization": f"Bearer {credential}"})
 ```
 
 ### Exchange the inbound token for an MCP-scoped token
 
 ```python
-def add_mcp_auth_headers(context, request, config):
-    inbound = context.auth_context.inbound_access_token if context else None
-    token = exchange_token(inbound, audience=config["audience"])  # your code
-    request.headers["Authorization"] = f"Bearer {token}"
-    return request
+class McpAuthHook:
+    def __init__(self, config: dict | None = None) -> None:
+        self.config = dict(config or {})
+
+    async def before_mcp_request(self, context, request):
+        inbound = context.auth_context.inbound_access_token if context else None
+        credential = exchange_token(inbound, audience=self.config["audience"])  # your code
+        request.headers["Authorization"] = f"Bearer {credential}"
+        return request
 ```
 
 ### Sign the request with HMAC

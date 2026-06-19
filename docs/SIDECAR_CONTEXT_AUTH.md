@@ -62,26 +62,27 @@ agents:
 `agentctl generate` produces a **file-per-class** layout:
 
 ```text
-plugins/resolvers/
+plugins/
   __init__.py
-  base.py                        # BaseResolver (ABC) with shared methods
-  domestic_flights_agent.py      # agent-specific subclass
-  international_flights_agent.py
-  super_agent.py
-  resolvers.toml                 # maps agent ids → resolver class import paths
+  plugins.toml                   # single manifest (hooks + resolvers + tools)
+  resolvers/
+    __init__.py
+    shared.py                    # SharedResolver with shared methods
+    domestic_flights_agent.py    # agent-specific Resolver subclass
+    international_flights_agent.py
+    super_agent.py
 ```
 
-### TOML mapping
+### Manifest entry
+
+Resolver classes are loaded by file path; their importable refs are recorded in
+the single unified manifest `plugins/plugins.toml` (one manifest for hooks,
+resolvers, and tools — documentation/generation only, not read at runtime):
 
 ```toml
 [resolvers]
-base_class = "plugins.resolvers.base.BaseResolver"
-
-[resolvers.dependencies]
-rest_client = "internal_rest_client"
-
-[resolvers.agents.super_agent]
-class = "plugins.resolvers.super_agent.SuperAgentResolver"
+shared = "examples.plugins.resolvers.shared:SharedResolver"
+super_agent = "examples.plugins.resolvers.super_agent:Resolver"
 ```
 
 ### Customer implementation

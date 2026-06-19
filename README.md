@@ -133,15 +133,24 @@ See [examples/agents.yml](examples/agents.yml) and
 The engine contains **no** customer-specific authentication, authorization, or
 business-data lookup code. Customers provide Python plugins.
 
+All customer extension code lives under one plugin package (`plugins/` —
+`hooks/`, `resolvers/`, `tools/`) described by a single manifest,
+`plugins/plugins.toml` (documentation/generation only; not read at runtime).
+See [examples/plugins/](examples/plugins/).
+
 **Resolver plugins** fill prompt variables before a node runs. Resolvers are
-generated into a `BaseResolver` (shared methods) plus per-agent subclasses
-(agent-specific methods). The TOML file `plugins/resolvers/resolvers.toml` maps
-each agent to its resolver class. The runtime loads the class dynamically,
-instantiates it once, and calls methods by name. Shared methods resolve through
-normal Python inheritance. Run `agentctl generate` to create resolver stubs.
+generated into a `SharedResolver` (shared methods) plus per-agent `Resolver`
+subclasses (agent-specific methods), loaded by file path. The runtime
+instantiates the class once and calls methods by name; shared methods resolve
+through normal Python inheritance. Run `agentctl generate` to create resolver
+stubs — it also creates/updates `plugins/plugins.toml`.
 
 **Tool plugins** are Python methods exposed to the LLM at runtime. Each agent
 declares which tools it may use; the runtime binds only those tools.
+
+**Hook plugins** are trusted lifecycle code run automatically by the runtime
+(auth, policy, audit) — never exposed to the LLM. See
+[docs/RUNTIME_HOOKS.md](docs/RUNTIME_HOOKS.md).
 
 **Access plugin** (planned): a node can set `protected: true`; if any protected
 node exists, the engine expects `plugins/access.py` with
