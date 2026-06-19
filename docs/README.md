@@ -17,8 +17,9 @@ implementation.
 4. [PROMPT_RENDERING.md](PROMPT_RENDERING.md) — how prompts become text.
 5. [SIDECAR_CONTEXT_AUTH.md](SIDECAR_CONTEXT_AUTH.md) — client-owned context/auth.
 6. [MCP_AND_TOOLS.md](MCP_AND_TOOLS.md) — tools, MCP servers, and permissions.
-7. [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md) — how to work in this repo.
-8. [ROADMAP.md](ROADMAP.md) — phased plan.
+7. [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) — trusted lifecycle hooks (auth, policy, audit).
+8. [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md) — how to work in this repo.
+9. [ROADMAP.md](ROADMAP.md) — phased plan.
 
 ## Architecture Decision Records
 
@@ -34,6 +35,7 @@ codebase. Read them before changing anything they cover:
 - [0007 — Build/compile phase is separate from the runtime/execution phase](adr/0007-build-phase-separate-from-runtime-phase.md)
 - [0008 — Model access via init_chat_model](adr/0008-model-access-via-langchain-init-chat-model.md)
 - [0009 — Orchestrators are supervisor agents (children exposed as tools)](adr/0009-orchestrators-are-supervisor-agents.md)
+- [0010 — Runtime hooks are a separate concept from tools](adr/0010-runtime-hooks.md)
 
 ## Relationship to other directories
 

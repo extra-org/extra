@@ -78,8 +78,10 @@ graph:
 | `orchestrators` | no       | Router nodes. |
 | `agents`        | no       | Executor nodes. |
 | `graph`         | yes      | Runtime topology, with one root entrypoint. |
+| `hooks`         | no       | Trusted runtime hooks (auth/policy/audit). See [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md). |
 
-Unknown top-level keys are rejected. Secrets must not appear in YAML.
+Secrets must not appear in YAML. Hooks are **not** tools — they are never
+exposed to the LLM; see [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md).
 
 ---
 
