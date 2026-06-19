@@ -6,7 +6,7 @@ import pytest
 
 from agent_engine.runtime.hooks.errors import HookLoadError
 from agent_engine.runtime.hooks.loader import HookLoader
-from agent_engine.runtime.hooks.models import McpRequestContext, RunContext
+from agent_engine.runtime.hooks.models import HookInvocation, McpRequestContext, RunContext
 
 _FIX = "tests.runtime.hooks.fixtures"
 
@@ -48,6 +48,39 @@ async def test_class_method_hook_callable_can_be_invoked_without_trailing_config
     )
     request = await hook(RunContext(), McpRequestContext(server_id="s", url="https://x/mcp"))
     assert request.headers["X-Audience"] == "internal-docs"
+
+
+async def test_loads_managed_plugin_method_and_reuses_instance() -> None:
+    instances: dict[str, object] = {}
+    loader = HookLoader()
+    hook = loader.load_plugin_method(
+        "before_mcp_request",
+        "managed",
+        "before_mcp_request",
+        f"{_FIX}:ManagedHook",
+        instances,
+    )
+    second = loader.load_plugin_method(
+        "on_run_start",
+        "managed",
+        "attach_user_context",
+        f"{_FIX}:ManagedHook",
+        instances,
+    )
+
+    request = await hook(
+        HookInvocation(
+            hook_point="before_mcp_request",
+            plugin="managed",
+            method="before_mcp_request",
+            run_context=RunContext(run_id="r1"),
+            payload=McpRequestContext(server_id="s", url="https://x/mcp"),
+            config={"credential": "abc"},
+        )
+    )
+
+    assert request.headers["Authorization"] == "Bearer abc"
+    assert hook.__agent_hook_instance__ is second.__agent_hook_instance__  # type: ignore[attr-defined]
 
 
 def test_missing_module_fails_clearly() -> None:

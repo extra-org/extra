@@ -24,6 +24,7 @@ from agent_engine.generate.manifest import (
     MANIFEST_NAME,
     PluginManifestError,
     ensure_plugins_manifest_exists,
+    hook_plugin_refs,
     manifest_package,
     update_manifest,
 )
@@ -57,7 +58,9 @@ def test_creates_manifest_and_init_when_missing(tmp_path: Path) -> None:
         "before_mcp_request",
         "after_tool_call",
         "on_run_error",
+        "plugins",
     }
+    assert data["hooks"]["plugins"] == {}
     assert data["resolvers"] == {}
     assert data["tools"] == {}
 
@@ -89,6 +92,7 @@ def test_update_adds_entries_to_each_section(tmp_path: Path) -> None:
     changed = update_manifest(
         path,
         hooks={"before_mcp_request": ["pkg.hooks.auth:add"]},
+        hook_plugins={"mcp_auth": "pkg.hooks.mcp_auth:McpAuthHook"},
         resolvers={"super_agent": "pkg.resolvers.super_agent:Resolver"},
         tools={"book_flight": "pkg.tools.book_flight:book_flight"},
     )
@@ -96,6 +100,7 @@ def test_update_adds_entries_to_each_section(tmp_path: Path) -> None:
 
     data = _read(path)
     assert data["hooks"]["before_mcp_request"] == ["pkg.hooks.auth:add"]
+    assert data["hooks"]["plugins"]["mcp_auth"] == "pkg.hooks.mcp_auth:McpAuthHook"
     assert data["resolvers"]["super_agent"] == "pkg.resolvers.super_agent:Resolver"
     assert data["tools"]["book_flight"] == "pkg.tools.book_flight:book_flight"
 
@@ -154,6 +159,13 @@ def test_manifest_is_valid_toml(tmp_path: Path) -> None:
     assert _read(path)["resolvers"]["a"] == "pkg.resolvers.a:Resolver"
 
 
+def test_hook_plugin_refs_loads_plugins_table(tmp_path: Path) -> None:
+    path, _ = ensure_plugins_manifest_exists(tmp_path / "plugins")
+    update_manifest(path, hook_plugins={"mcp_auth": "pkg.hooks.mcp_auth:McpAuthHook"})
+
+    assert hook_plugin_refs(path) == {"mcp_auth": "pkg.hooks.mcp_auth:McpAuthHook"}
+
+
 # -- Generator integration ---------------------------------------------------
 
 
@@ -171,7 +183,12 @@ def _spec_with_plugins() -> SystemSpec:
         meta=SystemMeta(name="gen-test"),
         defaults=None,
         graph=GraphNode(node=agent),
-        hooks=HooksConfig(hooks=(HookSpec("after_tool_call", "pkg.hooks.audit:record"),)),
+        hooks=HooksConfig(
+            hooks=(
+                HookSpec("after_tool_call", "pkg.hooks.audit:record"),
+                HookSpec("before_mcp_request", plugin="mcp_auth", method="before_mcp_request"),
+            )
+        ),
     )
 
 
@@ -187,9 +204,13 @@ def test_generate_creates_manifest_with_refs(tmp_path: Path) -> None:
     assert data["resolvers"]["shared"].endswith(".plugins.resolvers.shared:SharedResolver")
     assert data["resolvers"]["flights"].endswith(".plugins.resolvers.flights:Resolver")
     assert data["hooks"]["after_tool_call"] == ["pkg.hooks.audit:record"]
+    assert data["hooks"]["plugins"]["mcp_auth"].endswith(".plugins.hooks.mcp_auth:McpAuthHook")
     # Regression: resolver/tool stubs are still generated.
     assert (tmp_path / "plugins" / "tools" / "book_flight.py").is_file()
     assert (tmp_path / "plugins" / "resolvers" / "flights.py").is_file()
+    hook_stub = tmp_path / "plugins" / "hooks" / "mcp_auth.py"
+    assert hook_stub.is_file()
+    assert "async def before_mcp_request(self, event: HookInvocation)" in hook_stub.read_text()
 
 
 def test_generate_is_idempotent_and_preserves_manifest(tmp_path: Path) -> None:
@@ -210,6 +231,5 @@ def test_bundled_examples_manifest_is_consistent() -> None:
     assert data["package"]["name"] == "examples.plugins"
     assert data["tools"]["book_flight"] == "examples.plugins.tools.book_flight:book_flight"
     assert data["resolvers"]["shared"] == "examples.plugins.resolvers.shared:SharedResolver"
-    assert data["hooks"]["before_mcp_request"] == [
-        "examples.plugins.hooks.mcp_auth:McpAuthHook.before_mcp_request"
-    ]
+    assert data["hooks"]["before_mcp_request"] == []
+    assert data["hooks"]["plugins"]["mcp_auth"] == "examples.plugins.hooks.mcp_auth:McpAuthHook"

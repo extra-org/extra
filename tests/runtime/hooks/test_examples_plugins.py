@@ -60,7 +60,8 @@ def test_hook_ref_loads_from_unified_plugin_package() -> None:
 
 def test_example_hook_yaml_uses_unified_package_path() -> None:
     text = HOOKS_YAML.read_text(encoding="utf-8")
-    assert "examples.plugins.hooks.mcp_auth:McpAuthHook." in text
+    assert 'plugin: "mcp_auth"' in text
+    assert "examples.plugins.hooks.mcp_auth:McpAuthHook." not in text
     # No bare module refs that depend on a directory being injected onto sys.path.
     assert 'ref: "mcp_auth:' not in text
 
@@ -71,10 +72,10 @@ def test_example_hook_yaml_parses_validates_and_all_refs_load() -> None:
     assert errors == []
 
     assert spec.hooks.hooks  # non-empty
-    loader = HookLoader()
     for hook in spec.hooks.hooks:
-        assert hook.ref.startswith("examples.plugins.hooks.mcp_auth:McpAuthHook.")
-        assert callable(loader.load(hook.point, hook.ref, config=hook.config))
+        assert hook.plugin == "mcp_auth"
+        assert hook.method
+        assert hook.ref is None
 
 
 def test_plugin_packages_are_importable() -> None:
@@ -95,14 +96,14 @@ def test_per_type_toml_files_are_gone() -> None:
     assert not (PLUGINS / "tools" / "tools.toml").exists()
 
 
-def test_unified_manifest_exists_and_is_not_required_at_runtime() -> None:
-    # The single manifest lives at examples/plugins/plugins.toml, but loading
-    # hooks depends only on the YAML refs — never on the TOML.
+def test_unified_manifest_resolves_managed_hook_plugins() -> None:
+    # Managed hook YAML uses logical plugin ids; the manifest maps those ids to
+    # importable hook classes.
     assert (PLUGINS / "plugins.toml").is_file()
     spec = YAMLParser().parse(str(HOOKS_YAML))
     from agent_engine.runtime.hooks.manager import HookManager
 
-    manager = HookManager.from_config(spec.hooks)  # imports every ref, no TOML read
+    manager = HookManager.from_config(spec.hooks, manifest_path=PLUGINS / "plugins.toml")
     assert manager.has("before_mcp_request")
 
 

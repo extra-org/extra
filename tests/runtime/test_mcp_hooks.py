@@ -26,8 +26,8 @@ def _manager(*specs: HookSpec) -> HookManager:
     return HookManager.from_config(HooksConfig(hooks=specs))
 
 
-async def _apply(auth: httpx.Auth) -> httpx.Request:
-    request = httpx.Request("POST", "https://internal.test/mcp")
+async def _apply(auth: httpx.Auth, request: httpx.Request | None = None) -> httpx.Request:
+    request = request or httpx.Request("POST", "https://internal.test/mcp")
     flow = auth.async_auth_flow(request)
     signed = await flow.__anext__()
     await flow.aclose()
@@ -84,8 +84,11 @@ async def test_hook_reads_current_run_context() -> None:
 async def test_no_hooks_leaves_request_unchanged() -> None:
     mgr = _manager()  # no before_mcp_request hooks
     auth = HookedMCPAuth(mgr, "internal-mcp")
-    request = await _apply(auth)
-    assert "authorization" not in request.headers
+    request = httpx.Request("POST", "https://internal.test/mcp")
+    headers_before = dict(request.headers)
+    signed = await _apply(auth, request)
+    assert signed is request
+    assert dict(signed.headers) == headers_before
 
 
 async def test_hook_failure_prevents_request() -> None:

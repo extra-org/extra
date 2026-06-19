@@ -27,6 +27,7 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.parsers.yaml.parser import YAMLParser
 from agent_engine.runtime.hooks.errors import HookLoadError
 from agent_engine.runtime.hooks.models import RunContext
 from tests.runtime.hooks import fixtures
@@ -94,6 +95,10 @@ def _system(graph: GraphNode, *hooks: HookSpec) -> SystemSpec:
         graph=graph,
         hooks=HooksConfig(hooks=hooks),
     )
+
+
+def _system_with_default_hooks(graph: GraphNode) -> SystemSpec:
+    return SystemSpec(meta=SystemMeta(name="hooks-system"), defaults=None, graph=graph)
 
 
 def _write_tool(base_dir: Path, tool_id: str) -> None:
@@ -167,6 +172,44 @@ async def test_run_backwards_compatible_without_context(tmp_path: Path, model_fa
     assert result.visited == ["solo"]
 
 
+async def test_engine_build_with_no_hooks_section_creates_empty_manager(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    spec = _system_with_default_hooks(_agent("solo"))
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        assert engine._hook_manager is not None
+        assert engine._hook_manager.hook_count == 0
+        result = await engine.run("hello")
+    assert result.answer == "ok"
+
+
+async def test_engine_build_with_empty_hooks_config_creates_empty_manager(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    spec = _system(_agent("solo"))
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        assert engine._hook_manager is not None
+        assert engine._hook_manager.hook_count == 0
+        result = await engine.run("hello")
+    assert result.answer == "ok"
+
+
+async def test_after_tool_call_no_hooks_does_not_alter_tool_usage(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    _write_tool(tmp_path, "local_tool")
+    spec = _system(_agent("solo", tools=(ToolSpec("local_tool", "local"),)))
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        result = await engine.run("call local_tool")
+
+    assert [tool.name for tool in result.used_tools] == ["local_tool"]
+    assert result.used_tools[0].provider == "local"
+    assert result.used_tools[0].status == "succeeded"
+
+
 async def test_hook_manager_built_once(tmp_path: Path, model_factory: Any) -> None:
     spec = _system(_agent("solo"))
     async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
@@ -184,3 +227,51 @@ async def test_bad_hook_ref_fails_build(tmp_path: Path, model_factory: Any) -> N
             await engine.build(spec)
     # A bad ref aborts build before any request is served.
     assert exc.value.ref == "no.module:nope"
+
+
+async def test_run_before_build_error_mentions_engine_lifecycle(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    engine = LangGraphEngine(tmp_path, model_factory=model_factory)
+    with pytest.raises(RuntimeError, match="Engine must be built before running"):
+        await engine.run("hi")
+
+
+async def test_stream_before_build_error_mentions_engine_lifecycle(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    engine = LangGraphEngine(tmp_path, model_factory=model_factory)
+    with pytest.raises(RuntimeError, match="Engine must be built before streaming"):
+        async for _ in engine.stream("hi"):
+            pass
+
+
+async def test_public_no_hook_examples_build_without_mcp_hook_auth(
+    monkeypatch: pytest.MonkeyPatch, model_factory: Any
+) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    captured_configs: list[dict[str, Any]] = []
+
+    class FakeMultiServerMCPClient:
+        def __init__(self, config: dict[str, dict[str, Any]]) -> None:
+            captured_configs.extend(config.values())
+
+        async def get_tools(self) -> list[Any]:
+            return []
+
+    monkeypatch.setattr(
+        "langchain_mcp_adapters.client.MultiServerMCPClient",
+        FakeMultiServerMCPClient,
+    )
+
+    for relative in ("examples/agents.yml", "examples/deepwiki_mcp_agents.yml"):
+        config_path = repo_root / relative
+        spec = YAMLParser().parse(str(config_path))
+        assert spec.hooks.hooks == ()
+        async with LangGraphEngine(config_path.parent, model_factory=model_factory) as engine:
+            await engine.build(spec)
+            assert engine._hook_manager is not None
+            assert engine._hook_manager.hook_count == 0
+
+    assert captured_configs
+    assert all("auth" not in config for config in captured_configs)

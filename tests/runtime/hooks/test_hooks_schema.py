@@ -31,6 +31,11 @@ def test_no_hooks_section_is_valid(tmp_path: Path) -> None:
     assert spec.hooks.hooks == ()  # type: ignore[attr-defined]
 
 
+def test_empty_hooks_section_is_valid(tmp_path: Path) -> None:
+    spec = _parse(tmp_path, "hooks: {}\n")
+    assert spec.hooks.hooks == ()  # type: ignore[attr-defined]
+
+
 def test_known_hook_points_build(tmp_path: Path) -> None:
     spec = _parse(
         tmp_path,
@@ -47,6 +52,48 @@ def test_known_hook_points_build(tmp_path: Path) -> None:
     mcp_hook = next(h for h in spec.hooks.hooks if h.point == "before_mcp_request")  # type: ignore[attr-defined]
     assert mcp_hook.config == {"audience": "internal-mcp"}
     assert mcp_hook.failure_policy == "fail"
+
+
+def test_plugin_method_hook_entry_builds(tmp_path: Path) -> None:
+    spec = _parse(
+        tmp_path,
+        "hooks:\n"
+        "  before_mcp_request:\n"
+        "    - plugin: mcp_auth\n"
+        "      method: before_mcp_request\n"
+        "      config:\n"
+        "        credential_env: INTERNAL_MCP_CREDENTIAL\n",
+    )
+    hook = spec.hooks.hooks[0]  # type: ignore[attr-defined]
+    assert hook.ref is None
+    assert hook.plugin == "mcp_auth"
+    assert hook.method == "before_mcp_request"
+    assert hook.config == {"credential_env": "INTERNAL_MCP_CREDENTIAL"}
+
+
+def test_plugin_without_method_fails(tmp_path: Path) -> None:
+    with pytest.raises(ParseError) as exc:
+        _parse(tmp_path, "hooks:\n  before_mcp_request:\n    - plugin: mcp_auth\n")
+    assert "method" in str(exc.value)
+
+
+def test_method_without_plugin_fails(tmp_path: Path) -> None:
+    with pytest.raises(ParseError) as exc:
+        _parse(tmp_path, "hooks:\n  before_mcp_request:\n    - method: before_mcp_request\n")
+    assert "plugin" in str(exc.value)
+
+
+def test_ref_with_plugin_method_fails(tmp_path: Path) -> None:
+    with pytest.raises(ParseError) as exc:
+        _parse(
+            tmp_path,
+            "hooks:\n"
+            "  before_mcp_request:\n"
+            "    - ref: m:f\n"
+            "      plugin: mcp_auth\n"
+            "      method: before_mcp_request\n",
+        )
+    assert "either 'ref' or 'plugin' + 'method'" in str(exc.value)
 
 
 def test_unknown_hook_point_fails(tmp_path: Path) -> None:

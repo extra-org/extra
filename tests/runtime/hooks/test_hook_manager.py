@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -27,6 +28,63 @@ def _clear_calls() -> None:
 
 def _manager(*specs: HookSpec) -> HookManager:
     return HookManager.from_config(HooksConfig(hooks=specs))
+
+
+def _manifest(tmp_path: Path) -> Path:
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    manifest = plugins / "plugins.toml"
+    manifest.write_text(
+        '[hooks.plugins]\nmanaged = "tests.runtime.hooks.fixtures:ManagedHook"\n',
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def test_from_config_none_returns_empty_manager() -> None:
+    mgr = HookManager.from_config(None)
+    assert mgr.hook_count == 0
+    for point in (
+        "on_engine_start",
+        "on_run_start",
+        "before_mcp_request",
+        "after_tool_call",
+        "on_run_error",
+    ):
+        assert mgr.has(point) is False
+
+
+def test_from_empty_config_returns_empty_manager() -> None:
+    mgr = HookManager.from_config(HooksConfig())
+    assert mgr.hook_count == 0
+
+
+def test_empty_config_with_manifest_path_does_not_read_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_called(path: Path) -> dict[str, str]:
+        raise AssertionError(f"manifest should not be read: {path}")
+
+    monkeypatch.setattr("agent_engine.runtime.hooks.manager.hook_plugin_refs", _fail_if_called)
+
+    mgr = HookManager.from_config(HooksConfig(), manifest_path=tmp_path / "plugins.toml")
+
+    assert mgr.hook_count == 0
+
+
+async def test_empty_manager_hook_points_are_no_ops() -> None:
+    mgr = HookManager.empty()
+    run_context = RunContext(run_id="r1")
+    request = McpRequestContext(server_id="s", url="https://x/mcp")
+
+    await mgr.run_engine_start(EngineContext(system_name="s"))
+    assert await mgr.run_run_start(run_context) is run_context
+    assert await mgr.run_before_mcp_request(run_context, request) is request
+    await mgr.run_after_tool_call(
+        run_context, ToolCallContext(agent_id="a", tool_name="t", provider="local")
+    )
+    await mgr.run_run_error(run_context, RuntimeError("original"))
+    assert fixtures.CALLS == []
 
 
 async def test_executes_hooks_in_declaration_order() -> None:
@@ -81,6 +139,130 @@ async def test_class_method_hook_receives_config_once_and_reuses_instance() -> N
     assert fixtures.CALLS[0][3] == {"audience": "internal-docs"}
 
 
+async def test_plugin_method_hook_receives_invocation_and_config(tmp_path: Path) -> None:
+    fixtures.ManagedHook.instances_created = 0
+    mgr = HookManager.from_config(
+        HooksConfig(
+            hooks=(
+                HookSpec(
+                    "before_mcp_request",
+                    plugin="managed",
+                    method="before_mcp_request",
+                    config={"credential": "abc"},
+                ),
+            )
+        ),
+        manifest_path=_manifest(tmp_path),
+    )
+
+    request = await mgr.run_before_mcp_request(
+        RunContext(run_id="r1"), McpRequestContext(server_id="s", url="https://x/mcp")
+    )
+
+    assert request.headers["Authorization"] == "Bearer abc"
+    assert fixtures.ManagedHook.instances_created == 1
+    event = fixtures.CALLS[0][3]
+    assert event.plugin == "managed"
+    assert event.method == "before_mcp_request"
+    assert event.config == {"credential": "abc"}
+    assert isinstance(event.payload, McpRequestContext)
+    assert event.run_context.run_id == "r1"
+
+
+async def test_explicit_ref_hook_does_not_read_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_called(path: Path) -> dict[str, str]:
+        raise AssertionError(f"manifest should not be read: {path}")
+
+    monkeypatch.setattr("agent_engine.runtime.hooks.manager.hook_plugin_refs", _fail_if_called)
+
+    mgr = HookManager.from_config(
+        HooksConfig(
+            hooks=(
+                HookSpec(
+                    "on_run_start",
+                    f"{_FIX}:run_start_enrich",
+                    config={"user_id": "alice"},
+                ),
+            )
+        ),
+        manifest_path=tmp_path / "missing-plugins.toml",
+    )
+
+    result = await mgr.run_run_start(RunContext(run_id="r1"))
+
+    assert result.user_id == "alice"
+
+
+async def test_plugin_instance_reused_across_hook_points_and_executions(tmp_path: Path) -> None:
+    fixtures.ManagedHook.instances_created = 0
+    mgr = HookManager.from_config(
+        HooksConfig(
+            hooks=(
+                HookSpec(
+                    "on_run_start",
+                    plugin="managed",
+                    method="attach_user_context",
+                    config={"user_id": "alice"},
+                ),
+                HookSpec(
+                    "before_mcp_request",
+                    plugin="managed",
+                    method="before_mcp_request",
+                    config={"credential": "abc"},
+                ),
+            )
+        ),
+        manifest_path=_manifest(tmp_path),
+    )
+
+    updated = await mgr.run_run_start(RunContext(run_id="r1"))
+    await mgr.run_before_mcp_request(updated, McpRequestContext(server_id="s", url="https://x/mcp"))
+    await mgr.run_before_mcp_request(updated, McpRequestContext(server_id="s", url="https://x/mcp"))
+
+    assert updated.user_id == "alice"
+    assert fixtures.ManagedHook.instances_created == 1
+    instance_ids = [call[1] for call in fixtures.CALLS]
+    assert instance_ids == [instance_ids[0], instance_ids[0], instance_ids[0]]
+    assert [call[2] for call in fixtures.CALLS] == [1, 2, 3]
+
+
+def test_missing_hook_plugin_id_fails_clearly(tmp_path: Path) -> None:
+    with pytest.raises(Exception) as exc:
+        HookManager.from_config(
+            HooksConfig(
+                hooks=(
+                    HookSpec(
+                        "before_mcp_request",
+                        plugin="missing",
+                        method="before_mcp_request",
+                    ),
+                )
+            ),
+            manifest_path=_manifest(tmp_path),
+        )
+    assert "not declared in [hooks.plugins]" in str(exc.value)
+
+
+def test_plugin_method_hook_with_missing_manifest_fails_clearly(tmp_path: Path) -> None:
+    with pytest.raises(Exception) as exc:
+        HookManager.from_config(
+            HooksConfig(
+                hooks=(
+                    HookSpec(
+                        "before_mcp_request",
+                        plugin="managed",
+                        method="before_mcp_request",
+                    ),
+                )
+            ),
+            manifest_path=tmp_path / "plugins.toml",
+        )
+
+    assert "not declared in [hooks.plugins]" in str(exc.value)
+
+
 async def test_passes_config_to_hook() -> None:
     mgr = _manager(HookSpec("on_engine_start", f"{_FIX}:sync_hook", {"audience": "mcp"}))
     await mgr.run_engine_start(EngineContext(system_name="s"))
@@ -119,6 +301,27 @@ async def test_failure_policy_warn_does_not_raise() -> None:
     await mgr.run_after_tool_call(
         RunContext(), ToolCallContext(agent_id="a", tool_name="t", provider="local")
     )
+
+
+async def test_managed_hook_failure_policy_warn_does_not_raise(tmp_path: Path) -> None:
+    mgr = HookManager.from_config(
+        HooksConfig(
+            hooks=(
+                HookSpec(
+                    "after_tool_call",
+                    plugin="managed",
+                    method="audit_warn",
+                    failure_policy="warn",
+                ),
+            )
+        ),
+        manifest_path=_manifest(tmp_path),
+    )
+
+    await mgr.run_after_tool_call(
+        RunContext(), ToolCallContext(agent_id="a", tool_name="t", provider="local")
+    )
+    assert fixtures.CALLS[0][0] == "managed_warn"
 
 
 async def test_run_error_hook_failure_is_swallowed() -> None:
