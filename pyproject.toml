@@ -64,6 +64,7 @@ dev = [
 # `model.provider` references. `init_chat_model` imports it lazily.
 anthropic = ["langchain-anthropic>=0.3"]
 openai = ["langchain-openai>=0.3"]
+langfuse = ["langfuse>=2.0"]
 
 # CLI entrypoint. `agentctl` is the working CLI name used throughout the docs
 # (see docs/ARCHITECTURE.md and docs/ROADMAP.md); `agent-platform` is provided as

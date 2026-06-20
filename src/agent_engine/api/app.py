@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.observability import build_callbacks
 from agent_engine.parsers.yaml.parser import YAMLParser
 
 
@@ -56,7 +57,7 @@ def create_app(config_path: str) -> FastAPI:
 
         _system_name = spec.meta.name
 
-        async with LangGraphEngine(base_dir) as e:
+        async with LangGraphEngine(base_dir, callbacks=build_callbacks()) as e:
             await e.build(spec)
             _engine = e
             yield

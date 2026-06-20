@@ -7,7 +7,9 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, cast
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -19,13 +21,17 @@ from agent_engine.engine.langgraph.helpers import (
     collect_mcp_specs,
     has_protected_nodes,
     node_id,
+    render_graph,
+    walk,
 )
 from agent_engine.engine.langgraph.nodes import AgentNode, ChildEntry, OrchestratorNode
 from agent_engine.engine.types import RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.loaders.tool_loader import ToolLoader
+from agent_engine.logging_config import log
 from agent_engine.models.factory import build_chat_model
+from agent_engine.observability import build_callbacks
 from agent_engine.runtime.hooks import (
     EngineContext,
     HookManager,
@@ -41,7 +47,6 @@ ModelFactory = Callable[[str, str, float | None], BaseChatModel]
 
 
 def _root_cause(exc: BaseException) -> str:
-    """Return the message of the deepest non-group exception."""
     if isinstance(exc, BaseExceptionGroup):
         for sub in exc.exceptions:
             return _root_cause(sub)
@@ -54,7 +59,6 @@ def _new_state(
     answer_stream: Callable[[str], None] | None = None,
     route_stream: Callable[[tuple[str, ...]], None] | None = None,
 ) -> dict[str, Any]:
-    """Build the initial per-request state. Stream callbacks are optional."""
     state: dict[str, Any] = {"message": message, "used_tools": []}
     if answer_stream is not None:
         state["answer_stream"] = answer_stream
@@ -69,11 +73,12 @@ class LangGraphEngine(Engine):
         base_dir: Path,
         *,
         model_factory: ModelFactory = build_chat_model,
+        callbacks: list[BaseCallbackHandler] | None = None,
     ) -> None:
         self._base_dir = base_dir
         self._model_factory = model_factory
+        self._callbacks: list[BaseCallbackHandler] = [*build_callbacks(), *(callbacks or [])]
 
-        # set during build()
         self._app: CompiledStateGraph | None = None
         self._system_name = ""
         self._filters: list[RouteFilter] = []
@@ -86,15 +91,7 @@ class LangGraphEngine(Engine):
 
     async def build(self, spec: SystemSpec) -> None:
         self._system_name = spec.meta.name
-        # Register declared plugin import roots (resolved relative to the YAML
-        # file, not the CWD) before importing any plugin. This makes package-path
-        # refs like "examples.plugins.hooks.x:fn" resolve regardless of where the
-        # CLI was launched. No roots configured => no-op (unchanged behavior).
         register_import_roots(self._base_dir, spec.plugins.import_roots)
-        # HookManager is built once here (start of the build phase). Loading a
-        # bad hook ref fails the build before any request is served, and
-        # on_engine_start runs before MCP connections so tenant/auth setup is
-        # ready when those first requests go out.
         self._hook_manager = HookManager.from_config(
             spec.hooks,
             manifest_path=self._base_dir / "plugins" / "plugins.toml",
@@ -105,17 +102,28 @@ class LangGraphEngine(Engine):
         self._tool_loader = ToolLoader(self._base_dir)
         self._resolver_loader = ResolverLoader(self._base_dir)
         self._app = self._compile_graph(spec)
+        self._log_startup_summary(spec)
+
+    def _log_startup_summary(self, spec: SystemSpec) -> None:
+        nodes = walk(spec.graph)
+        agents = [n for n in nodes if isinstance(n.node, AgentSpec)]
+        log(
+            logger, logging.INFO, "system ready",
+            system=self._system_name,
+            agents=len(agents),
+            orchestrators=len(nodes) - len(agents),
+            tools=sum(len(n.node.tools) for n in nodes if isinstance(n.node, AgentSpec)),
+            mcps=len(collect_mcp_specs(spec.graph)),
+            resolvers=sum(len(n.node.resolvers) for n in nodes),
+            protected_nodes=sum(1 for n in nodes if n.node.protected),
+        )
+        logger.info("graph:\n%s", "\n".join(render_graph(spec.graph)))
 
     async def close(self) -> None:
         self._mcp_clients.clear()
         self._mcp_tools.clear()
 
     async def _begin_run(self, context: RunContext | None) -> RunContext:
-        """Prepare the run context and fire on_run_start. Returns the final context.
-
-        A fresh ``run_id`` is generated when the caller did not supply one, so
-        audit hooks always have a correlation id.
-        """
         hook_manager = self._require_built("running")[1]
         ctx = context or RunContext()
         if ctx.run_id is None:
@@ -131,8 +139,9 @@ class LangGraphEngine(Engine):
         app, hook_manager = self._require_built("running")
         ctx = await self._begin_run(context)
         token = current_run_context.set(ctx)
+        config = RunnableConfig(run_name=self._system_name, callbacks=self._callbacks)
         try:
-            result = await app.ainvoke(cast(Any, _new_state(message)))
+            result = await app.ainvoke(cast(Any, _new_state(message)), config)
         except Exception as exc:
             await hook_manager.run_run_error(ctx, exc)
             raise
@@ -161,8 +170,9 @@ class LangGraphEngine(Engine):
         )
 
         async def run_graph() -> None:
+            config = RunnableConfig(run_name=self._system_name, callbacks=self._callbacks)
             try:
-                result = await app.ainvoke(cast(Any, state))
+                result = await app.ainvoke(cast(Any, state), config)
                 queue.put_nowait(
                     RunStreamEvent(
                         type="final",
@@ -178,7 +188,6 @@ class LangGraphEngine(Engine):
             finally:
                 queue.put_nowait(None)
 
-        # Set the context var here so the task spawned below inherits it.
         token = current_run_context.set(ctx)
         try:
             task = asyncio.create_task(run_graph())
@@ -202,13 +211,6 @@ class LangGraphEngine(Engine):
         return filters
 
     async def _connect_mcps(self, spec: SystemSpec) -> dict[str, list[BaseTool]]:
-        """Create one MultiServerMCPClient per server and fetch its tools.
-
-        If plugins/mcp_auth/{server_id}.py exists, its get_headers() is wired in
-        as per-request auth, so rotating credentials are resolved fresh on every
-        call rather than frozen at startup. Unreachable servers are logged as
-        warnings and skipped.
-        """
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
         from agent_engine.loaders.mcp_auth_loader import MCPAuthLoader
@@ -222,8 +224,6 @@ class LangGraphEngine(Engine):
         for server_id, mcp_spec in collect_mcp_specs(spec.graph).items():
             config: dict[str, Any] = {"url": mcp_spec.url, "transport": "streamable_http"}
             auth = auth_loader.get_auth(server_id)
-            # When before_mcp_request hooks exist, wrap any plugin auth so hooks
-            # inject their headers (auth, HMAC, tenant) on every MCP request.
             if hook_mcp_auth:
                 auth = HookedMCPAuth(self._hook_manager, server_id, base=auth)
             if auth is not None:
@@ -233,17 +233,15 @@ class LangGraphEngine(Engine):
             self._mcp_clients[server_id] = client
             try:
                 mcp_tools[server_id] = await client.get_tools()
-                logger.info("MCP server=%s tools=%d", server_id, len(mcp_tools[server_id]))
+                log(logger, logging.INFO, "mcp connected", server=server_id,
+                    tools=len(mcp_tools[server_id]))
             except Exception as exc:
-                reason = _root_cause(exc)
-                logger.warning(
-                    "MCP server=%s unreachable, skipping its tools: %s", server_id, reason
-                )
+                log(logger, logging.WARNING, "mcp unreachable", server=server_id,
+                    reason=_root_cause(exc))
                 mcp_tools[server_id] = []
         return mcp_tools
 
     def _compile_graph(self, spec: SystemSpec) -> CompiledStateGraph:
-        """Walk the spec tree and wire nodes + edges into a StateGraph."""
         builder = StateGraph(GraphState)
         self._wire_node(builder, spec.graph, parent_path=None)
         builder.add_edge(START, node_id(spec.graph, parent_path=None))
@@ -255,11 +253,6 @@ class LangGraphEngine(Engine):
         node: GraphNode,
         parent_path: str | None,
     ) -> None:
-        """Add one node to the graph.
-
-        Orchestrators embed their children as tools — no conditional edges needed.
-        The graph is therefore a flat list of root-level nodes each connected to END.
-        """
         path = node_id(node, parent_path)
 
         if isinstance(node.node, OrchestratorSpec):
@@ -275,7 +268,6 @@ class LangGraphEngine(Engine):
         node: GraphNode,
         parent_path: str | None,
     ) -> OrchestratorNode:
-        """Build an OrchestratorNode whose children become tools (recursive)."""
         assert isinstance(node.node, OrchestratorSpec)
         spec = node.node
         path = node_id(node, parent_path)
@@ -328,8 +320,6 @@ class LangGraphEngine(Engine):
     def _build_agent_tools(
         self, spec: AgentSpec
     ) -> tuple[list[BaseTool], set[str], dict[str, str]]:
-        """Return an agent's tools, the MCP-sourced tool names, and a
-        tool-name -> MCP server_id map (for after_tool_call attribution)."""
         assert self._tool_loader is not None
         tools: list[BaseTool] = []
         mcp_names: set[str] = set()
