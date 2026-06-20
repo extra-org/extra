@@ -4,6 +4,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_engine.core.spec import AgentSpec, GraphNode, SystemSpec
+from agent_engine.generate.manifest import (
+    MANIFEST_NAME,
+    ensure_plugins_manifest_exists,
+    manifest_package,
+    update_manifest,
+)
 
 
 @dataclass
@@ -25,7 +31,11 @@ class Generator:
     def generate(self, spec: SystemSpec, base_dir: Path) -> GenerateResult:
         result = GenerateResult()
         (
-            tool_ids, shared_ids, agent_resolver_ids, agents_with_shared, has_protected,
+            tool_ids,
+            shared_ids,
+            agent_resolver_ids,
+            agents_with_shared,
+            has_protected,
             mcp_plugin_ids,
         ) = _collect(spec.graph)
 
@@ -65,7 +75,74 @@ class Generator:
             for mcp_id in mcp_plugin_ids:
                 self._write(mcp_auth_dir / f"{mcp_id}.py", _mcp_auth_stub(mcp_id), result)
 
+        hook_methods = _collect_hook_methods(spec)
+        if hook_methods:
+            hooks_dir = base_dir / "plugins" / "hooks"
+            hooks_dir.mkdir(parents=True, exist_ok=True)
+            init = hooks_dir / "__init__.py"
+            if not init.exists():
+                init.write_text('"""Generated runtime hook plugins."""\n', encoding="utf-8")
+            for plugin_id, methods in hook_methods.items():
+                self._write(
+                    hooks_dir / f"{plugin_id}.py",
+                    _hook_plugin_stub(plugin_id, methods),
+                    result,
+                )
+
+        self._sync_manifest(
+            base_dir / "plugins",
+            spec,
+            tool_ids,
+            shared_ids,
+            agent_resolver_ids,
+            hook_methods,
+            result,
+        )
         return result
+
+    def _sync_manifest(
+        self,
+        plugins_root: Path,
+        spec: SystemSpec,
+        tool_ids: dict[str, str],
+        shared_ids: list[str],
+        agent_resolver_ids: dict[str, list[str]],
+        hook_methods: dict[str, list[str]],
+        result: GenerateResult,
+    ) -> None:
+        """Create/update the single plugins.toml manifest for this package.
+
+        The manifest records importable refs for generated resolvers/tools and
+        hook plugin classes. The runtime reads only [hooks.plugins] to resolve
+        managed hook ids; other sections are documentation/generation metadata.
+        """
+        manifest_path, created = ensure_plugins_manifest_exists(plugins_root)
+        pkg = manifest_package(manifest_path)
+
+        resolver_refs: dict[str, str] = {}
+        if shared_ids:
+            resolver_refs["shared"] = f"{pkg}.resolvers.shared:SharedResolver"
+        for agent_id in agent_resolver_ids:
+            resolver_refs[agent_id] = f"{pkg}.resolvers.{agent_id}:Resolver"
+
+        tool_refs = {tool_id: f"{pkg}.tools.{tool_id}:{tool_id}" for tool_id in tool_ids}
+
+        hook_refs: dict[str, list[str]] = {}
+        hook_plugins: dict[str, str] = {}
+        for hook in spec.hooks.hooks:
+            if hook.ref:
+                hook_refs.setdefault(hook.point, []).append(hook.ref)
+        for plugin_id in hook_methods:
+            hook_plugins[plugin_id] = f"{pkg}.hooks.{plugin_id}:{_hook_class_name(plugin_id)}"
+
+        update_manifest(
+            manifest_path,
+            hooks=hook_refs,
+            hook_plugins=hook_plugins,
+            resolvers=resolver_refs,
+            tools=tool_refs,
+        )
+        (result.created if created else result.skipped).append(MANIFEST_NAME)
 
     def _write(self, path: Path, content: str, result: GenerateResult) -> None:
         if path.exists():
@@ -125,7 +202,12 @@ def _collect(
         agent_resolver_ids.setdefault(agent_id, [])
 
     return (
-        tool_ids, shared_ids, agent_resolver_ids, agents_with_shared, has_protected, mcp_plugin_ids
+        tool_ids,
+        shared_ids,
+        agent_resolver_ids,
+        agents_with_shared,
+        has_protected,
+        mcp_plugin_ids,
     )
 
 
@@ -196,4 +278,42 @@ def _mcp_auth_stub(mcp_id: str) -> str:
         "    expiry (e.g. for OAuth or other short-lived credentials).\n"
         '    """\n'
         "    raise NotImplementedError\n"
+    )
+
+
+def _collect_hook_methods(spec: SystemSpec) -> dict[str, list[str]]:
+    methods: dict[str, list[str]] = {}
+    for hook in spec.hooks.hooks:
+        if not hook.plugin or not hook.method:
+            continue
+        plugin_methods = methods.setdefault(hook.plugin, [])
+        if hook.method not in plugin_methods:
+            plugin_methods.append(hook.method)
+    return dict(sorted(methods.items()))
+
+
+def _hook_class_name(plugin_id: str) -> str:
+    return "".join(part.capitalize() for part in plugin_id.split("_") if part) + "Hook"
+
+
+def _hook_plugin_stub(plugin_id: str, methods: list[str]) -> str:
+    class_name = _hook_class_name(plugin_id)
+    method_blocks = "\n".join(
+        f"    async def {method}(self, event: HookInvocation) -> object:\n"
+        "        raise NotImplementedError\n"
+        for method in methods
+    )
+    return (
+        "from __future__ import annotations\n\n"
+        "from agent_engine.runtime.hooks import HookInvocation\n\n\n"
+        f"class {class_name}:\n"
+        "    def __init__(self, config: object | None = None) -> None:\n"
+        "        self.config = config\n"
+        "        # Safe long-lived state can live here: initialized clients,\n"
+        "        # tenant metadata, keyed caches, audit/metrics clients.\n"
+        "        self._cache: dict[str, object] = {}\n"
+        "        # Do not store per-request state such as current user, current\n"
+        "        # organization, inbound tokens, request objects, or last headers.\n"
+        "        # Read that data from event.run_context and event.payload.\n\n"
+        f"{method_blocks}"
     )
