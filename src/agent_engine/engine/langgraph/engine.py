@@ -284,7 +284,7 @@ class LangGraphEngine(Engine):
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
         from agent_engine.loaders.mcp_auth_loader import MCPAuthLoader
-        from agent_engine.loaders.mcp_tags import apply_tool_tags
+        from agent_engine.loaders.mcp_tags import apply_tool_tags, effective_tool_tag_transport
         from agent_engine.runtime.hooks import HookedMCPAuth
 
         auth_loader = MCPAuthLoader(self._base_dir)
@@ -301,9 +301,9 @@ class LangGraphEngine(Engine):
                 config["auth"] = auth
 
             # Optional, per-server tool-discovery tags. No tags -> unchanged.
-            # Tags without a usable transport raise here (fail-closed at build).
+            # No explicit transport -> default header transport is applied.
             if mcp_spec.tool_tags:
-                transport = mcp_spec.tool_tag_transport
+                transport = effective_tool_tag_transport(mcp_spec)
                 config = apply_tool_tags(config, mcp_spec.tool_tags, transport, server_id=server_id)
                 log(
                     logger,
@@ -312,6 +312,7 @@ class LangGraphEngine(Engine):
                     server=server_id,
                     tags=len(mcp_spec.tool_tags),
                     transport=transport.type if transport else "",
+                    default_transport=mcp_spec.tool_tag_transport is None,
                 )
 
             client = MultiServerMCPClient({server_id: config})  # type: ignore[dict-item]

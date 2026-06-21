@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from agent_engine.core.spec import (
     HooksConfig,
     HookSpec,
     MCPSpec,
+    McpToolTagTransport,
     ModelConfig,
     OrchestratorPromptSet,
     OrchestratorSpec,
@@ -30,29 +32,280 @@ from agent_engine.runtime.hooks.models import HOOK_POINTS
 _SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
 
 
+def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
+    if plugins is None:
+        return
+    if not isinstance(plugins, dict):
+        errors.append(ValidationError("plugins", "Must be a mapping"))
+        return
+    roots = plugins.get("import_roots")
+    if roots is None:
+        return
+    if not isinstance(roots, list):
+        errors.append(
+            ValidationError("plugins.import_roots", "Must be a list of directory paths")
+        )
+        return
+    for i, root in enumerate(roots):
+        if not isinstance(root, str):
+            errors.append(
+                ValidationError(f"plugins.import_roots[{i}]", "Must be a string path")
+            )
+
+
+def _validate_node_refs(
+        orchestrators: dict[str, Any],
+    agents: dict[str, Any],
+    resolvers: dict[str, Any],
+    tools: dict[str, Any],
+    mcps: dict[str, Any],
+    errors: list[ValidationError],
+) -> None:
+    for node_id, spec in orchestrators.items():
+        if not isinstance(spec, dict):
+            continue
+        if not spec.get("prompts", {}).get("orchestrator"):
+            errors.append(
+                ValidationError(
+                    f"orchestrators.{node_id}.prompts.orchestrator",
+                    "Required for orchestrators",
+                )
+            )
+        for ref in spec.get("resolvers", []):
+            if ref not in resolvers:
+                errors.append(
+                    ValidationError(
+                        f"orchestrators.{node_id}.resolvers",
+                        f"Unknown resolver '{ref}'",
+                    )
+                )
+
+    for node_id, spec in agents.items():
+        if not isinstance(spec, dict):
+            continue
+        for ref in spec.get("resolvers", []):
+            if ref not in resolvers:
+                errors.append(
+                    ValidationError(f"agents.{node_id}.resolvers", f"Unknown resolver '{ref}'")
+                )
+        for ref in spec.get("tools", []):
+            if ref not in tools:
+                errors.append(
+                    ValidationError(f"agents.{node_id}.tools", f"Unknown tool '{ref}'")
+                )
+        for ref in spec.get("mcps", []):
+            if ref not in mcps:
+                errors.append(ValidationError(f"agents.{node_id}.mcps", f"Unknown MCP '{ref}'"))
+
+
+def _build_mcp_spec(ref: str, raw: dict[str, Any]) -> MCPSpec:
+    tool_tags = _dedupe_stable(
+        str(t) for t in (raw.get("tool_tags") or []) if isinstance(t, str)
+    )
+    transport_raw = raw.get("tool_tag_transport")
+    transport = None
+    if isinstance(transport_raw, dict):
+        transport = McpToolTagTransport(
+            type=str(transport_raw.get("type", "")),
+            header_name=transport_raw.get("header_name"),
+            param_name=transport_raw.get("param_name"),
+        )
+    return MCPSpec(
+        id=ref,
+        url=raw["url"],
+        auth=bool(raw.get("auth", False)),
+        tool_tags=tool_tags,
+        tool_tag_transport=transport,
+    )
+
+
+def _build_hooks(raw: Any) -> HooksConfig:
+    if not isinstance(raw, dict):
+        return HooksConfig()
+    specs: list[HookSpec] = []
+    for point, entries in raw.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            specs.append(
+                HookSpec(
+                    point=point,
+                    ref=entry.get("ref"),
+                    config=dict(entry.get("config", {}) or {}),
+                    failure_policy=entry.get("failure_policy", "fail"),
+                    plugin=entry.get("plugin"),
+                    method=entry.get("method"),
+                )
+            )
+    return HooksConfig(hooks=tuple(specs))
+
+
+def _build_plugins(raw: Any) -> PluginsConfig:
+    if not isinstance(raw, dict):
+        return PluginsConfig()
+    roots = raw.get("import_roots")
+    if not isinstance(roots, list):
+        return PluginsConfig()
+    return PluginsConfig(import_roots=tuple(r for r in roots if isinstance(r, str)))
+
+
+def _validate_hook_entry(
+        point: str, index: int, entry: Any, errors: list[ValidationError]
+) -> None:
+    base = f"hooks.{point}[{index}]"
+    if not isinstance(entry, dict):
+        errors.append(
+            ValidationError(base, "Must be a mapping with either 'ref' or 'plugin' + 'method'")
+        )
+        return
+    ref = entry.get("ref")
+    plugin = entry.get("plugin")
+    method = entry.get("method")
+    has_ref = ref is not None
+    has_plugin_or_method = plugin is not None or method is not None
+
+    if has_ref and has_plugin_or_method:
+        errors.append(
+            ValidationError(
+                base,
+                "Use either 'ref' or 'plugin' + 'method', not both",
+            )
+        )
+    elif has_ref:
+        if not isinstance(ref, str):
+            errors.append(ValidationError(f"{base}.ref", "Must be a string import path"))
+    elif has_plugin_or_method:
+        if plugin is None:
+            errors.append(ValidationError(f"{base}.plugin", "Required when 'method' is used"))
+        elif not isinstance(plugin, str):
+            errors.append(ValidationError(f"{base}.plugin", "Must be a string plugin id"))
+        if method is None:
+            errors.append(ValidationError(f"{base}.method", "Required when 'plugin' is used"))
+        elif not isinstance(method, str):
+            errors.append(ValidationError(f"{base}.method", "Must be a string method name"))
+    else:
+        errors.append(
+            ValidationError(f"{base}.ref", "Required field 'ref' or 'plugin' + 'method'")
+        )
+
+    if "config" in entry and not isinstance(entry["config"], dict):
+        errors.append(ValidationError(f"{base}.config", "Must be a mapping if present"))
+    policy = entry.get("failure_policy", "fail")
+    if policy not in ("fail", "warn"):
+        errors.append(ValidationError(f"{base}.failure_policy", "Must be 'fail' or 'warn'"))
+
+
+def _validate_hooks(hooks: Any, errors: list[ValidationError]) -> None:
+    if hooks is None:
+        return
+    if not isinstance(hooks, dict):
+        errors.append(ValidationError("hooks", "Must be a mapping of hook point -> list"))
+        return
+    for point, entries in hooks.items():
+        if point not in HOOK_POINTS:
+            errors.append(
+                ValidationError(
+                    f"hooks.{point}",
+                    f"Unknown hook point. Valid points: {', '.join(HOOK_POINTS)}",
+                )
+            )
+            continue
+        if not isinstance(entries, list):
+            errors.append(ValidationError(f"hooks.{point}", "Must be a list of hook entries"))
+            continue
+        for i, entry in enumerate(entries):
+            _validate_hook_entry(point, i, entry, errors)
+
+
+def _validate_mcp_tool_tags(
+        mcp_id: str, raw: dict[str, Any], errors: list[ValidationError]
+) -> None:
+    base = f"mcps.{mcp_id}"
+    tags = raw.get("tool_tags")
+    if tags is not None and not isinstance(tags, list):
+        errors.append(ValidationError(f"{base}.tool_tags", "Must be a list of strings"))
+        return
+    has_tags = False
+    for i, tag in enumerate(tags or []):
+        if not isinstance(tag, str):
+            errors.append(ValidationError(f"{base}.tool_tags[{i}]", "Must be a string"))
+        elif not tag.strip():
+            errors.append(ValidationError(f"{base}.tool_tags[{i}]", "Must not be empty/blank"))
+        else:
+            has_tags = True
+
+    # tool_tag_transport is an optional advanced override. When tags are set
+    # but no transport is given, a default header transport is applied at
+    # discovery time (see loaders/mcp_tags.py). Only validate it if present.
+    transport = raw.get("tool_tag_transport")
+    if transport is None or not has_tags:
+        return
+    if not isinstance(transport, dict):
+        errors.append(
+            ValidationError(
+                f"{base}.tool_tag_transport",
+                "Must be a mapping with type 'header' (header_name) or "
+                "'query_param' (param_name)",
+            )
+        )
+        return
+    ttype = transport.get("type")
+    if ttype == "header":
+        if not isinstance(transport.get("header_name"), str) or not transport["header_name"]:
+            errors.append(
+                ValidationError(
+                    f"{base}.tool_tag_transport.header_name", "Required for type 'header'"
+                )
+            )
+    elif ttype == "query_param":
+        if not isinstance(transport.get("param_name"), str) or not transport["param_name"]:
+            errors.append(
+                ValidationError(
+                    f"{base}.tool_tag_transport.param_name",
+                    "Required for type 'query_param'",
+                )
+            )
+    else:
+        errors.append(
+            ValidationError(
+                f"{base}.tool_tag_transport.type", "Must be 'header' or 'query_param'"
+            )
+        )
+
+
+def _validate_mcps(mcps: dict[str, Any], errors: list[ValidationError]) -> None:
+    for mcp_id, raw in mcps.items():
+        if not isinstance(raw, dict):
+            continue
+        _validate_mcp_tool_tags(mcp_id, raw, errors)
+
+
+def _load(path: str) -> dict[str, Any]:
+    source = Path(path)
+    if not source.is_file():
+        raise ParseError([ValidationError("path", f"File not found: {path}")])
+    try:
+        raw = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ParseError([ValidationError("path", f"Cannot read file: {exc}")]) from exc
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ParseError([ValidationError("yaml", f"Invalid YAML: {exc}")]) from exc
+    if not isinstance(data, dict):
+        raise ParseError([ValidationError("yaml", "Root must be a mapping")])
+    return data
+
+
 class YAMLParser(Parser):
     def parse(self, path: str) -> SystemSpec:
-        data = self._load(path)
+        data = _load(path)
         errors = self._validate(data)
         if errors:
             raise ParseError(errors)
         return self._build(data)
-
-    def _load(self, path: str) -> dict[str, Any]:
-        source = Path(path)
-        if not source.is_file():
-            raise ParseError([ValidationError("path", f"File not found: {path}")])
-        try:
-            raw = source.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise ParseError([ValidationError("path", f"Cannot read file: {exc}")]) from exc
-        try:
-            data = yaml.safe_load(raw)
-        except yaml.YAMLError as exc:
-            raise ParseError([ValidationError("yaml", f"Invalid YAML: {exc}")]) from exc
-        if not isinstance(data, dict):
-            raise ParseError([ValidationError("yaml", "Root must be a mapping")])
-        return data
 
     def _validate(self, data: dict[str, Any]) -> list[ValidationError]:
         errors: list[ValidationError] = []
@@ -78,98 +331,13 @@ class YAMLParser(Parser):
         mcps: dict[str, Any] = data.get("mcps", {}) or {}
 
         self._validate_graph(data["graph"], declared_ids, errors)
-        self._validate_node_refs(orchestrators, agents, resolvers, tools, mcps, errors)
-        self._validate_hooks(data.get("hooks"), errors)
-        self._validate_plugins(data.get("plugins"), errors)
+        _validate_node_refs(orchestrators, agents, resolvers, tools, mcps, errors)
+        _validate_mcps(mcps, errors)
+        _validate_hooks(data.get("hooks"), errors)
+        _validate_plugins(data.get("plugins"), errors)
         self._validate_no_secrets(data, errors)
 
         return errors
-
-    def _validate_plugins(self, plugins: Any, errors: list[ValidationError]) -> None:
-        if plugins is None:
-            return
-        if not isinstance(plugins, dict):
-            errors.append(ValidationError("plugins", "Must be a mapping"))
-            return
-        roots = plugins.get("import_roots")
-        if roots is None:
-            return
-        if not isinstance(roots, list):
-            errors.append(
-                ValidationError("plugins.import_roots", "Must be a list of directory paths")
-            )
-            return
-        for i, root in enumerate(roots):
-            if not isinstance(root, str):
-                errors.append(
-                    ValidationError(f"plugins.import_roots[{i}]", "Must be a string path")
-                )
-
-    def _validate_hooks(self, hooks: Any, errors: list[ValidationError]) -> None:
-        if hooks is None:
-            return
-        if not isinstance(hooks, dict):
-            errors.append(ValidationError("hooks", "Must be a mapping of hook point -> list"))
-            return
-        for point, entries in hooks.items():
-            if point not in HOOK_POINTS:
-                errors.append(
-                    ValidationError(
-                        f"hooks.{point}",
-                        f"Unknown hook point. Valid points: {', '.join(HOOK_POINTS)}",
-                    )
-                )
-                continue
-            if not isinstance(entries, list):
-                errors.append(ValidationError(f"hooks.{point}", "Must be a list of hook entries"))
-                continue
-            for i, entry in enumerate(entries):
-                self._validate_hook_entry(point, i, entry, errors)
-
-    def _validate_hook_entry(
-        self, point: str, index: int, entry: Any, errors: list[ValidationError]
-    ) -> None:
-        base = f"hooks.{point}[{index}]"
-        if not isinstance(entry, dict):
-            errors.append(
-                ValidationError(base, "Must be a mapping with either 'ref' or 'plugin' + 'method'")
-            )
-            return
-        ref = entry.get("ref")
-        plugin = entry.get("plugin")
-        method = entry.get("method")
-        has_ref = ref is not None
-        has_plugin_or_method = plugin is not None or method is not None
-
-        if has_ref and has_plugin_or_method:
-            errors.append(
-                ValidationError(
-                    base,
-                    "Use either 'ref' or 'plugin' + 'method', not both",
-                )
-            )
-        elif has_ref:
-            if not isinstance(ref, str):
-                errors.append(ValidationError(f"{base}.ref", "Must be a string import path"))
-        elif has_plugin_or_method:
-            if plugin is None:
-                errors.append(ValidationError(f"{base}.plugin", "Required when 'method' is used"))
-            elif not isinstance(plugin, str):
-                errors.append(ValidationError(f"{base}.plugin", "Must be a string plugin id"))
-            if method is None:
-                errors.append(ValidationError(f"{base}.method", "Required when 'plugin' is used"))
-            elif not isinstance(method, str):
-                errors.append(ValidationError(f"{base}.method", "Must be a string method name"))
-        else:
-            errors.append(
-                ValidationError(f"{base}.ref", "Required field 'ref' or 'plugin' + 'method'")
-            )
-
-        if "config" in entry and not isinstance(entry["config"], dict):
-            errors.append(ValidationError(f"{base}.config", "Must be a mapping if present"))
-        policy = entry.get("failure_policy", "fail")
-        if policy not in ("fail", "warn"):
-            errors.append(ValidationError(f"{base}.failure_policy", "Must be 'fail' or 'warn'"))
 
     def _validate_graph(
         self,
@@ -204,51 +372,6 @@ class YAMLParser(Parser):
             if children is not None:
                 self._validate_graph(children, declared_ids, errors, node_path, [*seen, node_id])
 
-    def _validate_node_refs(
-        self,
-        orchestrators: dict[str, Any],
-        agents: dict[str, Any],
-        resolvers: dict[str, Any],
-        tools: dict[str, Any],
-        mcps: dict[str, Any],
-        errors: list[ValidationError],
-    ) -> None:
-        for node_id, spec in orchestrators.items():
-            if not isinstance(spec, dict):
-                continue
-            if not spec.get("prompts", {}).get("orchestrator"):
-                errors.append(
-                    ValidationError(
-                        f"orchestrators.{node_id}.prompts.orchestrator",
-                        "Required for orchestrators",
-                    )
-                )
-            for ref in spec.get("resolvers", []):
-                if ref not in resolvers:
-                    errors.append(
-                        ValidationError(
-                            f"orchestrators.{node_id}.resolvers",
-                            f"Unknown resolver '{ref}'",
-                        )
-                    )
-
-        for node_id, spec in agents.items():
-            if not isinstance(spec, dict):
-                continue
-            for ref in spec.get("resolvers", []):
-                if ref not in resolvers:
-                    errors.append(
-                        ValidationError(f"agents.{node_id}.resolvers", f"Unknown resolver '{ref}'")
-                    )
-            for ref in spec.get("tools", []):
-                if ref not in tools:
-                    errors.append(
-                        ValidationError(f"agents.{node_id}.tools", f"Unknown tool '{ref}'")
-                    )
-            for ref in spec.get("mcps", []):
-                if ref not in mcps:
-                    errors.append(ValidationError(f"agents.{node_id}.mcps", f"Unknown MCP '{ref}'"))
-
     def _validate_no_secrets(
         self, data: object, errors: list[ValidationError], path: str = "$"
     ) -> None:
@@ -282,39 +405,9 @@ class YAMLParser(Parser):
             meta=SystemMeta(name=data["system"]["name"]),
             defaults=defaults,
             graph=graph,
-            hooks=self._build_hooks(data.get("hooks")),
-            plugins=self._build_plugins(data.get("plugins")),
+            hooks=_build_hooks(data.get("hooks")),
+            plugins=_build_plugins(data.get("plugins")),
         )
-
-    def _build_plugins(self, raw: Any) -> PluginsConfig:
-        if not isinstance(raw, dict):
-            return PluginsConfig()
-        roots = raw.get("import_roots")
-        if not isinstance(roots, list):
-            return PluginsConfig()
-        return PluginsConfig(import_roots=tuple(r for r in roots if isinstance(r, str)))
-
-    def _build_hooks(self, raw: Any) -> HooksConfig:
-        if not isinstance(raw, dict):
-            return HooksConfig()
-        specs: list[HookSpec] = []
-        for point, entries in raw.items():
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                specs.append(
-                    HookSpec(
-                        point=point,
-                        ref=entry.get("ref"),
-                        config=dict(entry.get("config", {}) or {}),
-                        failure_policy=entry.get("failure_policy", "fail"),
-                        plugin=entry.get("plugin"),
-                        method=entry.get("method"),
-                    )
-                )
-        return HooksConfig(hooks=tuple(specs))
 
     def _build_defaults(self, raw: Any) -> DefaultsConfig | None:
         if not isinstance(raw, dict):
@@ -370,10 +463,7 @@ class YAMLParser(Parser):
                     ToolSpec(id=ref, description=tools[ref].get("description", ""))
                     for ref in raw.get("tools", [])
                 ),
-                mcps=tuple(
-                    MCPSpec(id=ref, url=mcps[ref]["url"], auth=bool(mcps[ref].get("auth", False)))
-                    for ref in raw.get("mcps", [])
-                ),
+                mcps=tuple(_build_mcp_spec(ref, mcps[ref]) for ref in raw.get("mcps", [])),
             )
 
         return specs
@@ -423,3 +513,14 @@ class YAMLParser(Parser):
 def _looks_secret(value: str) -> bool:
     normalized = value.lower().replace("-", "_")
     return any(marker in normalized for marker in _SECRET_MARKERS)
+
+
+def _dedupe_stable(items: Iterable[str]) -> tuple[str, ...]:
+    """Return items with duplicates removed, preserving first-seen order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return tuple(result)

@@ -35,10 +35,29 @@ class ToolSpec:
 
 
 @dataclass(frozen=True)
+class McpToolTagTransport:
+    """How configured ``tool_tags`` are sent to an MCP server during discovery.
+
+    MCP's ``tools/list`` and ``langchain-mcp-adapters`` have no native tag/filter
+    argument, so a tag-aware server expects the selector at the transport layer.
+    ``type`` is ``"header"`` (use ``header_name``) or ``"query_param"`` (use
+    ``param_name``).
+    """
+
+    type: str
+    header_name: str | None = None
+    param_name: str | None = None
+
+
+@dataclass(frozen=True)
 class MCPSpec:
     id: str
     url: str
     auth: bool = False  # if True, agentctl generate creates plugins/mcp_auth/{id}.py
+    # Optional, per-server tool-discovery selector. Empty == no tags (unchanged
+    # behavior). When non-empty, ``tool_tag_transport`` says how to send them.
+    tool_tags: tuple[str, ...] = ()
+    tool_tag_transport: McpToolTagTransport | None = None
 
 
 @dataclass(frozen=True)
