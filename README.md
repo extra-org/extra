@@ -1,15 +1,16 @@
 # Agent Engine
 
 > A declarative Python engine for hierarchical multi-agent systems. Describe
-> orchestrators, agents, prompts, resolvers, tools, MCP servers, and graph
-> topology in YAML; the engine validates, compiles, and runs that system through
-> a long-lived runtime.
+> orchestrators, agents, prompts, resolvers, tools, MCP servers, runtime hooks,
+> and graph topology in YAML; the engine validates, compiles, and runs that
+> system through a long-lived runtime.
 
-**Status: 🚧 Active development.** The YAML validator, compiler, runtime
-engine, LangGraph-based routing, resolver plugin system, tool plugin loading,
-prompt file rendering, and CLI (`validate`, `generate`, `run`) are
-**implemented**. The access plugin, MCP client, API server, deployment, and
-observability are **not yet implemented**.
+**Status: 🚧 Active development.** The YAML validator, compiler, LangGraph
+runtime, prompt rendering, resolver/tool plugins, remote **MCP** tools (with
+optional tool tags), **runtime hooks** (incl. `before_mcp_request` auth-header
+injection), structured logging, the HTTP API (`serve`), and the CLI
+(`validate`, `inspect`, `generate`, `run`, `serve`) are **implemented**.
+Deployment/Docker and richer observability are still planned.
 
 ---
 
@@ -17,9 +18,10 @@ observability are **not yet implemented**.
 
 A platform that turns a declarative YAML description into a running,
 traceable, multi-agent application. You declare *what* exists (MCP servers,
-tools, resolvers, orchestrators, agents, prompts) and *how it is connected*
-(`graph` indentation), and the engine handles validation, compilation, routing,
-prompt rendering, plugin calls, MCP access, and execution.
+tools, resolvers, hooks, orchestrators, agents, prompts) and *how it is
+connected* (`graph` indentation), and the engine handles validation,
+compilation, routing, prompt rendering, plugin calls, MCP access, lifecycle
+hooks, and execution.
 
 ## 2. Why it exists
 
@@ -29,63 +31,61 @@ enforcement, auth/context resolution, and tracing. This project moves that
 plumbing into a reusable runtime and lets developers focus on the **declarative
 specification** of their system rather than its mechanics.
 
-## 3. Vision
+## 3. Current status
 
-- A YAML specification describes the desired agent system: what exists and how
-  it is connected.
-- The specification is **validated** and **compiled** into a typed agent graph.
-- A **long-lived runtime** executes requests against that graph.
-- **Prompts are files** rendered per request from resolver values.
-- **Customer-specific logic** lives in customer plugins, generated resolvers, or
-  optional sidecar boundaries, not in the generic engine.
-- The engine is **stateless with respect to conversation**: callers send a
-  complete conversation each invocation.
-- Every request produces a **trace** for observability and debugging.
+Active development. See the [Roadmap](docs/ROADMAP.md) and [`tasks/`](tasks/) for
+per-phase status.
 
-## 4. Current status
+| Area                          | Status |
+| ----------------------------- | ------ |
+| YAML schema & validation      | ✅ Implemented |
+| Compiled agent graph          | ✅ Implemented |
+| Runtime engine (LangGraph)    | ✅ Implemented — orchestrators as supervisors, child-as-tool routing |
+| Prompt rendering              | ✅ Implemented — file templates, per-request substitution |
+| Resolver plugins              | ✅ Implemented — shared/agent-scoped, generated stubs |
+| Tool plugins (local)          | ✅ Implemented — Python tools bound per agent |
+| Remote MCP tools              | ✅ Implemented — Streamable HTTP discovery via `langchain-mcp-adapters` |
+| MCP `tool_tags`               | ✅ Implemented — optional per-server discovery selector |
+| Runtime hooks                 | ✅ Implemented — 10 lifecycle points, sync/async, fail-closed |
+| MCP auth (`before_mcp_request`) | ✅ Implemented — `HookedMCPAuth` header injection, no token in prompts |
+| Plugin `import_roots`         | ✅ Implemented — CWD-independent package imports |
+| Access plugin                 | 🔶 Partial — `protected` child filtering wired; request-context gate minimal |
+| CLI                           | ✅ `validate`, `inspect`, `generate`, `run`, `serve` |
+| HTTP API (`serve`)            | ✅ Implemented — `/invoke`, `/stream` |
+| Observability                 | ✅ Implemented — pluggable LangChain callbacks; logging backend + **Langfuse** tracing (env-enabled) |
+| Deployment / Docker           | ⏳ Planned |
 
-Active development. See the [Roadmap](docs/ROADMAP.md) and the
-[`tasks/`](tasks/) directory for per-phase status.
+## 4. Capabilities at a glance
 
-| Area                      | Status         |
-| ------------------------- | -------------- |
-| Documentation & ADRs      | ✅ In place     |
-| Agent skills              | ✅ In place     |
-| Implementation tasks      | ✅ Defined      |
-| YAML schema & validation  | ✅ Implemented (0002) |
-| Compiled agent graph      | ✅ Implemented (0003) |
-| Runtime engine            | ✅ Implemented (0004) |
-| Prompt rendering          | 🔶 Partial (0005) — file loading + substitution work; no dedicated module |
-| Resolver plugins          | ✅ Implemented (0006) — shared/agent-scoped, generation modes, TOML |
-| Access plugin             | ⏳ Planned (0006) — contract defined, not wired into routing |
-| Tool plugins              | 🔶 Partial (0007) — Python tools work; MCP client not implemented |
-| CLI                       | 🔶 Partial (0008) — validate, generate, run, version work |
-| API / Docker              | ⏳ Planned (0009–0010) |
-| Observability             | ⏳ Planned (0011) |
+- **Declarative agents** — orchestrators, agents, prompts, resolvers, tools, and
+  graph topology in YAML.
+- **LangGraph runtime** — orchestrators run as supervisors; children are exposed
+  to the LLM as tools.
+- **Local tools** — Python plugins bound only to the agents that declare them.
+- **Remote MCP tools** — connect by URL; tools discovered at build time.
+- **MCP `tool_tags`** — optionally discover only a server's tagged tool group
+  (default header `X-MCP-Tool-Tag`, or an explicit transport override).
+- **Runtime hooks** — trusted lifecycle code (auth, policy, audit) run
+  automatically; never exposed to the LLM.
+- **`HookedMCPAuth`** — `before_mcp_request` hooks inject `Authorization`/HMAC
+  headers per request; tokens never reach the model or the logs.
+- **Plugin `import_roots`** — make package-path plugin refs importable regardless
+  of the working directory.
+- **Unified plugin package** — `plugins/` (`hooks/`, `resolvers/`, `tools/`) with
+  a single `plugins.toml` manifest.
+- **Local example MCP server** — a runnable server for end-to-end smoke testing
+  of discovery, tags, and auth headers (see
+  [examples/local_mcp_server/](examples/local_mcp_server/)).
+- **Observability** — pluggable LangChain callback backends injected into the
+  engine: a logging trace (always on) and **Langfuse** tracing that self-enables
+  when `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` are set.
+- **Offline CLI checks** — `validate` and `inspect` without any LLM or network.
 
-## 5. Planned architecture
+## 5. Example YAML shape
 
-```text
-agent.yml → YAML Loader → Validator → Compiler → CompiledAgentGraph
-          → RuntimeEngine → ExecutionContext per request
-          → Security / Context Gate → Resolver / Sidecar Context Resolution
-          → Prompt Rendering → Recursive Agent Execution
-          → Tool Permission Enforcement → MCP / Tool Calls
-          → Response + Trace
-```
-
-Layers: spec → validation → compiler → agent graph → runtime → prompt rendering
-→ plugin resolvers/access → MCP/tools → observability → API → CLI → deployment.
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-**Key rule:** `RuntimeEngine` is created **once** at startup; `ExecutionContext`
-is created **per request**. See
-[ADR 0001](docs/adr/0001-runtime-engine-created-once.md).
-
-## 6. Example YAML shape
-
-This is the supported validation shape. See [docs/YAML_SPEC.md](docs/YAML_SPEC.md)
-for the full specification.
+Flat sections declare *what exists*; `graph` declares the runtime topology. See
+[docs/YAML_SPEC.md](docs/YAML_SPEC.md) for the full specification and
+[examples/agents.yml](examples/agents.yml).
 
 ```yaml
 system:
@@ -103,7 +103,11 @@ tools:
 resolvers:
   current_date:
     scope: shared
-    return_type: str
+
+mcps:
+  businesscenter:
+    url: "https://mcp.company.com/mcp"
+    tool_tags: ["invoices"]          # optional; sent as X-MCP-Tool-Tag by default
 
 orchestrators:
   main_router:
@@ -118,119 +122,160 @@ agents:
       system: "prompts/domestic_flights/system.md"
     resolvers: [current_date]
     tools: [book_flight]
+    mcps: [businesscenter]
+
+# Optional: trusted lifecycle hooks (auth/policy/audit) — never seen by the LLM.
+hooks:
+  before_mcp_request:
+    - plugin: mcp_auth
+      method: before_mcp_request
+      config: { credential_env: INTERNAL_DOCS_CREDENTIAL }
+
+# Optional: make package-path plugin refs importable from anywhere.
+plugins:
+  import_roots: ["."]
 
 graph:
   main_router:
     domestic_flights_agent:
 ```
 
-Flat sections declare *what exists*; `graph` declares the runtime topology.
-See [examples/agents.yml](examples/agents.yml) and
-[examples/config.schema.json](examples/config.schema.json).
+## 6. CLI commands
 
-## 7. How plugins and access work
+The console script is **`agentctl`** (run `agentctl --help`). A global
+`--log-level DEBUG|INFO|WARNING|ERROR` precedes the subcommand.
+
+| Command | Usage | Notes |
+|---|---|---|
+| `validate` | `agentctl validate <spec.yml>` | Offline pre-flight; exits non-zero on failure |
+| `inspect`  | `agentctl inspect <spec.yml>` | Offline summary of agents/MCPs/hooks/plugins/tags |
+| `generate` | `agentctl generate --config <spec.yml>` | Create resolver/tool/hook stubs + `plugins.toml` |
+| `run`      | `agentctl run --config <spec.yml> --message "..."` | Run one message (`--stream`, `--env`) |
+| `serve`    | `agentctl serve --config <spec.yml>` | HTTP API (`--host`, `--port`, `--env`) |
+
+`validate` and `inspect` are **fully offline** — no LLM calls, no MCP network,
+no tool execution:
+
+```bash
+agentctl validate examples/local_mcp_agent_invoices.yml   # schema + import-roots + hooks + prompts
+agentctl inspect  examples/local_mcp_agent_invoices.yml   # agents, MCP url/tool_tags/transport, hooks
+```
+
+`validate` runs the same pre-flight the engine does at build time (parse +
+validate, resolve `plugins.import_roots` relative to the spec file, and
+import/instantiate declared hooks — hooks are trusted code) but stops before any
+network or LLM work. `inspect` never prints secrets: hook config is shown as
+`config_keys: [...]` only, and the effective tag transport (default header
+`X-MCP-Tool-Tag` vs. an explicit override) is shown per server.
+
+## 7. Plugins and the extension model
 
 The engine contains **no** customer-specific authentication, authorization, or
-business-data lookup code. Customers provide Python plugins.
+business-data lookup code. Customers provide Python plugins under a single
+package (`plugins/` — `hooks/`, `resolvers/`, `tools/`) described by one manifest,
+`plugins/plugins.toml`. See [examples/plugins/](examples/plugins/).
 
-All customer extension code lives under one plugin package (`plugins/` —
-`hooks/`, `resolvers/`, `tools/`) described by a single manifest,
-`plugins/plugins.toml`. The runtime reads `[hooks.plugins]` to resolve managed
-hook plugin ids; the other manifest entries are documentation/generation
-metadata.
-See [examples/plugins/](examples/plugins/).
+- **Resolver plugins** fill prompt variables before a node runs — generated as a
+  `SharedResolver` plus per-agent `Resolver` subclasses, loaded by file path.
+- **Tool plugins** are Python methods exposed to the LLM at runtime; each agent
+  binds only its declared tools.
+- **Hook plugins** are trusted lifecycle code run automatically by the runtime
+  (auth, policy, audit) — **never** exposed to the LLM. See
+  [docs/RUNTIME_HOOKS.md](docs/RUNTIME_HOOKS.md).
+- **Access plugin** — a node may set `protected: true`; if any protected node
+  exists, the engine filters those children through
+  `plugins/access.py::AccessResolver.can_access(ctx, node_id)`. Child filtering
+  is wired; the request-context gate that populates `ctx` is still minimal. See
+  [docs/SIDECAR_CONTEXT_AUTH.md](docs/SIDECAR_CONTEXT_AUTH.md).
 
-**Resolver plugins** fill prompt variables before a node runs. Resolvers are
-generated into a `SharedResolver` (shared methods) plus per-agent `Resolver`
-subclasses (agent-specific methods), loaded by file path. The runtime
-instantiates the class once and calls methods by name; shared methods resolve
-through normal Python inheritance. Run `agentctl generate` to create resolver
-stubs — it also creates/updates `plugins/plugins.toml`.
+`agentctl generate` scaffolds the stubs and creates/updates `plugins.toml`.
+Package-path refs (e.g. `examples.plugins.hooks.mcp_auth:McpAuthHook`) are made
+importable via `plugins.import_roots`, resolved relative to the spec file.
 
-**Tool plugins** are Python methods exposed to the LLM at runtime. Each agent
-declares which tools it may use; the runtime binds only those tools.
+## 8. Runtime hooks and MCP auth
 
-**Hook plugins** are trusted lifecycle code run automatically by the runtime
-(auth, policy, audit) — never exposed to the LLM. See
+**Hooks** run trusted code at fixed lifecycle points — engine start/stop, run
+start/end/error, before/after/​error tool calls, and before-MCP-request /
+after-MCP-response. They are declared in YAML by explicit `ref` or by managed
+`plugin` + `method` (resolved through `plugins.toml`), support sync and async,
+and are **fail-closed by default** (`failure_policy: warn` opts out). Hooks are
+never advertised to the model, never routed through the tool registry, and hook
+config values are never logged.
+
+The headline use case is **`before_mcp_request`**: a hook injects the right
+`Authorization`/HMAC headers before each MCP HTTP request via `HookedMCPAuth`, so
+private MCP servers work without per-server code and **the token never reaches
+the LLM or the logs**. Full contract and examples:
 [docs/RUNTIME_HOOKS.md](docs/RUNTIME_HOOKS.md).
 
-**Access plugin** (planned): a node can set `protected: true`; if any protected
-node exists, the engine expects `plugins/access.py` with
-`AccessResolver.can_access(ctx, node_id) -> bool`. The contract is defined but
-**not yet wired into routing**. See
-[docs/SIDECAR_CONTEXT_AUTH.md](docs/SIDECAR_CONTEXT_AUTH.md).
+## 9. MCP servers and tool tags
 
-## 8. How prompts are rendered dynamically
+Declare a remote MCP server by URL; the engine creates one client per server and
+discovers its tools during build (see [docs/MCP_AND_TOOLS.md](docs/MCP_AND_TOOLS.md)).
+Optionally add a per-server **`tool_tags`** selector so only a tagged tool group
+is discovered. By default the tags are sent as the header `X-MCP-Tool-Tag`;
+`tool_tag_transport` is an optional advanced override (custom header or query
+param). Filtering is **server-side** — only the discovered tools are bound, and
+nothing about tags is exposed to the LLM.
+
+To try all of this end-to-end without a public server, run the bundled local
+demo MCP server:
+
+```bash
+# terminal 1
+python -m examples.local_mcp_server.server         # Streamable HTTP on :8765/mcp
+# terminal 2
+agentctl run --config examples/local_mcp_agent_invoices.yml --message "List the invoices"
+```
+
+See [examples/local_mcp_server/README.md](examples/local_mcp_server/README.md).
+
+## 10. How prompts are rendered
 
 Prompt files are **templates**. Parsed templates may be cached, but values are
-resolved **per request** from request headers/data and plugin resolvers.
-Fully-rendered prompts are
-**never** cached globally, and missing required variables fail loudly. Prompt
-text is **not** a security boundary. See
+resolved **per request** from request data and plugin resolvers. Fully-rendered
+prompts are **never** cached globally, and missing required variables fail
+loudly. Prompt text is **not** a security boundary. See
 [docs/PROMPT_RENDERING.md](docs/PROMPT_RENDERING.md).
 
-## 9. How future agents should work here
+## 11. Architecture
+
+```text
+agent.yml → YAML Loader → Validator → Compiler → CompiledAgentGraph
+          → RuntimeEngine (built once) → per-request RunContext
+          → access filtering → resolver context → prompt rendering
+          → supervisor execution → tools / MCP (+ hooks) → response + trace
+```
+
+**Key rule:** the runtime engine is created **once** at startup; per-request
+state lives in a `RunContext`, not on the engine. See
+[ADR 0001](docs/adr/0001-runtime-engine-created-once.md) and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## 12. For AI coding agents
 
 This repository is **agent-first**. If you are an AI coding agent:
 
 1. Read [AGENTS.md](AGENTS.md) in full.
 2. Read [`.ai/README.md`](.ai/README.md) and the relevant guide in
    [`.ai/skills/`](.ai/skills/).
-3. Pick the next task in [`tasks/`](tasks/) and work strictly within its scope.
+3. Work strictly within the scope of the current task in [`tasks/`](tasks/).
 4. Run `make check` before finishing and report using the format in AGENTS.md.
 
-## 10. Development setup
+## 13. Development setup
 
-> Requires **Python 3.11+**. The project uses a `src/` layout with package
-> `agentplatform` and is configured via `pyproject.toml` (hatchling build;
-> `ruff`, `mypy`, `pytest` for tooling). The CLI supports `agentctl version`,
-> `agentctl validate`, `agentctl inspect`, `agentctl generate` (with `--mode`,
-> `--agent`, `--force`), `agentctl run`, and `agentctl serve`.
-
-### 1. Create and activate a virtual environment
+> Requires **Python 3.11+**. The project uses a `src/` layout with packages
+> `agent_engine` (the engine) and `agentctl` (the CLI), configured via
+> `pyproject.toml` (hatchling build; `ruff`, `mypy`, `pytest`).
 
 ```bash
-python3 -m venv .venv          # create the venv (.venv/ is git-ignored)
-source .venv/bin/activate      # macOS/Linux (zsh/bash)
-# .venv\Scripts\activate       # Windows (PowerShell: .venv\Scripts\Activate.ps1)
+python3 -m venv .venv && source .venv/bin/activate   # create + activate venv
+make install                                         # pip install -e ".[dev]"
+
+agentctl --help                                      # console script
+agentctl validate examples/agents.yml                # offline spec check
+make check                                           # lint + typecheck + test
 ```
-
-### 2. Install the project (editable) with dev dependencies
-
-```bash
-make install                   # runs: pip install -e ".[dev]"
-```
-
-### 3. Verify
-
-```bash
-which python                   # → <repo>/.venv/bin/python
-agentctl version               # → 0.0.0  (console script; alias: agent-platform)
-agentctl validate examples/agents.yml
-agentctl generate examples/agents.yml --mode all
-make check                     # lint (ruff) + typecheck (mypy) + test (pytest)
-```
-
-### Inspecting a spec (offline)
-
-Two **offline** commands help you check a spec before running it — neither calls
-an LLM, connects to MCP servers, or runs tools:
-
-```bash
-# Schema + import-roots + hooks + prompt files; exits non-zero on failure.
-agentctl validate examples/local_mcp_agent_invoices.yml
-
-# Human-readable summary: agents, graph, MCP servers (url/tool_tags/transport),
-# hooks (config KEYS only, never values), and the plugins manifest.
-agentctl inspect  examples/local_mcp_agent_invoices.yml
-```
-
-`validate` performs the same pre-flight the engine does at build time — it
-parses/validates the YAML, resolves `plugins.import_roots` relative to the spec
-file, and imports/instantiates declared hooks (hooks are trusted code) — but
-stops before any network or LLM work. `inspect` never prints secrets: hook
-config is shown as `config_keys: [...]` only, and the effective tag transport
-(default header `X-MCP-Tool-Tag` vs. an explicit override) is shown per server.
 
 ### Everyday commands
 
@@ -245,19 +290,15 @@ make check       # lint + typecheck + test (run before finishing a task)
 Leave the environment with `deactivate`. For a clean rebuild:
 `rm -rf .venv && python3 -m venv .venv && source .venv/bin/activate && make install`.
 
-### IDE setup (PyCharm / VS Code)
+In PyCharm/VS Code, point the interpreter at `<repo>/.venv/bin/python` and mark
+`src/` as a *Sources Root* so the editable install resolves.
 
-Point your editor's Python interpreter at `<repo>/.venv/bin/python` so it resolves
-the editable install. In PyCharm you may also mark `src/` as a *Sources Root*.
-This clears any "unresolved reference `agentplatform`" warning (a `src/`-layout
-indexing quirk, not a code error).
+## 14. Roadmap
 
-## 11. Roadmap
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan. In short:
-foundation → spec & validation → compiler → runtime → prompts → plugin
-access/context → tools/MCP → CLI/API → deployment → observability → quality
-gates. Phases 0–4 are done; 5–8 are partially implemented; 9–12 are planned.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan. Foundation → spec &
+validation → compiler → runtime → prompts → plugin access/context → tools/MCP →
+hooks → CLI/API → observability (logging + Langfuse) are implemented;
+deployment/Docker and additional tracing backends are planned.
 
 ## License
 
