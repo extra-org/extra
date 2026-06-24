@@ -152,6 +152,7 @@ The console script is **`agentctl`** (run `agentctl --help`). A global
 | `generate` | `agentctl generate --config <spec.yml>` | Create resolver/tool/hook stubs + `plugins.toml` |
 | `run`      | `agentctl run --config <spec.yml> --message "..."` | Run one message (`--stream`, `--env`) |
 | `serve`    | `agentctl serve --config <spec.yml>` | HTTP API (`--host`, `--port`, `--env`) |
+| `chat`     | `agentctl chat --config <spec.yml>` | Interactive console; reuse one engine across questions (`--stream`, `--env`, `--url`) |
 
 `validate` and `inspect` are **fully offline** — no LLM calls, no MCP network,
 no tool execution:
@@ -167,6 +168,38 @@ import/instantiate declared hooks — hooks are trusted code) but stops before a
 network or LLM work. `inspect` never prints secrets: hook config is shown as
 `config_keys: [...]` only, and the effective tag transport (default header
 `X-MCP-Tool-Tag` vs. an explicit override) is shown per server.
+
+### Interactive chat / simulation
+
+`agentctl chat` is a developer simulation console: it keeps one engine (or one
+server connection) alive and lets you ask question after question without
+restarting the process. Type `exit`, `quit`, or `q` — or press Ctrl-C / Ctrl-D —
+to stop. Empty input is ignored, and a single failed question prints the error
+and keeps the loop running.
+
+```bash
+# Local engine — build the graph once, then ask in a loop (the `run` path reused)
+agentctl chat --config examples/agents.yml
+agentctl chat --config examples/agents.yml --stream      # token-by-token answers
+
+# Remote — drive a running `agentctl serve` over its /invoke and /stream HTTP API
+agentctl serve --config examples/agents.yml &
+agentctl chat --url http://localhost:8080
+agentctl chat --url http://localhost:8080 --stream
+```
+
+Pass **exactly one** of `--config` (local engine) or `--url` (remote server);
+passing both, or neither, is a CLI error. In local mode the engine is built once
+and reused across questions — only per-request state lives in each call, and no
+auth/user state is stored on the engine. `--env` (local mode) and the global
+`--log-level` behave the same as `run`/`serve`; route and tool detail stay in
+the logs at your chosen level rather than the console. The session is shown as:
+
+```
+You > List the invoices
+Agent > Here are the open invoices ...
+You > exit
+```
 
 ## 7. Plugins and the extension model
 

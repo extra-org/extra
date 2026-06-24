@@ -5,12 +5,11 @@ import sys
 from pathlib import Path
 
 import click
-from dotenv import load_dotenv
 
-from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.generate.generator import Generator
 from agent_engine.parsers.yaml.parser import YAMLParser
+from agentctl.session import SpecError, load_and_validate, load_env
 
 
 @click.group()
@@ -88,20 +87,13 @@ def run(config: str, message: str, env: str | None, stream: bool) -> None:
 
 
 async def _run_async(config: str, message: str, env: str | None, stream: bool) -> None:
-    env_path = Path(env) if env else Path(config).resolve().parent / ".env"
-    load_dotenv(env_path, override=True)
+    load_env(config, env)
 
     try:
-        spec = YAMLParser().parse(config)
-    except Exception as exc:
-        click.echo(f"✗ {exc}", err=True)
-        sys.exit(1)
-
-    base_dir = Path(config).resolve().parent
-    errors = SystemSpecValidator().validate(spec, base_dir)
-    if errors:
-        for e in errors:
-            click.echo(f"✗ {e}", err=True)
+        spec, base_dir = load_and_validate(config)
+    except SpecError as exc:
+        for message_text in exc.messages:
+            click.echo(f"✗ {message_text}", err=True)
         sys.exit(1)
 
     click.echo(f"  system : {spec.meta.name}", err=True)
@@ -140,11 +132,37 @@ def serve(config: str, host: str, port: int, env: str | None) -> None:
 
     from agent_engine.api.app import create_app
 
-    env_path = Path(env) if env else Path(config).resolve().parent / ".env"
-    load_dotenv(env_path, override=True)
+    load_env(config, env)
 
     app = create_app(config)
     uvicorn.run(app, host=host, port=port)
+
+
+@cli.command()
+@click.option("--config", default=None, help="Path to agents.yml (local engine mode)")
+@click.option("--url", default=None, help="Base URL of a running `agentctl serve` (remote mode)")
+@click.option("--env", default=None, help="Path to .env file (local mode only)")
+@click.option("--stream", is_flag=True, help="Stream answers token by token")
+def chat(config: str | None, url: str | None, env: str | None, stream: bool) -> None:
+    """Interactive simulation console — keep the engine (or a server) running
+    and ask questions in a loop.
+
+    Pass exactly one of --config (build the engine locally) or --url (talk to a
+    running `agentctl serve`). Type 'exit', 'quit', or 'q' (or Ctrl-C/Ctrl-D)
+    to stop.
+    """
+    if config and url:
+        raise click.UsageError("Pass exactly one of --config or --url, not both.")
+    if not config and not url:
+        raise click.UsageError("Pass one of --config (local engine) or --url (remote server).")
+
+    from agentctl.chat import run_local_chat, run_remote_chat
+
+    if config:
+        asyncio.run(run_local_chat(config, env, stream))
+    else:
+        assert url is not None
+        asyncio.run(run_remote_chat(url, stream))
 
 
 if __name__ == "__main__":
