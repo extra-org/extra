@@ -18,6 +18,7 @@ from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.logging_config import configure_logging
 from agent_engine.parsers.yaml.parser import YAMLParser
 from agent_manager.api.routes import router
+from agent_manager.api.web import mount_web
 from agent_manager.application import ConversationService
 from agent_manager.config import Settings
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
@@ -58,4 +59,5 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "system": getattr(app.state, "system_name", "")}
 
     app.include_router(router)
+    mount_web(app, settings)
     return app
