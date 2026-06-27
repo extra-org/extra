@@ -51,6 +51,10 @@ dependencies = [
     "langchain-mcp-adapters>=0.1",
     "python-dotenv>=1.0",
     "langchain-anthropic (>=1.4.5,<2.0.0)",
+    "sqlmodel>=0.0.16",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.19",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +69,9 @@ dev = [
 anthropic = ["langchain-anthropic>=0.3"]
 openai = ["langchain-openai>=0.3"]
 langfuse = ["langfuse>=2.0"]
+# PostgreSQL backend for agent_manager: pip install ".[postgres]" + set
+# DATABASE_URL=postgresql+asyncpg://...
+postgres = ["asyncpg>=0.29"]
 
 # CLI entrypoint. `agentctl` is the working CLI name used throughout the docs
 # (see docs/ARCHITECTURE.md and docs/ROADMAP.md); `agent-platform` is provided as
@@ -72,6 +79,7 @@ langfuse = ["langfuse>=2.0"]
 # deferred to later tasks.
 [project.scripts]
 agentctl = "agentctl.main:cli"
+agent-manager = "agent_manager.cli:main"
 
 [project.urls]
 Documentation = "https://github.com/example/agent-engine/tree/main/docs"
@@ -80,7 +88,7 @@ Documentation = "https://github.com/example/agent-engine/tree/main/docs"
 path = "src/agent_engine/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_engine", "src/agentctl"]
+packages = ["src/agent_engine", "src/agentctl", "src/agent_manager"]
 
 [tool.ruff]
 target-version = "py311"
