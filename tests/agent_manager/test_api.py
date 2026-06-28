@@ -36,6 +36,14 @@ def test_create_send_history_round_trip(client: TestClient) -> None:
 
 def test_unknown_conversation_returns_404(client: TestClient) -> None:
     assert client.get("/conversations/nope/messages").status_code == 404
-    assert (
-        client.post("/conversations/nope/messages", json={"message": "x"}).status_code == 404
-    )
+    assert client.post("/conversations/nope/messages", json={"message": "x"}).status_code == 404
+
+
+def test_create_accepts_stable_session_and_send_accepts_user(client: TestClient) -> None:
+    created = client.post("/conversations", json={"session_id": "sess-1", "user_id": "u1"}).json()
+    assert created["conversation_id"] == "sess-1"
+    assert created["session_id"] == "sess-1"
+
+    sent = client.post("/conversations/sess-1/messages", json={"message": "hello", "user_id": "u1"})
+
+    assert sent.status_code == 200

@@ -15,15 +15,18 @@ class RecordingEngine(Engine):
 
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.contexts: list[RunContext | None] = []
 
     async def build(self, _spec: object) -> None: ...
 
     async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
         self.prompts.append(message)
+        self.contexts.append(context)
         return RunResult(system_name="stub", visited=["agent"], answer=f"answer:{message[-20:]}")
 
     async def stream(
         self, message: str, *, context: RunContext | None = None
     ) -> AsyncIterator[RunStreamEvent]:
         self.prompts.append(message)
+        self.contexts.append(context)
         yield RunStreamEvent(type="answer_delta", content="x")

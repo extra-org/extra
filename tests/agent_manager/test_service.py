@@ -57,3 +57,29 @@ async def test_unknown_conversation_raises() -> None:
         await service.send("missing", "hi")
     with pytest.raises(ConversationNotFound):
         await service.history("missing")
+
+
+async def test_send_uses_stable_session_and_unique_run_id() -> None:
+    service, engine = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+    await service.send(cid, "first", user_id="u1")
+    await service.send(cid, "second", user_id="u1")
+
+    contexts = [ctx for ctx in engine.contexts if ctx is not None]
+    assert [ctx.conversation_id for ctx in contexts] == ["sess-1", "sess-1"]
+    assert [ctx.user_id for ctx in contexts] == ["u1", "u1"]
+    assert contexts[0].run_id is not None
+    assert contexts[1].run_id is not None
+    assert contexts[0].run_id != contexts[1].run_id
+
+
+async def test_service_creates_user_and_session_metadata() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+
+    assert cid == "sess-1"
+    repo = service._repository
+    assert await repo.get_user("u1") is not None
+    session = await repo.get_session("sess-1")
+    assert session is not None
+    assert session.user_id == "u1"
