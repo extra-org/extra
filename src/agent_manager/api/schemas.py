@@ -13,8 +13,14 @@ from pydantic import BaseModel
 from agent_manager.domain import Role
 
 
+class CreateConversationRequest(BaseModel):
+    session_id: str | None = None
+    user_id: str | None = None
+
+
 class CreateConversationResponse(BaseModel):
     conversation_id: str
+    session_id: str
 
 
 class MessageOut(BaseModel):
@@ -25,6 +31,7 @@ class MessageOut(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str
+    user_id: str | None = None
 
 
 class ToolRecord(BaseModel):

@@ -4,7 +4,6 @@ comes from DATABASE_URL so migrations hit the same database the app uses."""
 from __future__ import annotations
 
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -18,7 +17,8 @@ import agent_manager.infrastructure.persistence.tables  # noqa: F401
 from agent_manager.config import Settings
 
 config = context.config
-config.set_main_option("sqlalchemy.url", os.environ.get("DATABASE_URL", Settings().database_url))
+settings = Settings()
+config.set_main_option("sqlalchemy.url", settings.effective_database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -28,9 +28,7 @@ target_metadata = SQLModel.metadata
 
 def _run(connection: Connection) -> None:
     # render_as_batch lets SQLite emulate ALTER via copy-and-move.
-    context.configure(
-        connection=connection, target_metadata=target_metadata, render_as_batch=True
-    )
+    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
     with context.begin_transaction():
         context.run_migrations()
 

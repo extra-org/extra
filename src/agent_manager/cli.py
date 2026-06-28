@@ -11,18 +11,6 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-_MIGRATIONS = Path(__file__).resolve().parent / "infrastructure" / "persistence" / "migrations"
-
-
-def _upgrade_db() -> None:
-    """Bring the database to the latest schema via Alembic (uses DATABASE_URL)."""
-    from alembic import command
-    from alembic.config import Config
-
-    cfg = Config(str(_MIGRATIONS / "alembic.ini"))
-    cfg.set_main_option("script_location", str(_MIGRATIONS))
-    command.upgrade(cfg, "head")
-
 
 @click.command()
 @click.option("--config", required=True, help="Path to agents.yml")
@@ -42,7 +30,9 @@ def main(config: str, host: str | None, port: int | None, env: str | None, migra
 
     settings = Settings()
     if migrate:
-        _upgrade_db()
+        from agent_manager.infrastructure.persistence.database import upgrade_database
+
+        upgrade_database()
 
     app = create_app(config, settings)
     uvicorn.run(app, host=host or settings.host, port=port or settings.port)

@@ -41,13 +41,19 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
             raise RuntimeError(f"Invalid config: {'; '.join(str(e) for e in errors)}")
         app.state.system_name = spec.meta.name
 
-        db_engine = create_db_engine(settings.database_url)
+        db_engine = create_db_engine(settings.effective_database_url)
         repository = SqlRepository(session_factory(db_engine))
 
         async with LangGraphEngine(base_dir) as engine:
             await engine.build(spec)
             app.state.service = ConversationService(
-                engine, repository, window=settings.context_window
+                engine,
+                repository,
+                window=settings.context_window,
+                max_chars=settings.context_max_chars,
+                snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
+                system_name=spec.meta.name,
+                config_path=str(Path(config_path).resolve()),
             )
             yield
         await db_engine.dispose()

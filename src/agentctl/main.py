@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import click
 
@@ -84,15 +85,32 @@ def generate(config: str) -> None:
 @click.option(
     "--session-id",
     default=None,
-    help="Group this run under a tracing session (Langfuse session id).",
+    help="Stable conversation session id. Generated and printed if omitted.",
 )
-def run(config: str, message: str, env: str | None, stream: bool, session_id: str | None) -> None:
+@click.option("--user-id", default=None, help="Optional user id for persisted local runs.")
+def run(
+    config: str,
+    message: str,
+    env: str | None,
+    stream: bool,
+    session_id: str | None,
+    user_id: str | None,
+) -> None:
     """Run a message through the agent system defined in the YAML."""
-    asyncio.run(_run_async(config, message, env, stream, session_id))
+    load_env(config, env)
+    from agent_manager.infrastructure.persistence.database import upgrade_database
+
+    upgrade_database()
+    asyncio.run(_run_async(config, message, env, stream, session_id, user_id))
 
 
 async def _run_async(
-    config: str, message: str, env: str | None, stream: bool, session_id: str | None = None
+    config: str,
+    message: str,
+    env: str | None,
+    stream: bool,
+    session_id: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     load_env(config, env)
 
@@ -103,19 +121,42 @@ async def _run_async(
             click.echo(f"✗ {message_text}", err=True)
         sys.exit(1)
 
-    from agent_engine.runtime.hooks import RunContext
+    from agent_manager.application import ConversationService
+    from agent_manager.config import Settings
+    from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
+    from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 
-    context = RunContext(conversation_id=session_id) if session_id else None
+    effective_session_id = session_id or uuid4().hex[:16]
 
     click.echo(f"  system : {spec.meta.name}", err=True)
+    if session_id:
+        click.echo(f"  session: {effective_session_id}", err=True)
+    else:
+        click.echo(
+            f"  session: {effective_session_id} (generated; reuse with --session-id)",
+            err=True,
+        )
     click.echo(f"  message: {message}", err=True)
     click.echo("", err=True)
 
+    settings = Settings()
+    db_engine = create_db_engine(settings.effective_database_url)
+    repository = SqlRepository(session_factory(db_engine))
     try:
         async with LangGraphEngine(base_dir) as engine:
             await engine.build(spec)
+            service = ConversationService(
+                engine,
+                repository,
+                window=settings.context_window,
+                max_chars=settings.context_max_chars,
+                snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
+                system_name=spec.meta.name,
+                config_path=str(Path(config).resolve()),
+            )
+            await service.create(user_id=user_id, session_id=effective_session_id)
             if stream:
-                async for event in engine.stream(message, context=context):
+                async for event in service.stream(effective_session_id, message, user_id=user_id):
                     if event.type == "route" and event.route:
                         click.echo(f"  route  : {' → '.join(event.route)}", err=True)
                     elif event.type == "answer_delta" and event.content:
@@ -123,13 +164,15 @@ async def _run_async(
                         sys.stdout.flush()
                 sys.stdout.write("\n")
             else:
-                result = await engine.run(message, context=context)
+                result = await service.send(effective_session_id, message, user_id=user_id)
                 click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
                 click.echo("")
                 click.echo(result.answer)
     except Exception as exc:
         click.echo(f"✗ Runtime error: {exc}", err=True)
         sys.exit(1)
+    finally:
+        await db_engine.dispose()
 
 
 @cli.command()
