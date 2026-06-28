@@ -66,8 +66,12 @@ mcps:
     url: "https://mcp.deepwiki.com/mcp"
 
   context7:
+    # Authenticated server. The credential is injected at runtime by the
+    # `before_mcp_request` hook (plugins/research_hooks.py), which reads it from
+    # the environment — never from this file. We deliberately do NOT use
+    # `auth: true` + a static mcp_auth plugin here, to keep a single, explicit
+    # auth mechanism (the hook). DeepWiki above is public and stays unauthenticated.
     url: "https://mcp.context7.com/mcp"
-    auth: true
 
 # ---------------------------------------------------------------------------
 # Local Tool Declarations
@@ -110,6 +114,48 @@ resolvers:
 
   experience_level:
     scope: agent
+
+# ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
+# Make the local plugin package importable relative to THIS file, so the hook
+# ref `plugins.research_hooks:ResearchHooks` (in plugins/plugins.toml) resolves
+# regardless of the shell's working directory.
+plugins:
+  import_roots:
+    - "."
+
+# ---------------------------------------------------------------------------
+# Runtime Hooks
+# ---------------------------------------------------------------------------
+# Trusted application code run at fixed lifecycle points. Implemented in
+# plugins/research_hooks.py and registered in plugins/plugins.toml under the
+# `research_hooks` plugin id. No secrets appear here — credentials are read from
+# the environment inside the hook.
+hooks:
+
+  # Fail fast at build time if required credentials are missing.
+  on_engine_start:
+    - plugin: research_hooks
+      method: validate_environment
+
+  # Inject Context7's auth header on outgoing MCP requests. The hook gates on the
+  # server id, so it authenticates context7 only and leaves DeepWiki public.
+  before_mcp_request:
+    - plugin: research_hooks
+      method: inject_context7_auth
+
+  # Best-effort audit of safe tool-call metadata. `warn` => a failing audit logs
+  # and continues; it never aborts the run.
+  after_tool_call:
+    - plugin: research_hooks
+      method: audit_tool_call
+      failure_policy: warn
+
+  # Record run failures (by type only — never the message).
+  on_run_error:
+    - plugin: research_hooks
+      method: record_run_failure
 
 # ---------------------------------------------------------------------------
 # Orchestrators
