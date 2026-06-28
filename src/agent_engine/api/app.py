@@ -20,6 +20,7 @@ from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.logging_config import configure_logging, log, request_id_var
 from agent_engine.parsers.yaml.parser import YAMLParser
+from agent_engine.runtime.hooks import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,18 @@ def _preview(text: str, limit: int = 120) -> str:
     """
     collapsed = " ".join(text.split())
     return collapsed[:limit] + ("…" if len(collapsed) > limit else "")
+
+
+def _run_context(x_session_id: str | None) -> RunContext | None:
+    """Build a RunContext carrying the caller's session id, or None if absent.
+
+    The id flows into tracing metadata (the Langfuse session). It is untrusted,
+    so sanitize to safe characters and cap length before trusting it.
+    """
+    if not x_session_id:
+        return None
+    session_id = _RID_OK.sub("", x_session_id)[:64]
+    return RunContext(conversation_id=session_id) if session_id else None
 
 
 class InvokeRequest(BaseModel):
@@ -105,6 +118,7 @@ def create_app(config_path: str) -> FastAPI:
         body: InvokeRequest,
         response: Response,
         x_request_id: str | None = Header(default=None),
+        x_session_id: str | None = Header(default=None),
     ) -> InvokeResponse:
         assert _engine is not None
         rid = _begin_request(x_request_id)
@@ -119,7 +133,7 @@ def create_app(config_path: str) -> FastAPI:
             message=_preview(body.message),
         )
         try:
-            result = await _engine.run(body.message)
+            result = await _engine.run(body.message, context=_run_context(x_session_id))
         except Exception as exc:
             log(logger, logging.ERROR, "request end", status="error", error=str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -144,9 +158,11 @@ def create_app(config_path: str) -> FastAPI:
     async def stream(
         body: InvokeRequest,
         x_request_id: str | None = Header(default=None),
+        x_session_id: str | None = Header(default=None),
     ) -> StreamingResponse:
         assert _engine is not None
         rid = _begin_request(x_request_id)
+        context = _run_context(x_session_id)
         started = time.perf_counter()
         log(
             logger,
@@ -159,7 +175,7 @@ def create_app(config_path: str) -> FastAPI:
 
         async def event_stream():
             try:
-                async for event in _engine.stream(body.message):
+                async for event in _engine.stream(body.message, context=context):
                     payload = {k: v for k, v in dataclasses.asdict(event).items() if v is not None}
                     yield f"data: {json.dumps(payload)}\n\n"
                 log(

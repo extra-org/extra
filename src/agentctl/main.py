@@ -81,12 +81,19 @@ def generate(config: str) -> None:
 @click.option("--message", required=True, help="User message")
 @click.option("--env", default=None, help="Path to .env file")
 @click.option("--stream", is_flag=True, help="Stream the answer")
-def run(config: str, message: str, env: str | None, stream: bool) -> None:
+@click.option(
+    "--session-id",
+    default=None,
+    help="Group this run under a tracing session (Langfuse session id).",
+)
+def run(config: str, message: str, env: str | None, stream: bool, session_id: str | None) -> None:
     """Run a message through the agent system defined in the YAML."""
-    asyncio.run(_run_async(config, message, env, stream))
+    asyncio.run(_run_async(config, message, env, stream, session_id))
 
 
-async def _run_async(config: str, message: str, env: str | None, stream: bool) -> None:
+async def _run_async(
+    config: str, message: str, env: str | None, stream: bool, session_id: str | None = None
+) -> None:
     load_env(config, env)
 
     try:
@@ -96,6 +103,10 @@ async def _run_async(config: str, message: str, env: str | None, stream: bool) -
             click.echo(f"✗ {message_text}", err=True)
         sys.exit(1)
 
+    from agent_engine.runtime.hooks import RunContext
+
+    context = RunContext(conversation_id=session_id) if session_id else None
+
     click.echo(f"  system : {spec.meta.name}", err=True)
     click.echo(f"  message: {message}", err=True)
     click.echo("", err=True)
@@ -104,7 +115,7 @@ async def _run_async(config: str, message: str, env: str | None, stream: bool) -
         async with LangGraphEngine(base_dir) as engine:
             await engine.build(spec)
             if stream:
-                async for event in engine.stream(message):
+                async for event in engine.stream(message, context=context):
                     if event.type == "route" and event.route:
                         click.echo(f"  route  : {' → '.join(event.route)}", err=True)
                     elif event.type == "answer_delta" and event.content:
@@ -112,7 +123,7 @@ async def _run_async(config: str, message: str, env: str | None, stream: bool) -
                         sys.stdout.flush()
                 sys.stdout.write("\n")
             else:
-                result = await engine.run(message)
+                result = await engine.run(message, context=context)
                 click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
                 click.echo("")
                 click.echo(result.answer)
@@ -143,13 +154,20 @@ def serve(config: str, host: str, port: int, env: str | None) -> None:
 @click.option("--url", default=None, help="Base URL of a running `agentctl serve` (remote mode)")
 @click.option("--env", default=None, help="Path to .env file (local mode only)")
 @click.option("--stream", is_flag=True, help="Stream answers token by token")
-def chat(config: str | None, url: str | None, env: str | None, stream: bool) -> None:
+@click.option(
+    "--session-id",
+    default=None,
+    help="Tracing session id grouping this console (Langfuse session). Auto-generated if omitted.",
+)
+def chat(
+    config: str | None, url: str | None, env: str | None, stream: bool, session_id: str | None
+) -> None:
     """Interactive simulation console — keep the engine (or a server) running
     and ask questions in a loop.
 
     Pass exactly one of --config (build the engine locally) or --url (talk to a
     running `agentctl serve`). Type 'exit', 'quit', or 'q' (or Ctrl-C/Ctrl-D)
-    to stop.
+    to stop. Every question in the console shares one tracing session.
     """
     if config and url:
         raise click.UsageError("Pass exactly one of --config or --url, not both.")
@@ -159,10 +177,10 @@ def chat(config: str | None, url: str | None, env: str | None, stream: bool) -> 
     from agentctl.chat import run_local_chat, run_remote_chat
 
     if config:
-        asyncio.run(run_local_chat(config, env, stream))
+        asyncio.run(run_local_chat(config, env, stream, session_id=session_id))
     else:
         assert url is not None
-        asyncio.run(run_remote_chat(url, stream))
+        asyncio.run(run_remote_chat(url, stream, session_id=session_id))
 
 
 if __name__ == "__main__":

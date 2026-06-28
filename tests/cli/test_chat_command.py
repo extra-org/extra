@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Callable
 
+import echo
 import httpx
 import pytest
 from click.testing import CliRunner
@@ -40,23 +41,26 @@ def scripted_reader(inputs: list[str]) -> Callable[[str], str]:
 
 
 class FakeEngine(Engine):
-    """Records every question and how many times it was built."""
+    """Records every question, build count, and the context of each call."""
 
     def __init__(self) -> None:
         self.builds = 0
         self.questions: list[str] = []
+        self.contexts: list[RunContext | None] = []
 
     async def build(self, _spec: object) -> None:
         self.builds += 1
 
     async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
         self.questions.append(message)
+        self.contexts.append(context)
         return RunResult(system_name="fake", visited=["a"], answer=f"echo:{message}")
 
     async def stream(
         self, message: str, *, context: RunContext | None = None
     ) -> AsyncIterator[RunStreamEvent]:
         self.questions.append(message)
+        self.contexts.append(context)
         for chunk in ("a", "b"):
             yield RunStreamEvent(type="answer_delta", content=chunk)
 
@@ -188,6 +192,55 @@ async def test_local_mode_builds_engine_once(monkeypatch: pytest.MonkeyPatch) ->
     assert engine.questions == ["a", "b", "c"]
 
 
+def _patch_local_engine(monkeypatch: pytest.MonkeyPatch, engine: FakeEngine) -> None:
+    class _CtxEngine:
+        def __init__(self, _base_dir: object) -> None: ...
+
+        async def __aenter__(self) -> FakeEngine:
+            return engine
+
+        async def __aexit__(self, *args: object) -> None: ...
+
+    monkeypatch.setattr("agent_engine.engine.langgraph.engine.LangGraphEngine", _CtxEngine)
+    monkeypatch.setattr(chat_mod, "load_env", lambda *a, **k: None)
+    monkeypatch.setattr(chat_mod, "load_and_validate", lambda config: (object(), "/base"))
+
+
+async def test_local_chat_groups_questions_under_one_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine()
+    _patch_local_engine(monkeypatch, engine)
+
+    await chat_mod.run_local_chat(
+        "spec.yml",
+        None,
+        stream=False,
+        session_id="sess-xyz",
+        read_line=scripted_reader(["a", "b", "c"]),
+        echo=CollectingEcho(),
+    )
+    sessions = {c.conversation_id for c in engine.contexts if c is not None}
+    assert sessions == {"sess-xyz"}
+    assert len(engine.contexts) == 3
+
+
+async def test_local_chat_autogenerates_one_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = FakeEngine()
+    _patch_local_engine(monkeypatch, engine)
+
+    await chat_mod.run_local_chat(
+        "spec.yml",
+        None,
+        stream=False,
+        read_line=scripted_reader(["a", "b"]),
+        echo=CollectingEcho(),
+    )
+    sessions = {c.conversation_id for c in engine.contexts if c is not None}
+    assert len(sessions) == 1  # one auto id, shared by every question
+    assert next(iter(sessions))  # non-empty
+
+
 async def test_local_one_failure_does_not_kill_loop() -> None:
     class FlakyEngine(FakeEngine):
         async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
@@ -229,6 +282,25 @@ async def test_remote_sends_to_invoke_endpoint() -> None:
             client=client,
         )
     assert seen == ["/invoke"]
+
+
+async def test_remote_chat_sends_session_header() -> None:
+    seen_sessions: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_sessions.append(request.headers.get("x-session-id"))
+        return httpx.Response(200, json={"answer": "ok"})
+
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            session_id="rsess",
+            read_line=scripted_reader(["one", "two"]),
+            echo=CollectingEcho(),
+            client=client,
+        )
+    assert seen_sessions == ["rsess", "rsess"]  # same session on every request
     assert "Agent > server:question one" in echo.lines
 
 

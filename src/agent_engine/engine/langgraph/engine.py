@@ -68,6 +68,21 @@ def _new_state(
     return state
 
 
+def _trace_metadata(ctx: RunContext) -> dict[str, Any]:
+    """Map per-run identity onto the metadata keys Langfuse reads to group traces.
+
+    ``conversation_id`` becomes the Langfuse **session** id (a conversation is a
+    session) and ``user_id`` the Langfuse user id. These keys are inert for any
+    other callback, so this is a no-op when Langfuse tracing is disabled.
+    """
+    metadata: dict[str, Any] = {}
+    if ctx.conversation_id:
+        metadata["langfuse_session_id"] = ctx.conversation_id
+    if ctx.user_id:
+        metadata["langfuse_user_id"] = ctx.user_id
+    return metadata
+
+
 def _run_end_context(system_name: str, ctx: RunContext, result: RunResult) -> RunEndContext:
     """Safe summary of a completed run for on_run_end hooks (no answer text)."""
     return RunEndContext(
@@ -158,7 +173,11 @@ class LangGraphEngine(Engine):
         app, hook_manager = self._require_built("running")
         ctx = await self._begin_run(context)
         token = current_run_context.set(ctx)
-        config = RunnableConfig(run_name=self._system_name, callbacks=self._callbacks)
+        config = RunnableConfig(
+            run_name=self._system_name,
+            callbacks=self._callbacks,
+            metadata=_trace_metadata(ctx),
+        )
         log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
         try:
             result = await app.ainvoke(cast(Any, _new_state(message)), config)
@@ -211,7 +230,11 @@ class LangGraphEngine(Engine):
         )
 
         async def run_graph() -> None:
-            config = RunnableConfig(run_name=self._system_name, callbacks=self._callbacks)
+            config = RunnableConfig(
+                run_name=self._system_name,
+                callbacks=self._callbacks,
+                metadata=_trace_metadata(ctx),
+            )
             try:
                 result = await app.ainvoke(cast(Any, state), config)
                 visited = tuple(result.get("visited", []))

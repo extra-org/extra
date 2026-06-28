@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,10 @@ if TYPE_CHECKING:
     import httpx
 
     from agent_engine.engine.engine import Engine
+    from agent_engine.runtime.hooks import RunContext
+
+#: Header carrying the Langfuse session id to a remote ``agentctl serve``.
+SESSION_HEADER = "X-Session-ID"
 
 BANNER = "Agent Engine interactive chat\nType 'exit' or 'quit' to stop."
 PROMPT = "You > "
@@ -76,11 +81,18 @@ async def run_local_chat(
     env: str | None,
     stream: bool,
     *,
+    session_id: str | None = None,
     read_line: ReadLine = input,
     echo: Callable[..., None] = _default_echo,
 ) -> None:
-    """Build the engine once, then loop questions through it (the ``run`` path)."""
+    """Build the engine once, then loop questions through it (the ``run`` path).
+
+    Every question in this console shares one ``conversation_id`` so the run is
+    grouped as a single Langfuse session. Pass ``session_id`` to set it
+    explicitly; otherwise a short id is generated for the console session.
+    """
     from agent_engine.engine.langgraph.engine import LangGraphEngine
+    from agent_engine.runtime.hooks import RunContext
 
     load_env(config, env)
     try:
@@ -90,43 +102,53 @@ async def run_local_chat(
             echo(f"✗ {message}", err=True)
         raise SystemExit(1) from exc
 
+    context = RunContext(conversation_id=session_id or uuid.uuid4().hex[:16])
     async with LangGraphEngine(base_dir) as engine:
         await engine.build(spec)
-        await run_chat_loop(engine, stream=stream, read_line=read_line, echo=echo)
+        await run_chat_loop(engine, stream=stream, context=context, read_line=read_line, echo=echo)
 
 
 async def run_chat_loop(
     engine: Engine,
     *,
     stream: bool,
+    context: RunContext | None = None,
     read_line: ReadLine = input,
     echo: Callable[..., None] = _default_echo,
 ) -> None:
     """Drive an already-built engine: print the banner, then answer each question.
 
     The engine is reused across questions; only per-request state lives in each
-    call to ``engine.run``/``engine.stream``.
+    call to ``engine.run``/``engine.stream``. ``context`` (if given) is reused for
+    every question, grouping them under one session.
     """
     echo(BANNER, err=True)
+    if context is not None and context.conversation_id:
+        echo(f"Session: {context.conversation_id}", err=True)
     for question in _iter_questions(read_line):
-        await _answer_local(engine, question, stream=stream, echo=echo)
+        await _answer_local(engine, question, stream=stream, context=context, echo=echo)
 
 
 async def _answer_local(
-    engine: Engine, question: str, *, stream: bool, echo: Callable[..., None]
+    engine: Engine,
+    question: str,
+    *,
+    stream: bool,
+    context: RunContext | None = None,
+    echo: Callable[..., None],
 ) -> None:
     """Answer one question. A failure is reported but never kills the loop."""
     try:
         if stream:
             sys.stdout.write(ANSWER_PREFIX)
             sys.stdout.flush()
-            async for event in engine.stream(question):
+            async for event in engine.stream(question, context=context):
                 if event.type == "answer_delta" and event.content:
                     sys.stdout.write(event.content)
                     sys.stdout.flush()
             sys.stdout.write("\n")
         else:
-            result = await engine.run(question)
+            result = await engine.run(question, context=context)
             echo(f"{ANSWER_PREFIX}{result.answer}")
     except Exception as exc:
         echo(f"✗ {exc}", err=True)
@@ -141,21 +163,28 @@ async def run_remote_chat(
     url: str,
     stream: bool,
     *,
+    session_id: str | None = None,
     read_line: ReadLine = input,
     echo: Callable[..., None] = _default_echo,
     client: httpx.AsyncClient | None = None,
 ) -> None:
-    """Loop questions against a running ``agentctl serve`` over HTTP."""
+    """Loop questions against a running ``agentctl serve`` over HTTP.
+
+    The session id is sent on every request as the ``X-Session-ID`` header so the
+    server can group the conversation as one Langfuse session.
+    """
     import httpx
 
     base = url.rstrip("/")
+    headers = {SESSION_HEADER: session_id or uuid.uuid4().hex[:16]}
     owns_client = client is None
     if client is None:
         client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
     try:
         echo(BANNER, err=True)
+        echo(f"Session: {headers[SESSION_HEADER]}", err=True)
         for question in _iter_questions(read_line):
-            await _answer_remote(client, base, question, stream=stream, echo=echo)
+            await _answer_remote(client, base, question, stream=stream, headers=headers, echo=echo)
     finally:
         if owns_client:
             await client.aclose()
@@ -167,6 +196,7 @@ async def _answer_remote(
     question: str,
     *,
     stream: bool,
+    headers: dict[str, str],
     echo: Callable[..., None],
 ) -> None:
     """Send one question to the server. Network/server errors never kill the loop."""
@@ -174,17 +204,22 @@ async def _answer_remote(
 
     try:
         if stream:
-            await _remote_stream(client, base, question, echo=echo)
+            await _remote_stream(client, base, question, headers=headers, echo=echo)
         else:
-            await _remote_invoke(client, base, question, echo=echo)
+            await _remote_invoke(client, base, question, headers=headers, echo=echo)
     except httpx.HTTPError as exc:
         echo(f"✗ request failed: {exc}", err=True)
 
 
 async def _remote_invoke(
-    client: httpx.AsyncClient, base: str, question: str, *, echo: Callable[..., None]
+    client: httpx.AsyncClient,
+    base: str,
+    question: str,
+    *,
+    headers: dict[str, str],
+    echo: Callable[..., None],
 ) -> None:
-    resp = await client.post(f"{base}/invoke", json={"message": question})
+    resp = await client.post(f"{base}/invoke", json={"message": question}, headers=headers)
     if resp.status_code != 200:
         echo(f"✗ server error {resp.status_code}: {_error_detail(resp)}", err=True)
         return
@@ -193,11 +228,18 @@ async def _remote_invoke(
 
 
 async def _remote_stream(
-    client: httpx.AsyncClient, base: str, question: str, *, echo: Callable[..., None]
+    client: httpx.AsyncClient,
+    base: str,
+    question: str,
+    *,
+    headers: dict[str, str],
+    echo: Callable[..., None],
 ) -> None:
     sys.stdout.write(ANSWER_PREFIX)
     sys.stdout.flush()
-    async with client.stream("POST", f"{base}/stream", json={"message": question}) as resp:
+    async with client.stream(
+        "POST", f"{base}/stream", json={"message": question}, headers=headers
+    ) as resp:
         if resp.status_code != 200:
             await resp.aread()
             sys.stdout.write("\n")
