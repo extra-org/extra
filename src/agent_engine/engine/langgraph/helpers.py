@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, ToolMessage
 
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec
+from agent_engine.runtime.execution import ExecutionLimitExceeded, current_execution, log_limit
 from agent_engine.runtime.state import GraphState
 
 logger = logging.getLogger(__name__)
@@ -59,8 +60,17 @@ async def run_tool_loop(
     child agents exposed as tools. The final (tool-call-free) model response is
     returned.
     """
+    limiter = current_execution.get()
     response = await invoke_model(model, messages, state)
     while getattr(response, "tool_calls", None):
+        # Cap model→tools→model rounds for this node. On the limit, stop the loop
+        # gracefully and return the last response (no crash, no further tools).
+        if limiter is not None:
+            try:
+                limiter.register_iteration(node_path)
+            except ExecutionLimitExceeded as exc:
+                log_limit(exc)
+                break
         messages.append(response)
         for tc in response.tool_calls:
             logger.debug("[%s] ← tool_call: %s(%s)", node_path, tc["name"], tc["args"])

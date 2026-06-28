@@ -3,6 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from agent_engine.core.execution import ExecutionPolicy
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -152,3 +154,4 @@ class SystemSpec:
     graph: GraphNode
     hooks: HooksConfig = field(default_factory=HooksConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
+    execution: ExecutionPolicy = field(default_factory=ExecutionPolicy)

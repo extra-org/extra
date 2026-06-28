@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from agent_engine.core.errors import ValidationError
+from agent_engine.core.execution import EXECUTION_INT_FIELDS, ExecutionPolicy
 from agent_engine.core.spec import (
     AgentSpec,
     BasePromptSet,
@@ -141,6 +142,47 @@ def _build_plugins(raw: Any) -> PluginsConfig:
     if not isinstance(roots, list):
         return PluginsConfig()
     return PluginsConfig(import_roots=tuple(r for r in roots if isinstance(r, str)))
+
+
+def _build_execution(raw: Any) -> ExecutionPolicy:
+    """Build the policy from the optional ``execution:`` block. Missing block or
+    missing keys fall back to the conservative defaults. Assumes ``raw`` already
+    passed ``_validate_execution``."""
+    if not isinstance(raw, dict):
+        return ExecutionPolicy()
+    d = ExecutionPolicy()
+    return ExecutionPolicy(
+        max_iterations=int(raw.get("max_iterations", d.max_iterations)),
+        max_tool_calls=int(raw.get("max_tool_calls", d.max_tool_calls)),
+        max_tool_calls_per_agent=int(
+            raw.get("max_tool_calls_per_agent", d.max_tool_calls_per_agent)
+        ),
+        max_child_agent_calls=int(raw.get("max_child_agent_calls", d.max_child_agent_calls)),
+        allow_duplicate_tool_calls=bool(
+            raw.get("allow_duplicate_tool_calls", d.allow_duplicate_tool_calls)
+        ),
+    )
+
+
+def _validate_execution(raw: Any, errors: list[ValidationError]) -> None:
+    if raw is None:
+        return
+    if not isinstance(raw, dict):
+        errors.append(ValidationError("execution", "Must be a mapping"))
+        return
+    for name in EXECUTION_INT_FIELDS:
+        if name not in raw:
+            continue
+        value = raw[name]
+        # bool is a subclass of int — reject it explicitly for integer fields.
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            errors.append(ValidationError(f"execution.{name}", "Must be a positive integer"))
+    if "allow_duplicate_tool_calls" in raw and not isinstance(
+        raw["allow_duplicate_tool_calls"], bool
+    ):
+        errors.append(
+            ValidationError("execution.allow_duplicate_tool_calls", "Must be a boolean")
+        )
 
 
 def _validate_hook_entry(point: str, index: int, entry: Any, errors: list[ValidationError]) -> None:
@@ -320,6 +362,7 @@ class YAMLParser(Parser):
         _validate_mcps(mcps, errors)
         _validate_hooks(data.get("hooks"), errors)
         _validate_plugins(data.get("plugins"), errors)
+        _validate_execution(data.get("execution"), errors)
         self._validate_no_secrets(data, errors)
 
         return errors
@@ -392,6 +435,7 @@ class YAMLParser(Parser):
             graph=graph,
             hooks=_build_hooks(data.get("hooks")),
             plugins=_build_plugins(data.get("plugins")),
+            execution=_build_execution(data.get("execution")),
         )
 
     def _build_defaults(self, raw: Any) -> DefaultsConfig | None:

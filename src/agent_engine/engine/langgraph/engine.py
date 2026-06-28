@@ -14,6 +14,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec, SystemSpec
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.filters import AccessFilter, RouteFilter
@@ -32,6 +33,7 @@ from agent_engine.loaders.tool_loader import ToolLoader
 from agent_engine.logging_config import log
 from agent_engine.models.factory import build_chat_model
 from agent_engine.observability import build_callbacks
+from agent_engine.runtime.execution import ExecutionLimiter, current_execution
 from agent_engine.runtime.hooks import (
     EngineContext,
     HookManager,
@@ -115,9 +117,11 @@ class LangGraphEngine(Engine):
         self._resolver_loader: ResolverLoader | None = None
         self._hook_manager: HookManager | None = None
         self._mcp_server_by_tool: dict[str, str] = {}
+        self._policy = ExecutionPolicy()
 
     async def build(self, spec: SystemSpec) -> None:
         self._system_name = spec.meta.name
+        self._policy = spec.execution
         register_import_roots(self._base_dir, spec.plugins.import_roots)
         self._hook_manager = HookManager.from_config(
             spec.hooks,
@@ -173,6 +177,7 @@ class LangGraphEngine(Engine):
         app, hook_manager = self._require_built("running")
         ctx = await self._begin_run(context)
         token = current_run_context.set(ctx)
+        exec_token = current_execution.set(ExecutionLimiter(self._policy))
         config = RunnableConfig(
             run_name=self._system_name,
             callbacks=self._callbacks,
@@ -213,6 +218,7 @@ class LangGraphEngine(Engine):
             raise
         finally:
             current_run_context.reset(token)
+            current_execution.reset(exec_token)
 
     async def stream(
         self, message: str, *, context: RunContext | None = None
@@ -282,6 +288,7 @@ class LangGraphEngine(Engine):
 
         log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
         token = current_run_context.set(ctx)
+        exec_token = current_execution.set(ExecutionLimiter(self._policy))
         try:
             task = asyncio.create_task(run_graph())
             while True:
@@ -294,6 +301,7 @@ class LangGraphEngine(Engine):
             await task
         finally:
             current_run_context.reset(token)
+            current_execution.reset(exec_token)
 
     def _setup_filters(self, spec: SystemSpec) -> list[RouteFilter]:
         filters: list[RouteFilter] = []

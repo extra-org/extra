@@ -57,6 +57,19 @@ defaults:
     temperature: 0.0
 
 # ---------------------------------------------------------------------------
+# Execution limits (runtime-enforced guardrails)
+# ---------------------------------------------------------------------------
+# Conservative caps applied per run to prevent runaway loops and repeated calls.
+# These are the framework defaults; the block is shown here explicitly. Omit it
+# entirely and the same defaults apply. See docs/EXECUTION_LIMITS.md.
+execution:
+  max_iterations: 20            # model→tools→model rounds allowed per node
+  max_tool_calls: 10            # total local/MCP tool calls per run
+  max_tool_calls_per_agent: 4   # tool calls per agent per run
+  max_child_agent_calls: 8      # orchestrator→child-agent calls per run
+  allow_duplicate_tool_calls: false  # block identical (agent+tool+args) repeats
+
+# ---------------------------------------------------------------------------
 # Remote MCP Servers
 # ---------------------------------------------------------------------------
 

@@ -27,6 +27,12 @@ from agent_engine.engine.langgraph.helpers import (
 )
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.logging_config import log
+from agent_engine.runtime.execution import (
+    ExecutionLimitExceeded,
+    blocked_message,
+    current_execution,
+    log_limit,
+)
 from agent_engine.runtime.hooks import (
     HookManager,
     ToolCallContext,
@@ -166,6 +172,16 @@ class AgentNode:
         provider: ToolProviderName = "mcp" if name in self._mcp_tool_names else "local"
         server_id = self._mcp_server_by_tool.get(name)
         run_context = current_run_context.get()
+
+        # Execution limits (total / per-agent tool calls, duplicate detection).
+        # A blocked call is NOT executed; the model receives a controlled message.
+        limiter = current_execution.get()
+        if limiter is not None:
+            try:
+                limiter.register_tool_call(self._spec.id, name, tc.get("args"))
+            except ExecutionLimitExceeded as exc:
+                log_limit(exc)
+                return blocked_message(exc)
 
         log(
             logger,
@@ -394,6 +410,15 @@ class OrchestratorNode:
             tool = tool_by_name.get(tc["name"])
             if tool is None:
                 return f"Unknown agent: {tc['name']}"
+            # Limit orchestrator→child-agent invocations. A blocked call returns a
+            # controlled message instead of running the child.
+            limiter = current_execution.get()
+            if limiter is not None:
+                try:
+                    limiter.register_child_call(self._node_path, tc["name"])
+                except ExecutionLimitExceeded as exc:
+                    log_limit(exc)
+                    return blocked_message(exc)
             return cast(str, await tool.ainvoke(tc["args"]))
 
         response = await run_tool_loop(bound_model, messages, state, self._node_path, invoke_tool)
