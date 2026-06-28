@@ -152,6 +152,15 @@ hooks:
       method: audit_tool_call
       failure_policy: warn
 
+  # Cap oversized MCP results (e.g. large DeepWiki pages) before they are
+  # appended to the agent conversation, to avoid token blow-ups. `warn` => a
+  # transform failure logs and passes the ORIGINAL result through, never failing
+  # the run.
+  transform_tool_result:
+    - plugin: research_hooks
+      method: truncate_tool_result
+      failure_policy: warn
+
   # Record run failures (by type only — never the message).
   on_run_error:
     - plugin: research_hooks

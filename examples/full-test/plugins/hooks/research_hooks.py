@@ -10,6 +10,8 @@ writing secrets into YAML or leaking credentials into logs or the LLM:
   unauthenticated.
 * ``after_tool_call``    → ``audit_tool_call``: best-effort audit of *safe* tool
   metadata (declared ``failure_policy: warn`` in YAML).
+* ``transform_tool_result`` → ``truncate_tool_result``: cap oversized DeepWiki
+  results before they enter the agent conversation.
 * ``on_run_error``       → ``record_run_failure``: record a run failure by type.
 
 SECURITY
@@ -29,9 +31,15 @@ from agent_engine.runtime.hooks import (
     HookInvocation,
     McpRequestContext,
     ToolCallContext,
+    ToolResultContext,
 )
 
 logger = logging.getLogger("research_hooks")
+
+# Cap large DeepWiki MCP results before they are appended to the agent
+# conversation, to keep prompts from blowing up.
+_DEEPWIKI_SERVER = "deepwiki"
+_MAX_MCP_RESULT_CHARS = 8000
 
 # Environment variable NAMES the system needs. These are names, not secrets;
 # the values are read from os.environ only at runtime and never logged.
@@ -102,6 +110,40 @@ class ResearchHooksHook:
             call.status,
             call.latency_ms,
         )
+
+    # -- transform_tool_result (failure_policy: warn) -----------------------
+    async def truncate_tool_result(self, event: HookInvocation) -> ToolResultContext:
+        """Cap oversized MCP results before they reach the agent conversation.
+
+        DeepWiki pages can be very large and blow up the prompt. We truncate
+        oversized results from the ``deepwiki`` MCP server and log only **safe
+        metadata** (sizes, names, ids) — never the result content. Other MCP
+        servers, local tools, and small results pass through unchanged.
+        Returning the (possibly modified) context is what the engine appends to
+        the conversation.
+        """
+        result = event.payload_as(ToolResultContext)
+        text = result.result
+        if (
+            result.provider != "mcp"
+            or result.server_id != _DEEPWIKI_SERVER
+            or len(text) <= _MAX_MCP_RESULT_CHARS
+        ):
+            return result  # non-DeepWiki tools / small DeepWiki results: unchanged
+        run_id = event.run_context.run_id if event.run_context else None
+        logger.info(
+            "tool_result truncated run_id=%s tool=%s server=%s original_chars=%d kept_chars=%d",
+            run_id,
+            result.tool_name,
+            result.server_id,
+            len(text),
+            _MAX_MCP_RESULT_CHARS,
+        )
+        notice = (
+            f"\n\n[truncated to {_MAX_MCP_RESULT_CHARS} of {len(text)} chars "
+            f"by the transform_tool_result hook]"
+        )
+        return result.with_result(text[:_MAX_MCP_RESULT_CHARS] + notice)
 
     # -- on_run_error -------------------------------------------------------
     async def record_run_failure(self, event: HookInvocation) -> None:
