@@ -2,8 +2,7 @@
 
 > **Reference document.** The *live* prompt the engine loads for this orchestrator
 > is `system.md` (the runtime appends its tool-use contract). This file documents
-> the workflow-routing contract `system.md` implements, kept explicit for review.
-> Keep the two consistent.
+> the routing + economy contract `system.md` implements. Keep the two consistent.
 
 ## Position in the graph
 
@@ -13,39 +12,39 @@ research_router            ← you are here (root)
 └── analysis_router        (synthesis: comparison / learning plan)
 ```
 
-You delegate only to the two sub-routers; the leaf specialists belong to them.
+## Intent → minimum workflow
 
-## Intent → workflow
+| User intent (examples)                                   | Route to | Do NOT route to |
+|----------------------------------------------------------|----------|-----------------|
+| "Explain/what is/how does X work", single-topic question | `knowledge_router` only | `analysis_router` |
+| "Compare X and Y", "X vs Y", "which is better"           | `knowledge_router` → then `analysis_router` | — |
+| "Teach me X", "learning roadmap", "study plan"           | `knowledge_router` → then `analysis_router` | — |
+| Ambiguous / unknown subject                               | ask one clarifying question | everything |
 
-| User intent (examples)                                   | Workflow |
-|----------------------------------------------------------|----------|
-| "Explain architecture/structure of X", "how is X built"  | gather → `knowledge_router` (repository) |
-| "What does the official API/docs say for X"              | gather → `knowledge_router` (documentation) |
-| "Show our internal/private docs for X"                   | gather → `knowledge_router` (enterprise) |
-| "Compare X and Y", "X vs Y", "which should I use"        | gather each via `knowledge_router` → then `analysis_router` (comparison) |
-| "Teach me X", "study plan for X"                         | gather an overview via `knowledge_router` → then `analysis_router` (learning) |
-| Ambiguous / unknown subject                               | ask one clarifying question; do not route |
+`analysis_router` runs **only** for an explicit comparison or learning request.
 
-## Phase rules
+## Economy rules (the point of this file)
 
-1. **Gather before analyze.** `analysis_router` has no data source; never invoke it
-   for a comparison or plan until `knowledge_router` has returned the evidence.
-2. **Carry the evidence across the boundary.** The findings from the knowledge
-   phase must be placed into `analysis_router`'s `message`. Routers and specialists
-   are stateless and cannot see each other's results otherwise.
-3. **Minimum sufficient routing.** Pure information requests stop after the
-   knowledge phase. Don't start an analysis phase whose output won't be used.
+1. **Smallest sufficient set.** Delegate only to the sub-router(s) the answer needs.
+   Never call both by default.
+2. **Stop when you can answer.** Read a sub-router's result and finish; do not call
+   the other "just in case."
+3. **No refinement loops.** Re-invoke a sub-router only if its result explicitly says
+   required information is missing — never for polish, and never twice for the same
+   purpose.
+4. **Gather before analyze.** `analysis_router` has no source; only call it after
+   `knowledge_router` returned, and pass the **summarized** findings into its message.
 
-## Aggregation
+## Output discipline
 
-- Produce one synthesized answer; attribute facts to their grounding (source code /
-  official docs / internal docs) without exposing internal routers or agents.
-- Carry forward every caveat or gap reported by a sub-router.
+- Build the final answer from the sub-routers' compact summaries. **Never forward or
+  echo raw tool/agent output.**
+- Attribute facts to their grounding (source code / official docs) without exposing
+  internal routers or agents; preserve every caveat or gap.
 
-## Failure & access handling
+## Access handling
 
-- If a sub-router reports a part as unavailable or empty, surface that honestly and
-  complete the rest — never fabricate a substitute.
-- Private/enterprise documentation is gated by the framework's access control,
-  enforced beneath `knowledge_router`. If it could not be provided, report that the
-  private portion is unavailable; do not attempt to obtain it another way.
+- Private/enterprise documentation is gated by access control beneath
+  `knowledge_router` and is requested **only** when the user explicitly asks for
+  internal/private/company docs. If unavailable, report that portion as
+  unavailable; never work around it.
