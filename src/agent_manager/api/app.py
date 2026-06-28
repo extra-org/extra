@@ -51,6 +51,7 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
                 repository,
                 window=settings.context_window,
                 max_chars=settings.context_max_chars,
+                max_tokens=settings.context_max_tokens,
                 snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
                 system_name=spec.meta.name,
                 config_path=str(Path(config_path).resolve()),

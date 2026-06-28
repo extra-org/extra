@@ -55,6 +55,13 @@ class FakeRuntimeEngine:
         )
 
 
+class FailingRuntimeEngine(FakeRuntimeEngine):
+    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+        self.prompts.append(message)
+        self.contexts.append(context)
+        raise RuntimeError("model failed safely")
+
+
 def _write_spec(tmp_path: Path) -> Path:
     spec = tmp_path / "agents.yml"
     spec.write_text(
@@ -86,6 +93,18 @@ async def _session_and_messages(db_url: str, session_id: str) -> tuple[Any, list
     repo, engine = await _repo(db_url)
     try:
         return await repo.get_session(session_id), await repo.list_conversation_messages(session_id)
+    finally:
+        await engine.dispose()
+
+
+async def _messages_snapshot_and_user(db_url: str, session_id: str) -> tuple[list[Any], Any, Any]:
+    repo, engine = await _repo(db_url)
+    try:
+        return (
+            await repo.list_conversation_messages(session_id),
+            await repo.get_snapshot(session_id),
+            await repo.get_user("local-user"),
+        )
     finally:
         await engine.dispose()
 
@@ -194,7 +213,35 @@ def test_agentctl_run_without_session_prints_reusable_generated_session(
 
     session, messages = asyncio.run(_session_and_messages(db_url, session_id))
     assert session is not None
+    assert session.user_id == "local-user"
     assert [(m.role.value, m.content) for m in messages] == [
         ("user", "hello"),
         ("assistant", "answer-1"),
     ]
+    assert {ctx.user_id for ctx in FakeRuntimeEngine.contexts if ctx} == {"local-user"}
+
+
+def test_agentctl_run_failure_keeps_user_message_without_assistant_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _write_spec(tmp_path)
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'failure.db'}"
+    monkeypatch.setenv("AGENT_DB_BACKEND", "sqlite")
+    monkeypatch.setenv("AGENT_DB_URL", db_url)
+    monkeypatch.setattr(main_mod, "LangGraphEngine", FailingRuntimeEngine)
+    FailingRuntimeEngine.prompts.clear()
+    FailingRuntimeEngine.contexts.clear()
+
+    result = _run_cli(spec, "persist me before failure", "--session-id", "sess-fail")
+
+    assert result.exit_code != 0
+    messages, snapshot, user = asyncio.run(_messages_snapshot_and_user(db_url, "sess-fail"))
+    assert user is not None
+    assert [(m.role.value, m.content) for m in messages] == [
+        ("user", "persist me before failure"),
+    ]
+    assert messages[0].user_id == "local-user"
+    assert snapshot is not None
+    assert snapshot.message_count == 1
+    assert {ctx.conversation_id for ctx in FailingRuntimeEngine.contexts if ctx} == {"sess-fail"}
+    assert {ctx.user_id for ctx in FailingRuntimeEngine.contexts if ctx} == {"local-user"}

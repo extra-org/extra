@@ -21,7 +21,7 @@
 9. ✅ Update `Settings` to support `agent_db_backend` and `agent_db_url` while
    preserving `database_url`.
 10. ✅ Add focused tests.
-11. ⏳ Run format/lint/typecheck/tests.
+11. ✅ Run format/lint/typecheck/tests.
 12. ✅ Update this plan with final status and TODOs.
 
 ## Files To Create Or Change
@@ -70,12 +70,17 @@ Default to SQLite local development. Existing API paths continue working.
 If `AGENT_DB_BACKEND` and `AGENT_DB_URL` are missing, the system still uses
 persistent SQLite at `sqlite+aiosqlite:///chat.db`. It does not use in-memory
 persistence and does not disable persistence by default.
+`context_max_tokens` is available as a configuration field and repository
+argument, but adapters ignore it until token counting exists.
 Applications can opt into a different database by setting:
 
 ```bash
 AGENT_DB_BACKEND=sqlite
 AGENT_DB_URL=sqlite+aiosqlite:///chat.db
 ```
+
+For local CLI testing, pass identity explicitly with `--user-id`. If omitted,
+`agentctl run` uses `local-user`.
 
 PostgreSQL remains URL-driven and should be documented as planned unless tested:
 

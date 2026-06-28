@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///chat.db"
     context_window: int = 10
     context_max_chars: int | None = None
+    context_max_tokens: int | None = None
     snapshot_ttl_seconds: int = 86_400
     host: str = "0.0.0.0"
     port: int = 8100

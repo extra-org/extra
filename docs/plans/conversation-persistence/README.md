@@ -63,6 +63,8 @@ cache: it can be deleted, expire daily, and be rebuilt from cold messages.
   incoming user message and final assistant answer.
 - `agentctl run --session-id ...` reuses the provided session; when omitted it
   prints a generated reusable session id.
+- `agentctl run --user-id ...` passes user identity for local runs. If omitted,
+  the CLI uses the documented local testing default `local-user`.
 - API create/send routes accept optional `user_id`; create accepts optional
   stable `session_id`.
 - Configuration supports `AGENT_DB_BACKEND` and `AGENT_DB_URL`, with
@@ -71,6 +73,53 @@ cache: it can be deleted, expire daily, and be rebuilt from cold messages.
   still enabled. The default backend is SQLite and the default URL is
   `sqlite+aiosqlite:///chat.db`, a persistent local file. The system does not
   default to in-memory persistence and does not silently disable persistence.
+- Runtime history retrieval enforces `context_window`/`max_messages` and
+  `context_max_chars`. `context_max_tokens` is exposed in settings and the
+  repository contract, but is intentionally not enforced until token counting is
+  implemented.
+
+## Manual Follow-Up Test
+
+Enable SQLite persistence:
+
+```bash
+export AGENT_DB_BACKEND=sqlite
+export AGENT_DB_URL=sqlite+aiosqlite:///chat.db
+```
+
+Run two messages with the same stable session:
+
+```bash
+agentctl run \
+  --config examples/full-test/agents.yaml \
+  --session-id demo-1 \
+  --user-id asaf \
+  --message "My name is Asaf. Remember this for the next message."
+
+agentctl run \
+  --config examples/full-test/agents.yaml \
+  --session-id demo-1 \
+  --user-id asaf \
+  --message "What is my name?"
+```
+
+`session_id` is the stable conversation id. `run_id` is generated internally for
+each invocation. The second run loads prior messages from persistence and
+injects them before the current user message. If `--session-id` is omitted, the
+CLI prints a generated session id so it can be reused.
+
+Persisted today:
+
+- successful user messages
+- final assistant responses
+- user/session metadata
+- hot snapshot rows for fast context retrieval
+
+Not persisted yet:
+
+- intermediate tool events
+- intermediate agent/orchestrator events
+- raw headers, credentials, or secrets
 
 ## How To Resume
 

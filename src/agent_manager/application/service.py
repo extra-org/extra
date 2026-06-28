@@ -31,6 +31,7 @@ class ConversationService:
         *,
         window: int = 10,
         max_chars: int | None = None,
+        max_tokens: int | None = None,
         snapshot_ttl_seconds: int | None = 86_400,
         system_name: str | None = None,
         config_path: str | None = None,
@@ -39,6 +40,7 @@ class ConversationService:
         self._repository = repository
         self._window = window
         self._max_chars = max_chars
+        self._max_tokens = max_tokens
         self._snapshot_ttl_seconds = snapshot_ttl_seconds
         self._system_name = system_name
         self._config_path = config_path
@@ -67,7 +69,10 @@ class ConversationService:
 
         # Load prior history before saving the new message, or it gets inlined twice.
         prior_context = await self._repository.get_context(
-            conversation_id, max_messages=self._window, max_chars=self._max_chars
+            conversation_id,
+            max_messages=self._window,
+            max_chars=self._max_chars,
+            max_tokens=self._max_tokens,
         )
         run_id = uuid.uuid4().hex
         now = datetime.now(UTC)
@@ -115,7 +120,10 @@ class ConversationService:
             await self._repository.upsert_user(user_id)
 
         prior_context = await self._repository.get_context(
-            conversation_id, max_messages=self._window, max_chars=self._max_chars
+            conversation_id,
+            max_messages=self._window,
+            max_chars=self._max_chars,
+            max_tokens=self._max_tokens,
         )
         run_id = uuid.uuid4().hex
         await self._repository.append_message(

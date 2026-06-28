@@ -17,6 +17,7 @@ def test_default_database_is_persistent_sqlite_file(
     assert settings.agent_db_backend == "sqlite"
     assert settings.agent_db_url is None
     assert settings.effective_database_url == "sqlite+aiosqlite:///chat.db"
+    assert settings.context_max_tokens is None
 
 
 def test_sqlite_url_normalizes_to_async_driver() -> None:

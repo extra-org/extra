@@ -12,6 +12,8 @@ from agent_engine.generate.generator import Generator
 from agent_engine.parsers.yaml.parser import YAMLParser
 from agentctl.session import SpecError, load_and_validate, load_env
 
+LOCAL_USER_ID = "local-user"
+
 
 @click.group()
 @click.option(
@@ -127,6 +129,7 @@ async def _run_async(
     from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 
     effective_session_id = session_id or uuid4().hex[:16]
+    effective_user_id = user_id or LOCAL_USER_ID
 
     click.echo(f"  system : {spec.meta.name}", err=True)
     if session_id:
@@ -136,6 +139,7 @@ async def _run_async(
             f"  session: {effective_session_id} (generated; reuse with --session-id)",
             err=True,
         )
+    click.echo(f"  user   : {effective_user_id}", err=True)
     click.echo(f"  message: {message}", err=True)
     click.echo("", err=True)
 
@@ -150,13 +154,16 @@ async def _run_async(
                 repository,
                 window=settings.context_window,
                 max_chars=settings.context_max_chars,
+                max_tokens=settings.context_max_tokens,
                 snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
                 system_name=spec.meta.name,
                 config_path=str(Path(config).resolve()),
             )
-            await service.create(user_id=user_id, session_id=effective_session_id)
+            await service.create(user_id=effective_user_id, session_id=effective_session_id)
             if stream:
-                async for event in service.stream(effective_session_id, message, user_id=user_id):
+                async for event in service.stream(
+                    effective_session_id, message, user_id=effective_user_id
+                ):
                     if event.type == "route" and event.route:
                         click.echo(f"  route  : {' → '.join(event.route)}", err=True)
                     elif event.type == "answer_delta" and event.content:
@@ -164,7 +171,9 @@ async def _run_async(
                         sys.stdout.flush()
                 sys.stdout.write("\n")
             else:
-                result = await service.send(effective_session_id, message, user_id=user_id)
+                result = await service.send(
+                    effective_session_id, message, user_id=effective_user_id
+                )
                 click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
                 click.echo("")
                 click.echo(result.answer)
