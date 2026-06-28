@@ -31,6 +31,7 @@ before_mcp_request = []
 after_mcp_response = []
 
 [hooks.plugins]
+research_hooks = "plugins.hooks.research_hooks:ResearchHooksHook"
 
 [resolvers]
 documentation_agent = "plugins.resolvers.documentation_agent:Resolver"
