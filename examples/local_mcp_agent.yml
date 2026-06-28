@@ -1,0 +1,30 @@
+# Local MCP demo — no tags (discovers ALL tools from the local server).
+#
+# Start the server first:
+#   python -m examples.local_mcp_server.server
+# Then:
+#   agentctl run --config examples/local_mcp_agent.yml --message "What tools do you have?"
+
+system:
+  name: "Local MCP Demo"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5
+    temperature: 0.0
+
+mcps:
+  local_demo:
+    url: "http://127.0.0.1:8765/mcp"
+
+agents:
+  local_agent:
+    name: "Local MCP Agent"
+    description: "Answers using tools discovered from the local demo MCP server."
+    prompts:
+      system: "prompts/local_mcp/system.md"
+    mcps: [local_demo]
+
+graph:
+  local_agent:

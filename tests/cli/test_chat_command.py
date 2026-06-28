@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Callable
 
-import echo
 import httpx
 import pytest
 from click.testing import CliRunner
@@ -81,8 +80,11 @@ class CollectingEcho:
 def test_chat_config_only_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
-    async def fake_local(config: str, env: str | None, stream: bool) -> None:
+    async def fake_local(
+        config: str, env: str | None, stream: bool, session_id: str | None = None
+    ) -> None:
         seen["config"] = config
+        seen["session_id"] = session_id
 
     monkeypatch.setattr("agentctl.chat.run_local_chat", fake_local)
     res = CliRunner().invoke(cli, ["chat", "--config", "x.yml"])
@@ -93,8 +95,9 @@ def test_chat_config_only_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_chat_url_only_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
-    async def fake_remote(url: str, stream: bool) -> None:
+    async def fake_remote(url: str, stream: bool, session_id: str | None = None) -> None:
         seen["url"] = url
+        seen["session_id"] = session_id
 
     monkeypatch.setattr("agentctl.chat.run_remote_chat", fake_remote)
     res = CliRunner().invoke(cli, ["chat", "--url", "http://localhost:8080"])
@@ -291,17 +294,18 @@ async def test_remote_chat_sends_session_header() -> None:
         seen_sessions.append(request.headers.get("x-session-id"))
         return httpx.Response(200, json={"answer": "ok"})
 
+    echo = CollectingEcho()
     async with _mock_client(handler) as client:
         await run_remote_chat(
             "http://srv",
             stream=False,
             session_id="rsess",
             read_line=scripted_reader(["one", "two"]),
-            echo=CollectingEcho(),
+            echo=echo,
             client=client,
         )
     assert seen_sessions == ["rsess", "rsess"]  # same session on every request
-    assert "Agent > server:question one" in echo.lines
+    assert echo.lines.count("Agent > ok") == 2
 
 
 async def test_remote_server_error_does_not_kill_loop() -> None:
