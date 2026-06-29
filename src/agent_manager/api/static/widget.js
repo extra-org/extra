@@ -70,7 +70,11 @@ var AgentChatClient = class {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    return { answer: String(data.answer || "") };
+    return {
+      answer: String(data.answer || ""),
+      visited: Array.isArray(data.visited) ? data.visited : void 0,
+      used_tools: Array.isArray(data.used_tools) ? data.used_tools : void 0
+    };
   }
 };
 
@@ -447,12 +451,40 @@ var AgentChatElement = class extends HTMLElement {
       const data = await this.client.sendMessage(id, text);
       this.setTyping(false);
       this.addMessage("ai", data.answer);
+      this.emitAnswer(data);
     } catch {
       this.setTyping(false);
       this.addMessage("ai", "Something went wrong. Please try again.");
     } finally {
       if (this.sendButton) this.sendButton.disabled = false;
       this.focusComposer();
+    }
+  }
+  /**
+   * Surface safe routing metadata (the agent graph path and any tools used) so
+   * host pages can observe which agent/sub-agent handled a turn. This does not
+   * change the embed contract or the widget UI — it only emits a DOM event and
+   * a console debug line. No reasoning or hidden content is exposed.
+   */
+  emitAnswer(data) {
+    try {
+      const detail = {
+        visited: data.visited ?? [],
+        used_tools: data.used_tools ?? []
+      };
+      if (detail.visited.length) {
+        console.debug?.("[agent-chat] route:", detail.visited.join(" \u2192 "), detail.used_tools);
+      }
+      if (typeof CustomEvent === "function" && typeof this.dispatchEvent === "function") {
+        this.dispatchEvent(
+          new CustomEvent("agent-chat:answer", {
+            detail,
+            bubbles: true,
+            composed: true
+          })
+        );
+      }
+    } catch {
     }
   }
 };

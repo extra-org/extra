@@ -30,6 +30,10 @@ export class AgentChatClient {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    return { answer: String(data.answer || "") };
+    return {
+      answer: String(data.answer || ""),
+      visited: Array.isArray(data.visited) ? (data.visited as string[]) : undefined,
+      used_tools: Array.isArray(data.used_tools) ? data.used_tools : undefined,
+    };
   }
 }
