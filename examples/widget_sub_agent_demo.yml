@@ -1,0 +1,54 @@
+# ============================================================
+# Widget → real agent → sub-agent demo.
+#
+# A deliberately small, deterministic configuration that proves the full
+# product flow from the browser widget through the real conversation API and
+# agent engine down to a sub-agent and back:
+#
+#   user question
+#     → concierge_router (root orchestrator)
+#       → tags_agent  OR  hours_agent   (sub-agent)
+#         → final answer (with a visible sub-agent signature)
+#
+# No MCP servers, no protected nodes, no resolvers — the only external
+# dependency is the Anthropic model the repo already uses. Each sub-agent
+# answers from a fixed knowledge baked into its prompt, so the reply is stable
+# and clearly attributable to one sub-agent.
+#
+#   agent-manager --config examples/widget_sub_agent_demo.yml --port 8100
+#   open http://127.0.0.1:8100/widget-agent-flow-demo.html
+# ============================================================
+
+system:
+  name: "Widget Sub-Agent Demo"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5
+    temperature: 0 # deterministic routing + answers for a reproducible demo
+
+orchestrators:
+  concierge_router:
+    name: "Concierge"
+    description: "Routes the user to the tags sub-agent or the hours sub-agent."
+    prompts:
+      orchestrator: "prompts/concierge_router/orchestrator.md"
+
+agents:
+  tags_agent:
+    name: "Tags Agent"
+    description: "Knows the list of available document tags."
+    prompts:
+      system: "prompts/tags_agent/system.md"
+
+  hours_agent:
+    name: "Hours Agent"
+    description: "Knows the support / opening hours."
+    prompts:
+      system: "prompts/hours_agent/system.md"
+
+graph:
+  concierge_router:
+    tags_agent:
+    hours_agent:
