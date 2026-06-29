@@ -9,8 +9,11 @@
     "test:widget:e2e": "playwright test"
   },
   "dependencies": {
+    "lucide-react": "^1.22.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "streamdown": "^2.5.0",
+    "use-stick-to-bottom": "^1.1.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

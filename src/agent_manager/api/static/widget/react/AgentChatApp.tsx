@@ -1,20 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentChatClient } from "../api/AgentChatClient";
-import { formatAssistantText } from "../security/renderMessage";
 import {
   conversationStorageKey,
   getStoredConversationId,
   setStoredConversationId,
 } from "../storage/conversationStorage";
-import type { AgentChatAnswerDetail, AgentChatConfig } from "../types";
-import { Conversation, Message, MessageContent, PromptInput, ToolStrip } from "./aiElements";
+import type { AgentChatAnswerDetail, AgentChatConfig, ToolRecord } from "../types";
+import {
+  Conversation,
+  ConversationContent,
+  Message,
+  MessageContent,
+  MessageResponse,
+  PromptInput,
+  PromptInputFooter,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  Tool,
+  ToolContent,
+  ToolHeader,
+  ToolOutput,
+  type ToolState,
+} from "./shadcnAiElements";
 
 type MessageEntry = {
   role: "user" | "ai";
   text: string;
   typing?: boolean;
   route?: string[];
+  tools?: ToolRecord[];
 };
 
 export interface AgentChatAppProps {
@@ -33,7 +48,6 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
   const [entries, setEntries] = useState<MessageEntry[]>([]);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const loadHistory = useCallback(async () => {
     if (loaded) return;
@@ -61,12 +75,6 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
       void loadHistory();
     }
   }, [inline, loadHistory]);
-
-  useEffect(() => {
-    if (messagesRef.current) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-    }
-  }, [entries]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus({ preventScroll: true });
@@ -102,7 +110,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         const data = await client.sendMessage(id, text);
         setEntries((prev) => [
           ...prev.filter((entry) => !entry.typing),
-          { role: "ai", text: data.answer, route: data.visited },
+          { role: "ai", text: data.answer, route: data.visited, tools: data.used_tools },
         ]);
         onAnswer({ visited: data.visited ?? [], used_tools: data.used_tools ?? [] });
       } catch {
@@ -172,27 +180,76 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         </header>
 
         <div className="body">
-          <Conversation scrollRef={messagesRef}>
-            {entries.map((entry, index) => (
-              <Message key={`${entry.role}-${index}-${entry.text}`} role={entry.role} typing={entry.typing}>
-                {entry.typing ? (
-                  "..."
-                ) : (
-                  <>
-                    <MessageContent html={entry.role === "ai" ? formatAssistantText(entry.text) : undefined}>
-                      {entry.text}
-                    </MessageContent>
-                    {entry.role === "ai" ? <ToolStrip route={entry.route} /> : null}
-                  </>
-                )}
-              </Message>
-            ))}
+          <Conversation>
+            <ConversationContent>
+              {entries.map((entry, index) => (
+                <Message
+                  key={`${entry.role}-${index}-${entry.text}`}
+                  from={entry.role === "user" ? "user" : "assistant"}
+                  typing={entry.typing}
+                >
+                  {entry.typing ? (
+                    "..."
+                  ) : (
+                    <>
+                      {entry.role === "ai" ? <ToolMessage route={entry.route} tools={entry.tools} /> : null}
+                      <MessageContent>
+                        {entry.role === "ai" ? <MessageResponse>{entry.text}</MessageResponse> : entry.text}
+                      </MessageContent>
+                    </>
+                  )}
+                </Message>
+              ))}
+            </ConversationContent>
           </Conversation>
-          <PromptInput disabled={sending} inputRef={inputRef} onSubmit={submit} />
+          <PromptInput onSubmit={(message) => void submit(message.text)}>
+            <PromptInputTextarea
+              aria-label="Message"
+              disabled={false}
+              inputRef={inputRef}
+              onSubmit={() => {
+                inputRef.current?.form?.requestSubmit();
+              }}
+              placeholder="Message..."
+            />
+            <PromptInputFooter>
+              <span className="prompt-hint">Enter to send · Shift+Enter for a new line</span>
+              <PromptInputSubmit disabled={sending} />
+            </PromptInputFooter>
+          </PromptInput>
         </div>
       </section>
     </div>
   );
+}
+
+function ToolMessage({ route, tools = [] }: { route?: string[]; tools?: ToolRecord[] }) {
+  if (!route?.length && tools.length === 0) return null;
+  return (
+    <div className="tool-list">
+      {route?.length ? (
+        <div className="route" aria-label="Agent route">
+          {route.join(" -> ")}
+        </div>
+      ) : null}
+      {tools.map((tool, index) => (
+        <Tool key={`${tool.name}-${index}`} defaultOpen={tool.status === "failed"}>
+          <ToolHeader state={toolState(tool.status)} title={tool.provider ? `${tool.name} · ${tool.provider}` : tool.name} />
+          {tool.error ? (
+            <ToolContent>
+              <ToolOutput errorText={tool.error} />
+            </ToolContent>
+          ) : null}
+        </Tool>
+      ))}
+    </div>
+  );
+}
+
+function toolState(status: string): ToolState {
+  if (status === "failed") return "output-error";
+  if (status === "succeeded") return "output-available";
+  return "input-available";
 }
 
 function ChatIcon() {

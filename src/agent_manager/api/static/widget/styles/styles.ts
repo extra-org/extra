@@ -38,7 +38,8 @@ export function styles(config: AgentChatConfig): string {
     .close:hover { background: #f4f4f5; color: #18181b; }
     .close svg { width: 16px; height: 16px; }
     .body { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #fff; }
-    .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px;
+    .messages { flex: 1; min-height: 0; overflow-y: auto; }
+    .conversation-content { min-height: 100%; padding: 16px 18px;
       display: flex; flex-direction: column; gap: 14px; }
     .msg { font-size: 14.5px; line-height: 1.55; word-wrap: break-word; white-space: pre-wrap; }
     .msg.ai { color: #18181b; max-width: 100%; }
@@ -46,15 +47,31 @@ export function styles(config: AgentChatConfig): string {
     .msg.user { background: #f4f4f5; color: #18181b; border-radius: 18px;
       padding: 10px 14px; margin-left: auto; max-width: 88%; }
     .message-content { min-width: 0; }
+    .message-response p { margin: 0 0 10px; }
+    .message-response p:last-child { margin-bottom: 0; }
     .msg code { background: #f4f4f5; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
     .msg pre { background: #f4f4f5; border-radius: 10px; padding: 10px 12px; overflow-x: auto; margin: 0; }
     .msg pre code { background: none; padding: 0; white-space: pre-wrap; }
+    .tool-list { margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
     .agent-meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; color: #71717a;
       font-size: 12px; line-height: 1.3; }
     .route { border: 1px solid #e4e4e7; border-radius: 999px; padding: 4px 8px;
-      background: #fafafa; }
-    .composer { display: flex; align-items: flex-end; gap: 8px; padding: 12px 14px;
-      border-top: 1px solid #f0f0f1; }
+      background: #fafafa; color: #71717a; font-size: 12px; line-height: 1.3; width: fit-content; }
+    .tool { border: 1px solid #e4e4e7; border-radius: 10px; background: #fafafa; overflow: hidden; }
+    .tool-header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 8px 10px; cursor: pointer; list-style: none; }
+    .tool-header::-webkit-details-marker { display: none; }
+    .tool-title { display: inline-flex; align-items: center; gap: 6px; color: #3f3f46;
+      font-size: 12.5px; font-weight: 600; min-width: 0; }
+    .tool-title svg, .tool-badge svg { width: 14px; height: 14px; flex: 0 0 auto; }
+    .tool-badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px;
+      background: #f4f4f5; color: #52525b; padding: 3px 7px; font-size: 11.5px; white-space: nowrap; }
+    .tool-badge.output-available { color: #166534; background: #dcfce7; }
+    .tool-badge.output-error { color: #991b1b; background: #fee2e2; }
+    .tool-content { border-top: 1px solid #e4e4e7; padding: 8px 10px; }
+    .tool-error { color: #991b1b; font-size: 12px; white-space: pre-wrap; }
+    .composer { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px;
+      padding: 12px 14px; border-top: 1px solid #f0f0f1; }
     .input { flex: 1; resize: none; max-height: 120px; border: 1px solid #e4e4e7;
       border-radius: 20px; padding: 10px 16px; font-size: 14.5px; color: #18181b;
       font-family: inherit; background: #fff; outline: none; }
@@ -66,6 +83,9 @@ export function styles(config: AgentChatConfig): string {
     .send:hover { opacity: .88; }
     .send:disabled { opacity: .4; cursor: default; }
     .send svg { width: 16px; height: 16px; }
+    .prompt-footer { grid-column: 1 / -1; display: flex; align-items: center;
+      justify-content: space-between; gap: 10px; color: #a1a1aa; font-size: 11.5px; }
+    .prompt-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (prefers-reduced-motion: reduce) {
       .launcher,
       .close,

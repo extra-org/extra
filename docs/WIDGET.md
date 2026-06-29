@@ -4,7 +4,12 @@ The browser widget is a framework-agnostic custom element served as an ES
 module. Host apps still embed a plain `<agent-chat>` element, while the widget
 mounts a React chat surface internally inside its Shadow DOM. That keeps Angular
 / Vue / server-rendered pages isolated from the widget implementation while
-letting the chat UI use higher-level React chat primitives.
+letting the chat UI use shadcn AI Elements-style primitives:
+
+- `Conversation` powered by `use-stick-to-bottom`.
+- `Message` / `MessageContent` / `MessageResponse` powered by `streamdown`.
+- `PromptInput` / `PromptInputTextarea` / `PromptInputSubmit`.
+- `Tool` / `ToolHeader` / `ToolContent` / `ToolOutput` for agent/tool activity.
 
 ```html
 <script type="module" src="/widget.js"></script>
@@ -53,9 +58,9 @@ one automatically:
 
 ## Host Frameworks
 
-The host framework does not need to install React. React is bundled inside
-`widget.js`; the public integration contract is still the custom element,
-attributes, and DOM events.
+The host framework does not need to install React, Streamdown, or the AI UI
+dependencies. They are bundled inside `widget.js`; the public integration
+contract is still the custom element, attributes, and DOM events.
 
 React can render the custom element directly:
 
