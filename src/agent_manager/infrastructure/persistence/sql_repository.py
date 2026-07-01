@@ -27,11 +27,9 @@ from agent_manager.domain import (
 )
 from agent_manager.infrastructure.persistence.tables import (
     ConversationMessageRow,
-    ConversationRow,
     ConversationSessionRow,
     ConversationSnapshotRow,
     ConversationUserRow,
-    MessageRow,
 )
 
 
@@ -125,33 +123,17 @@ class SqlRepository(Repository):
             row = await session.get(ConversationSessionRow, session_id)
         return _session(row) if row else None
 
-    # -- compatibility with the original narrow repository -----------------
-
-    async def create_conversation(self) -> str:
-        cid = (await self.create_session()).session_id
-        async with self._sessions() as session, session.begin():
-            # Keep legacy tests/consumers that inspect the old table working.
-            session.add(ConversationRow(id=cid))
-        return cid
+    # `create_conversation`/`add_message` are not overridden here: the
+    # `Repository` base class already provides them as thin aliases over
+    # `create_session`/`append_message` (see domain/repository.py), which is
+    # exactly the current schema's behavior. An earlier version additionally
+    # wrote to the retired `conversations`/`messages` tables for backward
+    # compatibility; that write path was removed in the same change that
+    # dropped those tables (migration 0003) once nothing read them back.
 
     async def conversation_exists(self, conversation_id: str) -> bool:
         async with self._sessions() as session:
             return await session.get(ConversationSessionRow, conversation_id) is not None
-
-    async def add_message(self, conversation_id: str, role: Role, content: str) -> None:
-        await self.append_message(
-            ConversationMessage(
-                message_id=uuid.uuid4().hex,
-                session_id=conversation_id,
-                role=role,
-                content=content,
-                created_at=datetime.now(UTC),
-            )
-        )
-        async with self._sessions() as session, session.begin():
-            session.add(
-                MessageRow(conversation_id=conversation_id, role=role.value, content=content)
-            )
 
     # -- rich conversation persistence -------------------------------------
 

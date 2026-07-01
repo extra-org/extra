@@ -193,6 +193,37 @@ async def test_sql_schema_has_cold_and_snapshot_rows() -> None:
     assert len(snapshots) == 1
 
 
+def test_legacy_conversations_and_messages_tables_are_gone() -> None:
+    """Regression guard for the 0001-era schema removed in migration 0003.
+
+    `ConversationRow`/`MessageRow` were write-only compatibility shims that
+    nothing ever read back; `SqlRepository` now relies solely on the
+    `Repository` base class's alias methods over the current schema. If
+    either name (or the `conversations`/`messages` tables) reappears, this
+    should fail loudly rather than silently reintroducing schema confusion.
+    """
+    import agent_manager.infrastructure.persistence.tables as tables_module
+
+    assert not hasattr(tables_module, "ConversationRow")
+    assert not hasattr(tables_module, "MessageRow")
+    assert "conversations" not in SQLModel.metadata.tables
+    assert "messages" not in SQLModel.metadata.tables
+
+
+async def test_sql_repository_does_not_write_legacy_tables() -> None:
+    engine = create_db_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    sessions = session_factory(engine)
+    repo = SqlRepository(sessions)
+
+    cid = await repo.create_conversation()
+    await repo.add_message(cid, Role.USER, "hi")
+
+    assert await repo.conversation_exists(cid)
+    assert [m.content for m in await repo.list_messages(cid)] == ["hi"]
+
+
 def _message(
     session_id: str,
     role: Role,

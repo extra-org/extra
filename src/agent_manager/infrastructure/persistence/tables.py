@@ -2,37 +2,20 @@
 
 Dialect-portable: the same tables run on SQLite and PostgreSQL. Changes here are
 captured as Alembic migrations, never created at application startup.
+
+Schema: `conversation_users` -> `conversation_sessions` -> `conversation_messages`
+(cold source of truth) with `conversation_snapshots` as a rebuildable hot cache.
+The original narrower `conversations`/`messages` tables (migration 0001) were
+retired in migration 0003 once nothing referenced them at runtime — see that
+migration's docstring for the removal rationale.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, Index, Integer, Text, func
+from sqlalchemy import JSON, Column, DateTime, Index, Integer, Text
 from sqlmodel import Field, SQLModel
-
-
-class ConversationRow(SQLModel, table=True):
-    __tablename__ = "conversations"
-
-    id: str = Field(primary_key=True, max_length=64)
-    created_at: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
-
-
-class MessageRow(SQLModel, table=True):
-    __tablename__ = "messages"
-
-    # Integer identity = stable, cross-dialect ordering key (SQLite's rowid has
-    # no Postgres equivalent).
-    id: int | None = Field(default=None, primary_key=True)
-    conversation_id: str = Field(foreign_key="conversations.id", index=True, max_length=64)
-    role: str = Field(max_length=16)
-    content: str = Field(sa_column=Column(Text))
-    created_at: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
 
 
 class ConversationUserRow(SQLModel, table=True):
