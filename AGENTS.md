@@ -18,12 +18,28 @@ exposes an API, and produces execution traces.
 The repository is in **active development**. The YAML validator, compiler,
 runtime engine (orchestrators run as supervisor agents — see
 [ADR 0009](docs/adr/0009-orchestrators-are-supervisor-agents.md)), resolver
-plugin system, tool plugin loading, MCP client, prompt rendering, and CLI are
-implemented. The access plugin is wired into child filtering but the
-request-context gate that feeds it, the API server, deployment, and
-observability are not yet implemented. See [docs/ROADMAP.md](docs/ROADMAP.md)
-for per-phase status. Agents implement the product task-by-task using the files
-in `tasks/`.
+plugin system, tool plugin loading, MCP client (local and remote servers,
+including authenticated MCP via hooks), the runtime hooks system
+(11 lifecycle points — see [ADR 0010](docs/adr/0010-runtime-hooks.md) and
+[docs/RUNTIME_HOOKS.md](docs/RUNTIME_HOOKS.md)), per-run execution-limit
+guardrails (see [docs/EXECUTION_LIMITS.md](docs/EXECUTION_LIMITS.md)), prompt
+rendering, and the CLI (`validate`, `inspect`, `generate`, `run`, `serve`,
+`chat`) are implemented. Model access supports both Anthropic and Amazon
+Bedrock. Two HTTP API layers exist: a thin `agent_engine` API (`/invoke`,
+`/stream`) over the stateless engine, and `agent_manager` — a conversation
+lifecycle service built on top of it with SQLite-backed persistence, SSE
+streaming, and an embeddable JS/React chat widget. Basic observability
+(structured logging plus a Langfuse callback provider) is wired in. A
+`Dockerfile`/`entrypoint.sh` provide a basic container image.
+
+The access plugin **is** wired into child filtering, but the request-context
+gate that should populate real identity/permissions into it is **not yet
+implemented** — access filtering currently runs against an empty context, so
+`protected` nodes are not actually enforced today. Treat this as an open
+security gap, not a finished feature. See [docs/ROADMAP.md](docs/ROADMAP.md)
+for per-phase status. Agents implement the product task-by-task using the
+files in `tasks/`, though the package layout has evolved beyond what the
+original numbered tasks describe (see §4).
 
 ---
 
@@ -108,12 +124,18 @@ blurring the build, runtime, and client-extension phases.**
 
 ## 4. Repository structure
 
+`task 0001` originally planned a single `src/agentplatform/` package. That
+layout was **not** what got built — the implementation split into two
+packages instead, and `AGENTS.md`/`docs/ARCHITECTURE.md` must track that
+split, not the original plan:
+
 ```
 .
 ├── AGENTS.md                  ← you are here
 ├── README.md                  ← public-facing overview
 ├── Makefile                   ← task runner (install/test/lint/format/check)
 ├── pyproject.toml             ← tooling + dependency configuration
+├── Dockerfile / entrypoint.sh ← basic container image (agentctl serve)
 ├── .gitignore
 ├── docs/                      ← architecture and design documentation
 │   ├── README.md
@@ -124,29 +146,45 @@ blurring the build, runtime, and client-extension phases.**
 │   ├── SIDECAR_CONTEXT_AUTH.md
 │   ├── PROMPT_RENDERING.md
 │   ├── MCP_AND_TOOLS.md
+│   ├── RUNTIME_HOOKS.md
+│   ├── EXECUTION_LIMITS.md
+│   ├── WIDGET.md
+│   ├── WIDGET_ARCHITECTURE.md
+│   ├── CLAUDE_CODE_WORKFLOW.md
 │   ├── DEVELOPMENT_WORKFLOW.md
 │   └── adr/                   ← architecture decision records
 ├── .ai/                       ← canonical agent instructions (skills/roles/workflows)
-├── tasks/                     ← small, ordered implementation tasks
-└── src/agentplatform/         ← (PLANNED) implementation, created by task 0001
+├── tasks/                     ← small, ordered implementation tasks (historical plan;
+│                                 see the package layout below for what actually exists)
+├── examples/                  ← runnable YAML configs, prompts, and example plugins
+├── tests/                     ← pytest suite (unit, engine, cli, e2e, agent_manager, ...)
+└── src/
+    ├── agent_engine/          ← pure execution engine (validate → compile → run)
+    │   ├── core/                  spec models, validator, execution policy (pure domain)
+    │   ├── parsers/                YAML loading
+    │   ├── generate/               resolver/tool stub generation (`agentctl generate`)
+    │   ├── loaders/                resolver/tool loading, MCP-auth loading
+    │   ├── engine/                 Engine + LangGraph-based execution (`engine/langgraph/`)
+    │   ├── runtime/                hooks (`runtime/hooks/`), execution limiter, streaming events
+    │   ├── models/                 LLM provider factory (Anthropic, Amazon Bedrock)
+    │   ├── observability/          callback-based tracing providers (logging, Langfuse)
+    │   └── api/                    thin FastAPI app: `/invoke`, `/stream` directly over the engine
+    ├── agent_manager/         ← conversation/session lifecycle service, built on agent_engine
+    │   ├── domain/                 conversation/message/session models + repository contract
+    │   ├── application/            ConversationService (send/stream, prior-context assembly)
+    │   ├── infrastructure/persistence/  SQLite (default) + Alembic migrations
+    │   └── api/                    FastAPI app: `/conversations` endpoints, SSE streaming,
+    │                                embeddable JS/React chat widget (`api/static/widget/`)
+    └── agentctl/              ← CLI: validate, inspect, generate, run, serve, chat
 ```
 
-**Planned package layout** (do not assume it exists yet; task 0001 creates it):
-
-```
-src/agentplatform/
-├── spec/          ← YAML loading + schema models
-├── validation/    ← validators
-├── compiler/      ← spec → CompiledAgentGraph
-├── graph/         ← CompiledAgentGraph + typed models
-├── runtime/       ← RuntimeEngine + ExecutionContext
-├── prompts/       ← template loading + rendering
-├── context/       ← resolver plugins + access plugin integration
-├── tools/         ← tool plugin + MCP integration
-├── observability/ ← tracing
-├── api/           ← HTTP API
-└── cli/           ← command-line interface
-```
+`agent_engine` never imports `agent_manager`; `agent_manager` only calls
+`agent_engine` through the `Engine` / `RunResult` / `RunStreamEvent` ports —
+this boundary is load-bearing (see §3 rule 11 and
+[ADR 0003](docs/adr/0003-client-specific-logic-lives-in-sidecar.md)). There is
+no separate `src/agentplatform/` package and no standalone `frontend/` app in
+active use — the real web client is the embeddable widget under
+`src/agent_manager/api/static/widget/`.
 
 ---
 

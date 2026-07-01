@@ -4,10 +4,14 @@ This directory contains the design and architecture documentation for the
 Declarative Agent Platform. It is the source of truth for **how the system is
 meant to work**. The core pipeline (validate → compile → runtime → prompts →
 resolver plugins → tool plugins → MCP → CLI) is implemented, with orchestrators
-running as supervisor agents. The access plugin is wired into child filtering but
-the request-context gate that feeds it is not; the API server, deployment, and
-observability layers are documented as design contracts for future
-implementation.
+running as supervisor agents. Runtime hooks, execution-limit guardrails, an
+Anthropic/Bedrock model layer, basic observability, a Docker image, and two
+HTTP API layers — a thin stateless engine API and a conversation-persistence
+service (`agent_manager`) with an embeddable chat widget — are also
+implemented; see [ARCHITECTURE.md](ARCHITECTURE.md) §14 for the current
+per-layer status. The access plugin is wired into child filtering, but the
+request-context gate that should feed it real identity is not yet
+implemented, so protected-node access control is not actually enforced today.
 
 ## Reading order
 
@@ -18,10 +22,12 @@ implementation.
 5. [SIDECAR_CONTEXT_AUTH.md](SIDECAR_CONTEXT_AUTH.md) — client-owned context/auth.
 6. [MCP_AND_TOOLS.md](MCP_AND_TOOLS.md) — tools, MCP servers, and permissions.
 7. [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) — trusted lifecycle hooks (auth, policy, audit).
-8. [WIDGET.md](WIDGET.md) — embeddable browser chat widget usage.
-9. [WIDGET_ARCHITECTURE.md](WIDGET_ARCHITECTURE.md) — React-in-widget architecture and streaming plan.
-10. [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md) — how to work in this repo.
-11. [ROADMAP.md](ROADMAP.md) — phased plan.
+8. [EXECUTION_LIMITS.md](EXECUTION_LIMITS.md) — per-run guardrails against runaway loops.
+9. [WIDGET.md](WIDGET.md) — embeddable browser chat widget usage.
+10. [WIDGET_ARCHITECTURE.md](WIDGET_ARCHITECTURE.md) — React-in-widget architecture and streaming plan.
+11. [CLAUDE_CODE_WORKFLOW.md](CLAUDE_CODE_WORKFLOW.md) — using Claude Code in this repo.
+12. [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md) — how to work in this repo.
+13. [ROADMAP.md](ROADMAP.md) — phased plan.
 
 ## Architecture Decision Records
 

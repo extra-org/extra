@@ -56,10 +56,25 @@ The long-term promise:
 4. **Deploy** it when ready.
 
 > Status: **active development.** The YAML validator, compiler, runtime engine,
-> LangGraph builder, resolver plugin system (shared + agent-scoped), tool plugin
-> loading, prompt file rendering, and CLI (`validate`, `generate`, `run`) are
-> **implemented**. The access plugin, MCP client, API server, deployment, and
-> observability are **not yet implemented**. See
+> LangGraph builder, resolver plugin system (shared + agent-scoped), tool
+> plugin loading, an MCP client (local and remote servers, including
+> authenticated MCP via hooks), a runtime hooks system (11 lifecycle points,
+> including `transform_tool_result` — see
+> [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md)), per-run execution-limit guardrails
+> (see [EXECUTION_LIMITS.md](EXECUTION_LIMITS.md)), prompt file rendering, and
+> the CLI (`validate`, `inspect`, `generate`, `run`, `serve`, `chat`) are
+> **implemented**. Model access supports Anthropic and Amazon Bedrock. Two
+> HTTP API layers exist: a thin stateless API directly over the engine
+> (`/invoke`, `/stream` in `agent_engine`) and a conversation-lifecycle service
+> built on top of it (`agent_manager`) with SQLite-backed persistence, SSE
+> streaming, and an embeddable JS/React chat widget. Basic observability
+> (structured logging + a Langfuse callback provider) is wired in, and a
+> `Dockerfile` provides a basic container image. The access plugin **is**
+> wired into child filtering, but the request-context gate that should feed it
+> real identity/permissions is **not yet implemented** — access filtering
+> currently runs against an empty context, so `protected` nodes are not
+> actually enforced yet. A formal structured tracing/observability schema and
+> long-term/cross-conversation memory are also **not yet implemented**. See
 > [ROADMAP.md](ROADMAP.md) for per-phase status.
 
 ---
@@ -135,8 +150,16 @@ This phase happens **per request**. It answers:
 
 Responsibilities:
 
-- **Receive** the request (`POST /api/invoke` with headers and a complete
-  `messages` array — the platform does not own conversation memory).
+- **Receive** the request. The core engine API (`agent_engine`, `/invoke` and
+  `/stream`) is stateless per call — it takes headers and a complete
+  `messages` array and owns no conversation memory. The optional
+  `agent_manager` layer sits in front of it and **does** own conversation
+  memory: it persists messages per conversation/session (SQLite by default),
+  assembles prior context before calling the engine, and exposes
+  `/conversations` endpoints and SSE streaming
+  (see `src/agent_manager/application/service.py`). `RUNTIME_LIFECYCLE.md`
+  currently documents only the stateless engine path; it has not yet been
+  updated to describe this composition.
 - **Create** a fresh `ExecutionContext` for this request.
 - **Build `ctx`** from request headers and request data.
 - **Resolve identity/context/permissions** via the extension layer (in-process
@@ -498,13 +521,15 @@ First-run flow status:
 ```bash
 make install
 agentctl validate examples/agents.yml                            # ✅ implemented
+agentctl inspect  examples/agents.yml                             # ✅ implemented (offline summary: agents, MCPs, hooks, plugins, tags)
 agentctl generate examples/agents.yml --mode all                 # ✅ implemented
 agentctl run      examples/agents.yml --message "hello"          # ✅ implemented (requires LLM API key)
-agentctl graph    examples/agents.yml                            # ⏳ planned
-agentctl serve    examples/agents.yml                            # ⏳ planned
+agentctl serve    examples/agents.yml                             # ✅ implemented (HTTP API; also the Docker CMD)
+agentctl chat     examples/agents.yml                             # ✅ implemented (interactive session)
 ```
 
-Validate, generate, and run work today. See [`ROADMAP.md`](ROADMAP.md).
+All six CLI commands work today. `agentctl graph` from earlier plans shipped
+as `agentctl inspect`. See [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
@@ -527,34 +552,102 @@ Orchestrators are **supervisor agents** — children are exposed as tools and th
 orchestrator synthesises the answer; the compiled graph is flat
 (`START → root → END`). Both orchestrators and agents run a tool-call loop until
 the model stops (see [ADR 0009](adr/0009-orchestrators-are-supervisor-agents.md)).
+Per-run **execution-limit** guardrails (`ExecutionPolicy` in
+`agent_engine/core/execution.py`, enforced by `agent_engine/runtime/execution.py`)
+cap iterations, tool calls, and child-agent calls — see
+[`EXECUTION_LIMITS.md`](EXECUTION_LIMITS.md).
 
 **Prompt rendering (0005 — 🔶 partial):**
 Prompt files are loaded from disk and `{{ variable }}` placeholders are
 substituted with resolver values per request. No dedicated `prompts/` module,
 parsed-template cache, or strict missing-variable errors yet.
 
-**Resolver plugins (0006 — 🔶 partial, resolver side done):**
+**Resolver plugins & access (0006 — 🔶 partial, resolver side done):**
 Full resolver plugin system: TOML-configured `SharedResolver` + per-agent
 subclasses, shared/agent-scoped resolvers, dynamic loading, generation modes
 (`--mode all/children/child`), overwrite protection, stale detection. The access
-plugin **is** wired: an `AccessFilter` removes protected children before they are
-exposed as orchestrator tools. Populating the request context it filters on (the
-Security/Context Gate) is not yet implemented, so it currently filters on an
-empty context.
+plugin **is** wired: an `AccessFilter` (`agent_engine/engine/langgraph/filters.py`)
+removes protected children before they are exposed as orchestrator tools.
+**Populating the request context it filters on (the Security/Context Gate) is
+not yet implemented** — `run_context` is never written into `GraphState`, so
+`AccessFilter` always filters against an empty context. Every example access
+plugin currently just returns `True`. Treat protected-node access control as
+**not actually enforced today**, not as a finished feature.
 
-**Tool plugins & MCP (0007 — 🔶 partial):**
+**Tool plugins, MCP & runtime hooks (0007 — ✅ done):**
 Python plugin tools load from `plugins/tools/`, are bound per-agent, and execute
 in a tool-call loop. MCP servers connect via `langchain-mcp-adapters`
 (`MultiServerMCPClient`), discovering tools at build time; unreachable servers
-are logged as a warning and skipped. Per-tool input policy is not yet
-implemented.
+are logged as a warning and skipped. Both local and remote MCP servers work,
+including authenticated MCP via runtime hooks
+(`agent_engine/loaders/mcp_auth_loader.py`). A separate **runtime hooks**
+system (`agent_engine/runtime/hooks/`, [ADR 0010](adr/0010-runtime-hooks.md),
+[`RUNTIME_HOOKS.md`](RUNTIME_HOOKS.md)) covers 11 lifecycle points — engine
+start/stop, run start/end/error, tool error, and `transform_tool_result` (lets
+trusted code truncate/redact/normalize a tool result before it reaches the
+model) — for auth, policy, audit, and context enrichment, distinct from
+LLM-invoked tools. Per-tool `input_policy` (trusted parameter injection) is
+still not implemented — see §11.
 
-**CLI (0008 — 🔶 partial):**
-`agentctl validate`, `agentctl generate` (with `--mode`, `--agent`, `--force`),
-`agentctl run`, `agentctl version`. `agentctl graph` not implemented.
+**Model providers (✅ done, not in the original task list):**
+`agent_engine/models/factory.py` builds chat models via `init_chat_model` for
+both **Anthropic** and **Amazon Bedrock** (`ChatBedrockConverse`), with clear
+configuration errors for missing settings (see
+[ADR 0008](adr/0008-model-access-via-langchain-init-chat-model.md)).
 
-**Not started:** API server (0009), Docker (0010), observability (0011),
-quality-gate hardening (0012).
+**CLI (0008 — ✅ done):**
+`agentctl validate`, `agentctl inspect` (offline summary: agents, MCPs, hooks,
+plugins, tags), `agentctl generate` (with `--mode`, `--agent`, `--force`),
+`agentctl run` (with `--stream`, `--session-id`, `--user-id`), `agentctl serve`,
+and `agentctl chat`.
+
+**API server (0009 — ✅ done, two layers):**
+`agent_engine/api/app.py` exposes a thin, stateless FastAPI app directly over
+the engine (`GET /health`, `POST /invoke`, `POST /stream`). `agent_manager/api/`
+exposes a conversation-lifecycle API on top of it
+(`POST /conversations`, `GET/POST .../messages`, `POST .../messages/stream` as
+SSE) backed by `agent_manager`'s persistence layer (see next).
+
+**Conversation persistence (✅ done, not in the original task list):**
+`agent_manager` is a DDD-style service (`domain/`, `application/`,
+`infrastructure/persistence/`) providing `ConversationService` (send/stream,
+prior-context assembly, post-success persistence), a SQLite-backed
+`SqlRepository` with Alembic migrations, and tables for conversations,
+messages, users, and sessions. It is wired into both `agentctl run`/`chat`
+(CLI) and the `agent_manager` API server. `agent_engine` has no dependency on
+`agent_manager`; the boundary is one-directional.
+
+**Embeddable widget (✅ done, not in the original task list):**
+`agent_manager/api/static/widget/` is a React-based, embeddable chat widget
+(shadcn AI chat primitives) served as a script tag, with streaming support,
+conversation recovery, and e2e/accessibility tests. This — not a standalone
+`frontend/` app — is the project's web client today.
+
+**Docker / deployment (0010 — ✅ done, basic container):**
+A root `Dockerfile` installs the package and runs `entrypoint.sh`, whose
+default `CMD` is `agentctl serve --config /workspace/agents.yml` (installing
+`/workspace/requirements.txt` if present). Matches the roadmap's explicit
+scope of a "basic container," not production deployment topologies.
+
+**Observability (0011 — 🔶 partial):**
+`agent_engine/observability/registry.py` wires LangChain `BaseCallbackHandler`
+providers — a `LoggingProvider` and a `LangfuseProvider` — into the engine.
+This gives basic structured logs and optional Langfuse tracing, but the
+formal per-request trace schema, redaction pipeline, and export path
+originally scoped in task 0011 do not exist yet, and test coverage is thin
+(one test module).
+
+**Tests & quality gates (0012 — 🔶 partial):**
+A substantial pytest suite already exists (`tests/` has ~13 subdirectories
+covering compiler, engine, cli, e2e, agent_manager, models, observability,
+runtime/hooks, and more), but the dedicated quality-gate hardening pass
+described by task 0012 has not been done as a discrete unit of work.
+
+**Not yet implemented:** the request-context/Security-Context Gate that
+should populate real identity into `AccessFilter` (see above); per-tool
+`input_policy` / trusted-parameter injection (§11); a dedicated `prompts/`
+module with template caching and strict variable errors; a formal
+observability/tracing schema; long-term/cross-conversation memory.
 
 ---
 

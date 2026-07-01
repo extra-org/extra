@@ -3,21 +3,45 @@
 A phased, honest plan. Each phase below maps to one or more task files in
 `tasks/`. Status reflects reality, not aspiration.
 
+> **Package layout note:** task 0001 planned a single `src/agentplatform/`
+> package. The implementation instead split into two packages — `agent_engine`
+> (pure execution) and `agent_manager` (conversation/session persistence + HTTP
+> API, built on top of `agent_engine`) — plus `agentctl` (CLI). Phases below
+> map to the numbered tasks as originally scoped; several phases were also
+> extended well beyond their task's original scope (Bedrock, runtime hooks,
+> execution limits, conversation persistence, the embeddable widget) — see the
+> "Beyond the original 12 tasks" section below for the parts no task number
+> covers.
+
 | Phase | Theme                         | Tasks      | Status        |
 | ----- | ----------------------------- | ---------- | ------------- |
 | 0     | Repository foundation         | docs/.ai/tasks | ✅ done      |
-| 1     | Package skeleton & tooling    | 0001       | ✅ done        |
+| 1     | Package skeleton & tooling    | 0001       | ✅ done (as `agent_engine`/`agent_manager`/`agentctl`, not `agentplatform`) |
 | 2     | YAML schema & validation      | 0002       | ✅ done        |
 | 3     | Compiled agent graph          | 0003       | ✅ done        |
 | 4     | Runtime engine                | 0004       | ✅ done        |
 | 5     | Prompt rendering              | 0005       | 🔶 partial     |
-| 6     | Plugin context/access         | 0006       | 🔶 partial     |
-| 7     | MCP & plugin tools            | 0007       | 🔶 partial     |
-| 8     | CLI                           | 0008       | 🔶 partial     |
-| 9     | API server                    | 0009       | ⏳ planned     |
-| 10    | Docker / deployment           | 0010       | ⏳ planned     |
-| 11    | Observability & tracing       | 0011       | ⏳ planned     |
-| 12    | Tests & quality gates         | 0012       | ⏳ planned     |
+| 6     | Plugin context/access         | 0006       | 🔶 partial — access control not actually enforced yet |
+| 7     | MCP & plugin tools            | 0007       | ✅ done        |
+| 8     | CLI                           | 0008       | ✅ done        |
+| 9     | API server                    | 0009       | ✅ done (two layers — see below) |
+| 10    | Docker / deployment           | 0010       | ✅ done (basic container, as scoped) |
+| 11    | Observability & tracing       | 0011       | 🔶 partial     |
+| 12    | Tests & quality gates         | 0012       | 🔶 partial (large existing suite; dedicated hardening pass not done) |
+
+## Beyond the original 12 tasks
+
+These shipped without a dedicated numbered task and are not reflected in the
+table above:
+
+| Capability | Status | Where |
+| ---------- | ------ | ----- |
+| Runtime hooks (auth/policy/audit/context-enrichment, incl. `transform_tool_result`) | ✅ done | `agent_engine/runtime/hooks/`, [ADR 0010](adr/0010-runtime-hooks.md), [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) |
+| Per-run execution-limit guardrails | ✅ done | `agent_engine/core/execution.py`, `agent_engine/runtime/execution.py`, [EXECUTION_LIMITS.md](EXECUTION_LIMITS.md) |
+| Amazon Bedrock model provider (in addition to Anthropic) | ✅ done | `agent_engine/models/factory.py` |
+| Conversation persistence (SQLite default, sessions, users) | ✅ done | `agent_manager/` |
+| Embeddable JS/React chat widget | ✅ done | `agent_manager/api/static/widget/` |
+| Long-term / cross-conversation memory | ⏳ planned | — |
 
 ## Open-source developer-experience milestones
 
@@ -28,13 +52,15 @@ milestones in order:
 | Milestone | Command (on `examples/agents.yml`) | Enabled by | Status |
 | --------- | ---------------------------------- | ---------- | ------ |
 | Validate  | `agentctl validate examples/agents.yml` | 0002 | ✅ done |
+| Inspect   | `agentctl inspect examples/agents.yml` | 0003 | ✅ done |
 | Generate  | `agentctl generate examples/agents.yml --mode all` | 0006 | ✅ done |
 | Run local | `agentctl run examples/agents.yml --message "hello"` | 0004–0006 | ✅ done |
-| Inspect   | `agentctl graph examples/agents.yml` | 0003 | ⏳ planned |
-| Serve     | `agentctl serve examples/agents.yml` | 0009 | ⏳ planned |
+| Serve     | `agentctl serve examples/agents.yml` | 0009 | ✅ done |
+| Chat      | `agentctl chat examples/agents.yml` | 0004–0006 | ✅ done |
 
-Validate, generate, and run work today. Graph inspection (visual/text dump of
-the compiled graph) and the HTTP server are planned.
+All six commands work today. The graph-inspection command originally planned
+as `agentctl graph` shipped as `agentctl inspect` (an offline text summary,
+not a visual graph dump).
 
 ## Phase detail: what "partial" means
 
@@ -59,17 +85,51 @@ renderer interface.
 implemented: TOML-configured per-agent resolver classes, dynamic loading,
 `BaseResolver` + per-agent subclasses, shared/agent-scoped resolvers, generation
 modes (`--mode all/children/child`), overwrite protection, stale detection.
-Access plugin contract (`plugins/access.py`) is defined but **not yet wired
-into routing** — protected-node filtering is not enforced at runtime.
+The access plugin **is wired into routing** — `AccessFilter`
+(`agent_engine/engine/langgraph/filters.py`) runs during orchestrator child
+filtering — but the request-context gate that should populate it with real
+identity/permissions was never built, so `AccessFilter` always filters against
+an empty `run_context`. **Remaining:** implement the Security/Context Gate so
+`protected` nodes are actually enforced, not just structurally filterable.
 
-**Phase 7 — MCP & plugin tools (🔶 partial).** Python plugin tools load from
+**Phase 7 — MCP & plugin tools (✅ done).** Python plugin tools load from
 `plugins/tools/` and are bound to agents at graph-build time. Tool-call loops
-work. **Remaining:** MCP client integration (connecting to declared MCP server
-URLs and discovering their tools).
+work. MCP servers (local and remote) connect via `langchain-mcp-adapters`
+(`MultiServerMCPClient`) and discover tools at build time; unreachable servers
+are logged and skipped. Authenticated MCP is supported via runtime hooks
+(`agent_engine/loaders/mcp_auth_loader.py`). **Remaining (tracked separately,
+not blocking):** per-tool `input_policy` / trusted-parameter injection.
 
-**Phase 8 — CLI (🔶 partial).** `agentctl validate`, `agentctl generate`
-(with `--mode`, `--agent`, `--force`), `agentctl run`, and `agentctl version`
-are implemented. **Remaining:** `agentctl graph` (inspect/dump compiled graph).
+**Phase 8 — CLI (✅ done).** `agentctl validate`, `agentctl inspect`, `agentctl
+generate` (with `--mode`, `--agent`, `--force`), `agentctl run` (with
+`--stream`, `--session-id`, `--user-id`), `agentctl serve`, and `agentctl chat`
+are all implemented. The originally planned `agentctl graph` shipped as
+`agentctl inspect` (text summary, not a visual dump).
+
+**Phase 9 — API server (✅ done).** Two layers exist: `agent_engine/api/app.py`
+is a thin, stateless FastAPI app directly over the engine (`/health`,
+`/invoke`, `/stream`); `agent_manager/api/` is a conversation-lifecycle API
+(`/conversations`, message history, SSE streaming) backed by SQLite
+persistence, plus the embeddable JS/React chat widget served as a static
+asset.
+
+**Phase 10 — Docker / deployment (✅ done, basic container).** A root
+`Dockerfile` + `entrypoint.sh` build an image whose default command is
+`agentctl serve`. This matches the roadmap's explicit scope (a basic
+container, not production deployment topologies).
+
+**Phase 11 — Observability & tracing (🔶 partial).** `agent_engine/observability/`
+wires LangChain callback providers — structured logging and Langfuse — into
+the engine, giving basic tracing today. **Remaining:** the formal per-request
+trace schema, redaction pipeline, and export path originally scoped for this
+phase; test coverage here is currently thin (one test module).
+
+**Phase 12 — Tests & quality gates (🔶 partial).** A substantial pytest suite
+already exists (`tests/` spans compiler, engine, cli, e2e, `agent_manager`,
+models, observability, and runtime/hooks, among others), built up
+incrementally as each phase landed. **Remaining:** the dedicated quality-gate
+hardening pass this phase describes has not been done as its own unit of
+work.
 
 ## Principles guiding the order
 
