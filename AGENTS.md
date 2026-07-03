@@ -186,7 +186,7 @@ active use — the official React web client is served from
 ## 5. AI Instruction System
 
 The **canonical instruction system lives under [`.ai/`](.ai/)** — it is the
-single source of truth for how AI agents (Claude Code, Codex, Cursor, or any
+single source of truth for how AI agents (Claude Code, Codex, or any
 future tool) work in this repo. **Before doing any work, read this file
 (`AGENTS.md`) and [`.ai/README.md`](.ai/README.md).**
 
@@ -197,7 +197,7 @@ future tool) work in this repo. **Before doing any work, read this file
 - [`.ai/workflows/`](.ai/workflows/) — task workflows (feature-task, code-review,
   testing, documentation-update).
 
-**Tool-specific folders (`.claude/`, `.codex/`, `.agents/`, `.cursor/`) must not
+**Tool-specific folders (`.claude/`, `.codex/`, `.agents/`) must not
 contain manually edited instruction content.** They hold tool configuration,
 adapter READMEs, and generated adapters derived from `.ai/`. Generated adapters
 may contain full skill, role, and workflow content for tool compatibility, but

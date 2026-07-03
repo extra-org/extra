@@ -20,7 +20,7 @@ install: generate-ai ## Install the package (editable) with dev dependencies.
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -e ".[dev]"
 
-generate-ai: ## Generate adapters from .ai/. Use TARGET=claude|cursor|codex to limit scope.
+generate-ai: ## Generate adapters from .ai/. Use TARGET=claude|codex to limit scope.
 	$(PYTHON) -m tools.skills $(if $(TARGET),--target $(TARGET),)
 
 sync-ai: generate-ai ## Alias for generate-ai (older name, kept for docs compatibility).

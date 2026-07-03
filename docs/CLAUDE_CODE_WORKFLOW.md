@@ -49,7 +49,7 @@ There is **one** instruction system, under `.ai/`:
 - `.ai/workflows/<name>.md` — recipes that combine roles + skills for a common
   task (`feature-task`, `code-review`, `testing`, `documentation-update`).
 
-Claude Code, Codex, Cursor, and any future tool derive from the same files.
+Claude Code, Codex, and any future tool derive from the same files.
 Generated adapters may copy the full canonical content into tool-specific
 formats, but `.ai/` remains the only editable source.
 

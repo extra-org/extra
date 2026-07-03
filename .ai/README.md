@@ -1,7 +1,7 @@
 # `.ai/` — Canonical AI-Agent Instruction System
 
 This directory is the **single source of truth** for how AI coding agents work
-in this repository. It is tool-agnostic: Claude Code, Codex, Cursor, and any
+in this repository. It is tool-agnostic: Claude Code, Codex, and any
 future coding agent read the same instructions from here.
 
 > Before doing any work, read [`../AGENTS.md`](../AGENTS.md) and this file.
@@ -81,7 +81,7 @@ End-to-end recipes that combine roles and skills for a common task.
 
 ## Generated tool-specific adapters
 
-`.claude/`, `.codex/`, `.cursor/`, etc. exist only for **tool configuration**
+`.claude/`, `.codex/`, etc. exist only for **tool configuration**
 (permissions, model settings) and **generated adapters** derived from `.ai/`.
 They must **not** contain manually edited skills, roles, or workflows.
 
@@ -100,5 +100,4 @@ Supported generated adapter layouts:
 | Tool | Generated paths |
 | ---- | --------------- |
 | Claude | `.claude/skills/<skill-name>/SKILL.md`, `.claude/agents/<role-name>.md`, `.claude/workflows/<workflow-name>.md` |
-| Cursor | `.cursor/rules/skills/<skill-name>.mdc`, `.cursor/rules/roles/<role-name>.mdc`, `.cursor/rules/workflows/<workflow-name>.mdc` |
 | Codex | `.codex/skills/<skill-name>.md`, `.codex/agents/<role-name>.md`, `.codex/workflows/<workflow-name>.md` |
