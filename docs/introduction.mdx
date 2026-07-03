@@ -20,18 +20,47 @@ Extra moves that into a reusable runtime. You declare what your system is. Extra
 
 ---
 
-## How it works
+## From spec to production
 
-```
-Your YAML spec
-  → Validate        check structure and all references
-  → Compile         build an immutable agent graph
-  → Route           orchestrators direct requests to the right agent
-  → Execute         agents run with only their scoped tools and data
-  → Respond         structured response with routing trace
+```yaml
+orchestrators:
+  router:
+    description: "Routes customer requests to the right department."
+    prompts:
+      orchestrator: "prompts/router.md"
+
+agents:
+  orders_agent:
+    description: "Handles order status and tracking."
+    tools: [get_order_status]
+    mcps: [orders_api]
+
+  returns_agent:
+    description: "Handles return requests and refunds."
+    tools: [create_return]
+
+graph:
+  router:
+    orders_agent:
+    returns_agent:
 ```
 
-Each agent sees only what it's supposed to — no cross-contamination, no access to other agents' tools or data.
+That's your entire system. Extra generates the plugin stubs — you fill in the business logic. We validate, compile, and run it. Production-ready.
+
+<Steps>
+  <Step title="Write your spec">
+    Declare agents, tools, and connections in YAML.
+  </Step>
+  <Step title="Generate">
+    `agentctl generate` creates the stubs for your tools and resolvers.
+  </Step>
+  <Step title="Fill in your logic">
+    Implement the stubs — your APIs, your data, your auth.
+  </Step>
+  <Step title="Run">
+    Extra validates, compiles, and serves. Done.
+  </Step>
+</Steps>
 
 ---
 

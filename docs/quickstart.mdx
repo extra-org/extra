@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Get Extra running in two modes — engine only, or with conversation persistence and an embeddable widget.
+description: Get Extra running in minutes — engine only, or with conversation history and an embeddable widget.
 ---
 
 ## Prerequisites
@@ -10,159 +10,159 @@ description: Get Extra running in two modes — engine only, or with conversatio
 
 ---
 
-## Path 1 — Engine Only
+## Engine only
 
-The stateless engine exposes `/invoke` and `/stream`. No database, no widget. Good for embedding into your own backend.
+The stateless engine — no database, no widget. Good for embedding into your own backend.
 
-### 1. Write your spec
+<Steps>
+  <Step title="Write your spec">
+    Create `agents.yml`:
 
-Create `agents.yml` (see [YAML Reference](/docs/yaml-spec) for all fields):
+    ```yaml
+    system:
+      name: "Support Bot"
 
-```yaml
-system:
-  name: "Support Bot"
+    defaults:
+      model:
+        provider: anthropic
+        name: claude-sonnet-4-6
 
-defaults:
-  model:
-    provider: anthropic
-    name: claude-sonnet-4-6
+    orchestrators:
+      router:
+        description: "Routes the user to the right department."
+        prompts:
+          orchestrator: "prompts/router/orchestrator.md"
 
-orchestrators:
-  router:
-    description: "Routes the user to the right department."
-    prompts:
-      orchestrator: "prompts/router/orchestrator.md"
+    agents:
+      orders_agent:
+        description: "Handles order status and tracking questions."
+        prompts:
+          system: "prompts/orders/system.md"
 
-agents:
-  orders_agent:
-    description: "Handles order status and tracking questions."
-    prompts:
-      system: "prompts/orders/system.md"
+      returns_agent:
+        description: "Handles return requests and refunds."
+        prompts:
+          system: "prompts/returns/system.md"
 
-  returns_agent:
-    description: "Handles return requests and refunds."
-    prompts:
-      system: "prompts/returns/system.md"
+    graph:
+      router:
+        orders_agent:
+        returns_agent:
+    ```
+  </Step>
 
-graph:
-  router:
-    orders_agent:
-    returns_agent:
-```
+  <Step title="Generate plugin stubs">
+    ```bash
+    docker run --rm \
+      -v $(pwd):/workspace \
+      -w /workspace \
+      ghcr.io/asaf-prog/extra:latest \
+      generate --config agents.yml
+    ```
 
-### 2. Generate plugin stubs
+    Creates the `plugins/` folder with stubs for your tools and resolvers. Fill them in with your business logic.
+  </Step>
 
-```bash
-docker run --rm \
-  -v $(pwd):/workspace \
-  -w /workspace \
-  ghcr.io/amitavital/extra:latest \
-  generate --config agents.yml
-```
+  <Step title="Validate">
+    ```bash
+    docker run --rm \
+      -v $(pwd):/workspace \
+      -w /workspace \
+      ghcr.io/asaf-prog/extra:latest \
+      validate agents.yml
+    ```
 
-This creates the `plugins/` folder with stub files for your resolvers, tools, and hooks. Fill them in with your business logic.
+    Fully offline — no LLM calls, no network. Exits non-zero on any error.
+  </Step>
 
-### 3. Validate
+  <Step title="Run">
+    ```bash
+    docker run -d \
+      -p 8080:8080 \
+      -v $(pwd):/workspace \
+      -w /workspace \
+      -e ANTHROPIC_API_KEY=sk-... \
+      ghcr.io/asaf-prog/extra:latest \
+      serve --config agents.yml
+    ```
 
-```bash
-docker run --rm \
-  -v $(pwd):/workspace \
-  -w /workspace \
-  ghcr.io/amitavital/extra:latest \
-  validate agents.yml
-```
+    Call it:
 
-Fully offline — no LLM calls, no network. Exits non-zero on any error.
-
-### 4. Run the engine
-
-```bash
-docker run -d \
-  -p 8080:8080 \
-  -v $(pwd):/workspace \
-  -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
-  ghcr.io/amitavital/extra:latest \
-  serve --config agents.yml
-```
-
-Call it:
-
-```bash
-curl -X POST http://localhost:8080/invoke \
-  -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "Where is my order?"}]}'
-```
+    ```bash
+    curl -X POST http://localhost:8080/invoke \
+      -H "Content-Type: application/json" \
+      -d '{"messages": [{"role": "user", "content": "Where is my order?"}]}'
+    ```
+  </Step>
+</Steps>
 
 ---
 
-## Path 2 — Conversation Layer + Widget
+## With conversation history and widget
 
-`agent-manager` adds conversation persistence, multi-turn sessions, SSE streaming, and the embeddable chat widget on top of the engine.
+Adds persistent conversations, multi-turn sessions, SSE streaming, and an embeddable chat widget.
 
-### 1. Same `agents.yml` as above
+<Steps>
+  <Step title="Same agents.yml">
+    No changes to your spec.
+  </Step>
 
-No changes to your spec. `agent-manager` wraps the engine.
+  <Step title="Run with widget mode">
+    ```bash
+    docker run -d \
+      -p 8100:8100 \
+      -v $(pwd):/workspace \
+      -w /workspace \
+      -e ANTHROPIC_API_KEY=sk-... \
+      ghcr.io/asaf-prog/extra:latest \
+      agent-manager --config agents.yml --port 8100
+    ```
+  </Step>
 
-### 2. Run agent-manager
+  <Step title="Embed the widget">
+    Drop this into any HTML page — React, Vue, plain HTML, anything:
 
-```bash
-docker run -d \
-  -p 8100:8100 \
-  -v $(pwd):/workspace \
-  -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
-  ghcr.io/amitavital/extra:latest \
-  agent-manager --config agents.yml --port 8100
-```
+    ```html
+    <script type="module" src="http://localhost:8100/widget.js"></script>
+    <agent-chat
+      title="Support"
+      color="#6366f1"
+      greeting="Hi! How can I help you today?"
+      mode="floating"
+      position="bottom-right">
+    </agent-chat>
+    ```
 
-This starts the conversation API (`/conversations`, `/conversations/{id}/messages`) and serves the widget at `/widget.js`.
+    The widget handles sessions, streaming, and conversation history automatically.
 
-### 3. Embed the widget
+    <Tip>
+      See [Widget](/docs/widget) for all attributes and framework integration guides.
+    </Tip>
+  </Step>
+</Steps>
 
-Drop this into any HTML page — React, Vue, plain HTML, doesn't matter:
+---
 
-```html
-<script type="module" src="http://localhost:8100/widget.js"></script>
-<agent-chat
-  title="Support"
-  color="#6366f1"
-  greeting="Hi! How can I help you today?"
-  mode="floating"
-  position="bottom-right">
-</agent-chat>
-```
+## Comparison
 
-That's it. The widget handles sessions, streaming, and conversation history automatically.
-
-<Tip>
-  See [Widget](/docs/widget) for all `<agent-chat>` attributes, inline vs floating mode, and how to embed it in frameworks like React or Next.js.
-</Tip>
-
-### What's different between the two modes
-
-| | Engine Only | With agent-manager |
+| | Engine only | With widget |
 |---|---|---|
-| Conversation history | You own it | Built-in (SQLite/Postgres) |
+| Conversation history | You own it | Built-in |
 | Sessions | You manage | Auto-managed |
-| Streaming | SSE via `/stream` | SSE built-in |
-| Widget | No | Yes |
-| Port | 8080 | 8100 |
+| Streaming | SSE via `/stream` | Built-in |
+| Chat widget | No | Yes |
+| Default port | 8080 | 8100 |
 
 ---
 
 ## Local development (no Docker)
 
 ```bash
-git clone https://github.com/amitavital/extra.git
+git clone https://github.com/Asaf-prog/extra.git
 cd extra
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Engine
 agentctl validate agents.yml
 agentctl serve --config agents.yml
-
-# Conversation layer
-agent-manager --config agents.yml --port 8100
 ```
