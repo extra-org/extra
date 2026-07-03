@@ -40,7 +40,7 @@ plugins/
   access.py             ← access control (only if you use protected nodes)
 ```
 
-Run `agentctl generate --config agents.yml` to create all stubs from your YAML.
+Run `generate --config agents.yml` (see [Quickstart](/docs/quickstart)) to create all stubs from your YAML.
 
 ---
 
@@ -62,7 +62,7 @@ resolvers:
 
 ### Implementation
 
-`agentctl generate` produces the file layout. Fill in the methods:
+The `generate` command produces the file layout. Fill in the methods:
 
 ```python
 # plugins/resolvers/shared.py
@@ -92,10 +92,12 @@ class Resolver(SharedResolver):
 ### Generation modes
 
 ```bash
-agentctl generate agents.yml               # default: all stubs
-agentctl generate agents.yml --mode all    # regenerate everything
-agentctl generate agents.yml --mode child --agent orders_agent   # one agent
+generate agents.yml               # default: all stubs
+generate agents.yml --mode all    # regenerate everything
+generate agents.yml --mode child --agent orders_agent   # one agent
 ```
+
+See [CLI Reference](/docs/cli) for how to run these via Docker or a local install.
 
 Without `--force`, existing method bodies are preserved — only missing stubs are added.
 
