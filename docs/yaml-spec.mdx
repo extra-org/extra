@@ -14,15 +14,15 @@ Every top-level key:
 | Key | Required | What it declares |
 |-----|----------|-------------------|
 | [`system`](#system) | Yes | Name and metadata for this system |
-| [`graph`](#graph) | Yes | How agents and orchestrators connect — the routing topology |
+| [`defaults`](#defaults) | No | The default model, used unless a node overrides it |
 | [`orchestrators`](#orchestrators) | No | Routers that decide which agent handles a request |
 | [`agents`](#agents) | No | Executors that run an LLM and can call tools |
-| [`defaults`](#defaults) | No | The default model, used unless a node overrides it |
 | [`tools`](#tools) | No | Python functions agents can call |
 | [`mcps`](#mcps) | No | Remote MCP servers agents can call |
 | [`resolvers`](#resolvers) | No | Values auto-filled into prompts before an agent runs |
 | [`hooks`](#hooks) | No | Trusted code that runs at fixed points — auth, audit |
 | [`plugins`](#plugins) | No | Where Extra finds your plugin code |
+| [`graph`](#graph) | Yes | How everything above connects — the routing topology |
 
 Extra validates the whole file before running anything — bad references, missing prompt files, or broken graph structure fail immediately with a clear error, not at request time.
 
