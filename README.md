@@ -126,7 +126,6 @@ hooks:
   before_mcp_request:
     - plugin: mcp_auth
       method: before_mcp_request
-      config: { credential_env: DOCS_SERVER_CREDENTIAL }
 
 # Optional: make package-path plugin refs importable from anywhere.
 plugins:
@@ -226,8 +225,8 @@ agentctl inspect  examples/enterprise-knowledge-assistant/agents.yaml   # agents
 `validate` runs the same pre-flight the engine does at build time (parse +
 validate, resolve `plugins.import_roots` relative to the spec file, and
 import/instantiate declared hooks — hooks are trusted code) but stops before any
-network or LLM work. `inspect` never prints secrets: hook config is shown as
-`config_keys: [...]` only, and the effective tag transport (default header
+network or LLM work. `inspect` never prints secrets: hooks are shown as identity
+and failure policy only, and the effective tag transport (default header
 `X-MCP-Tool-Tag` vs. an explicit override) is shown per server.
 
 ### Interactive chat / simulation
@@ -291,8 +290,8 @@ start/end/error, before/after/​error tool calls, and before-MCP-request /
 after-MCP-response. They are declared in YAML by explicit `ref` or by managed
 `plugin` + `method` (resolved through `plugins.toml`), support sync and async,
 and are **fail-closed by default** (`failure_policy: warn` opts out). Hooks are
-never advertised to the model, never routed through the tool registry, and hook
-config values are never logged.
+never advertised to the model and never routed through the tool registry. YAML
+registers hooks; hook internals are configured in Python code.
 
 The headline use case is **`before_mcp_request`**: a hook injects the right
 `Authorization`/HMAC headers before each MCP HTTP request via `HookedMCPAuth`, so

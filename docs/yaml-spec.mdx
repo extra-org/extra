@@ -348,11 +348,10 @@ hooks:
   before_mcp_request:
     - plugin: mcp_auth
       method: before_mcp_request
-      config:
-        credential_env: INTERNAL_MCP_SECRET
 ```
 
 The most common hook is `before_mcp_request`: it injects `Authorization` headers before each MCP call, so private MCP servers work without putting tokens in prompts or logs.
+Authentication logic belongs in the hook/plugin code, where it can read one or more environment variables or secret-manager values and construct the required headers.
 
 See [Runtime Hooks](/docs/runtime-hooks) for all 10 lifecycle points and examples.
 
@@ -505,8 +504,6 @@ hooks:
   before_mcp_request:
     - plugin: mcp_auth
       method: before_mcp_request
-      config:
-        credential_env: ACME_MCP_SECRET
 
 plugins:
   import_roots: ["."]

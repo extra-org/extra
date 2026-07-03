@@ -102,9 +102,12 @@ hooks:
   before_mcp_request:
     - plugin: "mcp_auth"
       method: "before_mcp_request"
-      config:
-        credential_env: "INTERNAL_MCP_CREDENTIAL"
 ```
+
+Authentication hooks should read environment variables or secret-manager values
+inside plugin code, then add whatever headers or credentials are needed at
+runtime. YAML must not contain secrets or framework-specific credential
+shortcuts.
 
 Advanced/manual integrations may still use explicit import refs:
 

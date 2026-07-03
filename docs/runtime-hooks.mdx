@@ -58,8 +58,6 @@ hooks:
   before_mcp_request:
     - plugin: mcp_auth
       method: before_mcp_request
-      config:
-        credential_env: INTERNAL_MCP_SECRET
 
   after_tool_call:
     - plugin: audit
@@ -75,11 +73,10 @@ hooks:
 |-------|-------------|
 | `plugin` | Logical plugin id, resolved through `plugins/plugins.toml` |
 | `method` | Method name on the plugin class |
-| `config` | Optional config passed to the hook on each call |
 | `failure_policy` | `fail` (default) aborts the operation. `warn` logs and continues. |
 
 <Warning>
-  Do not put secrets in `config`. Use environment variables and read them inside the hook code. The YAML validator rejects values containing `token`, `secret`, `password`, `api_key`, or `private_key`.
+  YAML registers hooks; it does not configure hook internals. Read environment variables or secret-manager values inside hook code.
 </Warning>
 
 ---
@@ -94,8 +91,6 @@ hooks:
   before_mcp_request:
     - plugin: mcp_auth
       method: before_mcp_request
-      config:
-        credential_env: INTERNAL_MCP_SECRET
 ```
 
 **`plugins/plugins.toml`:**
@@ -110,16 +105,19 @@ import os
 from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
 
 class McpAuthHook:
-    def __init__(self, config=None):
-        self.config = config
-
     async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
         request = event.payload_as(McpRequestContext)
-        credential = os.environ[dict(event.config or {})["credential_env"]]
-        return request.with_headers({"Authorization": f"Bearer {credential}"})
+        bearer = os.environ["INTERNAL_MCP_BEARER"]
+        tenant = os.environ["INTERNAL_MCP_TENANT"]
+        return request.with_headers(
+            {
+                "Authorization": f"Bearer {bearer}",
+                "X-Tenant": tenant,
+            }
+        )
 ```
 
-The token is read from the environment at request time. It never appears in YAML, prompts, or logs.
+Credentials are read from the environment at request time inside hook code. They never appear in YAML, prompts, or logs, and the hook can construct as many headers or auth parameters as the server requires.
 
 ### Token exchange
 
@@ -226,4 +224,4 @@ token = event.run_context.auth_context.inbound_access_token
 
 ## Security
 
-Hooks are trusted in-process code. The engine never logs auth headers, tokens, HMAC signatures, or hook config values. Your hook code must follow the same rule — never log secrets.
+Hooks are trusted in-process code. The engine never logs auth headers, tokens, or HMAC signatures. Your hook code must follow the same rule — never log secrets.
