@@ -5,13 +5,14 @@ description: Trusted code that runs automatically at fixed lifecycle points — 
 
 ## What are hooks?
 
-Hooks are Python code that the engine runs automatically at specific moments in the request lifecycle. They are **never exposed to the LLM** — the model can't see them, name them, or call them.
+Hooks are Python code that runs automatically at specific moments in the request lifecycle. They are **never exposed to the model** — it can't see them, name them, or call them. That's what separates a hook from a tool.
 
 They're the right place for:
+
 - **Auth** — inject credentials before MCP requests
 - **Audit** — log tool calls and run outcomes
-- **Policy** — block or transform tool results
-- **Context enrichment** — attach identity to a run
+- **Policy** — block or reshape a tool result before it reaches the model
+- **Context enrichment** — attach identity or metadata to a run
 
 ---
 
@@ -19,39 +20,102 @@ They're the right place for:
 
 | | Tool | Hook |
 |---|---|---|
-| Called by | LLM (when it decides to) | Engine (automatically) |
-| Visible to model | Yes | **Never** |
-| Purpose | Do work the model asks for | Auth, audit, policy |
+| Called by | The model, when it decides to | The engine, automatically |
+| Visible to the model | Yes | **Never** |
+| Purpose | Do work the model asked for | Auth, audit, policy |
 
 ---
 
 ## Lifecycle points
 
-```
-on_engine_start          when the engine starts up
-on_engine_stop           when the engine shuts down
+Every point below is a moment the engine will call your hook, if you've declared one for it. Grouped by what part of a request they attach to.
 
-on_run_start             start of a request
-on_run_end               successful request completion
-on_run_error             request failure
+### Engine lifecycle
 
-before_tool_call         before any tool runs (observe only)
-after_tool_call          after a tool succeeds (observe only)
-transform_tool_result    after a tool succeeds — can modify the result
-on_tool_error            when a tool fails
+Fire once per engine process, not per request.
 
-before_mcp_request       before each outgoing MCP HTTP request ← most common
-after_mcp_response       after each MCP HTTP response (observe only)
-```
+<AccordionGroup>
+  <Accordion title="on_engine_start — when the engine boots up">
+    Runs once, before any request is served. Good for validating that required secrets or connections exist.
 
-Most hooks are observe-only. Three can return a modified value:
-- `on_run_start` → updated `RunContext`
-- `before_mcp_request` → updated request with new headers
-- `transform_tool_result` → modified tool result before it reaches the LLM
+    Can modify: nothing — observe only.
+  </Accordion>
+  <Accordion title="on_engine_stop — when the engine shuts down">
+    Runs once, best-effort, during shutdown.
+
+    Can modify: nothing — observe only.
+  </Accordion>
+</AccordionGroup>
+
+### Run lifecycle
+
+Fire once per request.
+
+<AccordionGroup>
+  <Accordion title="on_run_start — a request has just come in">
+    Runs before the graph executes. The only hook that can attach identity/metadata to the run itself.
+
+    Can modify: **yes** — may return an updated run context.
+  </Accordion>
+  <Accordion title="on_run_end — the request finished successfully">
+    Runs after a successful response is ready.
+
+    Can modify: nothing — observe only.
+  </Accordion>
+  <Accordion title="on_run_error — the request failed">
+    Runs when a request fails for any reason. Never masks or replaces the original error.
+
+    Can modify: nothing — observe only.
+  </Accordion>
+</AccordionGroup>
+
+### Tool lifecycle
+
+Fire around every local or MCP tool call.
+
+<AccordionGroup>
+  <Accordion title="before_tool_call — right before a tool runs">
+    Fires for every tool call, local or MCP.
+
+    Can modify: nothing — observe only.
+  </Accordion>
+  <Accordion title="after_tool_call — a tool call just succeeded">
+    Fires only on success.
+
+    Can modify: nothing — observe only.
+  </Accordion>
+  <Accordion title="transform_tool_result — reshape a tool's result before the model sees it">
+    Fires after a tool succeeds, before its result is added to the conversation. The one tool-lifecycle hook that can change what the model actually sees — use it to truncate, redact, or normalize a result.
+
+    Can modify: **yes** — may return an updated result.
+  </Accordion>
+  <Accordion title="on_tool_error — a tool call failed">
+    Fires when a local or MCP tool call raises an error.
+
+    Can modify: nothing — observe only.
+  </Accordion>
+</AccordionGroup>
+
+### MCP lifecycle
+
+Fire around every outgoing MCP HTTP request.
+
+<AccordionGroup>
+  <Accordion title="before_mcp_request — right before an MCP HTTP request goes out">
+    The most commonly used hook — this is where auth headers get attached. Fires for every MCP operation: connecting, listing tools, and calling a tool.
+
+    Can modify: **yes** — may return the request with updated headers.
+  </Accordion>
+  <Accordion title="after_mcp_response — an MCP HTTP response just came back">
+    Fires after every MCP HTTP response, success or error status.
+
+    Can modify: nothing — observe only.
+  </Accordion>
+</AccordionGroup>
 
 ---
 
-## Declaring hooks in YAML
+## Declaring a hook
 
 ```yaml
 hooks:
@@ -64,23 +128,43 @@ hooks:
   after_tool_call:
     - plugin: audit
       method: record_tool_call
-      failure_policy: warn   # log and continue on failure; don't abort
-
-  on_run_error:
-    - plugin: audit
-      method: record_failure
+      failure_policy: warn
 ```
 
-| Field | Description |
-|-------|-------------|
-| `plugin` | Logical plugin id, resolved through `plugins/plugins.toml` |
-| `method` | Method name on the plugin class |
-| `config` | Optional config passed to the hook on each call |
-| `failure_policy` | `fail` (default) aborts the operation. `warn` logs and continues. |
+Each lifecycle point above can take a list of hook entries — the fields for one entry:
 
-<Warning>
-  Do not put secrets in `config`. Use environment variables and read them inside the hook code. The YAML validator rejects values containing `token`, `secret`, `password`, `api_key`, or `private_key`.
-</Warning>
+<ParamField path="plugin" type="string">
+  Logical plugin id, resolved through `plugins/plugins.toml`. Used together with `method`. Mutually exclusive with `ref`.
+</ParamField>
+
+<ParamField path="method" type="string">
+  The method name to call on the resolved plugin class. Required when using `plugin`.
+</ParamField>
+
+<ParamField path="ref" type="string">
+  A direct import path to the hook function — an advanced alternative to `plugin` + `method`, for manual/legacy wiring. Mutually exclusive with `plugin` + `method`.
+</ParamField>
+
+<ParamField path="config" type="object" default="none">
+  Arbitrary settings passed to the hook on every call.
+
+  <Warning>
+    Never put secrets directly here. Store the secret in an environment variable and reference the variable's *name* — the hook code reads the real value from the environment at call time.
+  </Warning>
+</ParamField>
+
+<ParamField path="failure_policy" type="string" default="fail">
+  What happens if the hook itself raises an error.
+
+  <Expandable title="possible values">
+    <ResponseField name="fail" type="string">
+      **Default.** The operation is aborted and the request fails. Use this for anything security-critical, like auth — a broken auth hook should never fail open.
+    </ResponseField>
+    <ResponseField name="warn" type="string">
+      The error is logged and the request continues as if the hook had succeeded. Use this for best-effort work like audit logging, where a logging failure shouldn't block the user.
+    </ResponseField>
+  </Expandable>
+</ParamField>
 
 ---
 
@@ -181,25 +265,9 @@ async def trim_result(self, event: HookInvocation) -> ToolResultContext:
 
 ---
 
-## Failure policy
-
-By default, hooks are **fail-closed** — if a hook fails, the operation is aborted. This is the right default for auth hooks.
-
-For audit or logging hooks that shouldn't block the user, use `failure_policy: warn`:
-
-```yaml
-hooks:
-  after_tool_call:
-    - plugin: audit
-      method: record_tool_call
-      failure_policy: warn
-```
-
----
-
 ## Passing identity into hooks
 
-The embedding application can pass per-request identity through `RunContext`:
+The embedding application can pass per-request identity through the run context:
 
 ```python
 from agent_engine.runtime.hooks import AuthContext, RunContext
