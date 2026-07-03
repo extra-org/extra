@@ -372,6 +372,8 @@ make lint        # lint (ruff check)
 make typecheck   # type-check (mypy)
 make test        # run tests (pytest)
 make check       # lint + typecheck + test (run before finishing a task)
+make validate    # offline: validate the flagship example
+make inspect     # offline: summarize the flagship example (agents/MCPs/hooks)
 ```
 
 Leave the environment with `deactivate`. For a clean rebuild:

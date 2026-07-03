@@ -37,6 +37,8 @@ pick the next task → read its skill(s) → make a small change → run `make c
 | `make typecheck` | Type-check the codebase (mypy).                            |
 | `make test`    | Run the test suite (pytest).                                 |
 | `make check`   | lint + typecheck + test. **Must pass before finishing.**     |
+| `make validate` | Offline: validate the flagship example (no LLM/network calls). |
+| `make inspect` | Offline: summarize the flagship example (agents/MCPs/hooks).  |
 | `make clean`   | Remove caches and build artifacts.                           |
 
 Current CLI checks:
