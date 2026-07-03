@@ -9,20 +9,24 @@ description: Every field you can declare in agents.yml, with examples across dif
 
 You still write the prompt files it references and implement any tools or resolvers you declare — the YAML alone isn't the whole system.
 
-Every top-level key:
+Every top-level key, in the order you'd typically write them:
 
 | Key | Required | What it declares |
 |-----|----------|-------------------|
 | [`system`](#system) | Yes | Name and metadata for this system |
 | [`defaults`](#defaults) | No | The default model, used unless a node overrides it |
-| [`orchestrators`](#orchestrators) | No | Routers that decide which agent handles a request |
-| [`agents`](#agents) | No | Executors that run an LLM and can call tools |
 | [`tools`](#tools) | No | Python functions agents can call |
 | [`mcps`](#mcps) | No | Remote MCP servers agents can call |
 | [`resolvers`](#resolvers) | No | Values auto-filled into prompts before an agent runs |
+| [`orchestrators`](#orchestrators) | See note below | Routers that decide which agent handles a request |
+| [`agents`](#agents) | See note below | Executors that run an LLM and can call tools |
 | [`hooks`](#hooks) | No | Trusted code that runs at fixed points — auth, audit |
 | [`plugins`](#plugins) | No | Where Extra finds your plugin code |
 | [`graph`](#graph) | Yes | How everything above connects — the routing topology |
+
+<Note>
+  `orchestrators` and `agents` are each individually optional, but `graph` must have a root, and that root has to be declared in one of them. In practice: a single-agent system needs only `agents`; anything routing between multiple agents needs at least one orchestrator too.
+</Note>
 
 Extra validates the whole file before running anything — bad references, missing prompt files, or broken graph structure fail immediately with a clear error, not at request time.
 
@@ -92,118 +96,9 @@ For Bedrock, `region` can be omitted if `AWS_REGION` or `AWS_DEFAULT_REGION` is 
 
 ---
 
-## `orchestrators`
-
-An orchestrator is a **router**. It reads the incoming message, looks at its children's `description` fields, and decides which child should handle it. It never calls tools or MCP servers itself — routing is its only job.
-
-```yaml
-orchestrators:
-  router:
-    name: "Support Router"
-    description: "Routes customer requests to the right department."
-    model:
-      provider: anthropic
-      name: claude-haiku-4-5    # routing only — a fast model is enough
-      temperature: 0.0
-    prompts:
-      orchestrator: "prompts/router/orchestrator.md"
-      system: "prompts/router/system.md"   # optional
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | No | Display name. Defaults to the key. |
-| `description` | No | What a *parent* orchestrator reads to decide when to route here. |
-| `model` | No | Overrides `defaults.model`. Full replacement. |
-| `prompts.orchestrator` | **Yes** | The routing instructions — see below. |
-| `prompts.system` | No | Additional system context. |
-| `prompts.user` | No | User-turn context injection. |
-
-### Writing the orchestrator prompt
-
-`prompts.orchestrator` points to a Markdown file containing the actual instructions the router follows. This is the file's full content — nothing more is needed:
-
-```markdown prompts/router/orchestrator.md
-You are a customer support router for an online store.
-Route the user to the most relevant department based on their message.
-If it's unclear which department applies, ask one clarifying question before routing.
-```
-
-The router sees this prompt plus every child's `description`. It picks the best match — it doesn't need to know how each child works internally.
-
----
-
-## `agents`
-
-An agent is an **executor**. Once the router sends it a request, it runs an LLM with its own prompt and can call whatever tools or MCP servers it's been given access to.
-
-```yaml
-agents:
-  orders_agent:
-    name: "Orders"
-    description: "Handles order status, tracking, and delivery questions."
-    model:
-      provider: anthropic
-      name: claude-sonnet-4-6
-    prompts:
-      system: "prompts/orders/system.md"
-      user: "prompts/orders/user.md"       # optional
-    resolvers: [current_date, customer_name]
-    tools: [get_order_status, cancel_order]
-    mcps: [orders_mcp]
-
-  returns_agent:
-    name: "Returns"
-    description: "Handles return requests, refund status, and return policy questions."
-    prompts:
-      system: "prompts/returns/system.md"
-    tools: [create_return_request]
-    mcps: [orders_mcp]
-
-  catalog_agent:
-    name: "Catalog"
-    description: "Answers questions about products, availability, and specifications."
-    prompts:
-      system: "prompts/catalog/system.md"
-    mcps: [catalog_mcp]
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | No | Display name. |
-| `description` | Required if this agent sits under an orchestrator | Tells the router when to send requests here. |
-| `model` | No | Overrides `defaults.model`. Full replacement. |
-| `prompts.system` | No | Defines the agent's behavior and persona. |
-| `prompts.user` | No | User-turn context injection. |
-| `resolvers` | No | Resolver ids to run before this agent executes. |
-| `tools` | No | Tool ids this agent is allowed to call. |
-| `mcps` | No | MCP server ids this agent has access to. |
-| `protected` | No | `true` to gate this node behind [access control](#access-control). |
-
-An agent only ever sees the tools, MCP servers, and resolvers it explicitly lists — nothing is shared by default.
-
-### Writing the system prompt
-
-```markdown prompts/orders/system.md
-You are an orders specialist for Acme Store.
-Today's date is {{current_date}}.
-You are helping {{customer_name}}.
-
-You can:
-- Check order status and tracking
-- Cancel orders that haven't shipped yet
-- Escalate to a human agent for complex issues
-
-You cannot process refunds — direct those questions to the returns team.
-```
-
-`{{current_date}}` and `{{customer_name}}` are filled in automatically before the agent runs — see [resolvers](#resolvers) below.
-
----
-
 ## `tools`
 
-A tool is a Python function the agent can choose to call. You describe what it does; Extra generates the stub; you write the logic.
+A tool is a Python function an agent can choose to call. You describe what it does; Extra generates the stub; you write the logic.
 
 ```yaml
 tools:
@@ -237,7 +132,7 @@ def get_order_status(order_id: str) -> dict:
     }
 ```
 
-Give every agent access by adding the tool id to its `tools` list — see [`agents`](#agents) above.
+Give an agent access by adding the tool id to its `tools` list — see [`agents`](#agents) below.
 
 ---
 
@@ -336,6 +231,115 @@ Both point at Python code — the difference is *when* they run and *who* decide
 
 ---
 
+## `orchestrators`
+
+An orchestrator is a **router**. It reads the incoming message, looks at its children's `description` fields, and decides which child should handle it. It never calls tools or MCP servers itself — routing is its only job.
+
+```yaml
+orchestrators:
+  router:
+    name: "Support Router"
+    description: "Routes customer requests to the right department."
+    model:
+      provider: anthropic
+      name: claude-haiku-4-5    # routing only — a fast model is enough
+      temperature: 0.0
+    prompts:
+      orchestrator: "prompts/router/orchestrator.md"
+      system: "prompts/router/system.md"   # optional
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | No | Display name. Defaults to the key. |
+| `description` | No | What a *parent* orchestrator reads to decide when to route here. |
+| `model` | No | Overrides `defaults.model`. Full replacement. |
+| `prompts.orchestrator` | **Yes** | The routing instructions — see below. |
+| `prompts.system` | No | Additional system context. |
+| `prompts.user` | No | User-turn context injection. |
+
+### Writing the orchestrator prompt
+
+`prompts.orchestrator` points to a Markdown file containing the actual instructions the router follows. This is the file's full content — nothing more is needed:
+
+```markdown prompts/router/orchestrator.md
+You are a customer support router for an online store.
+Route the user to the most relevant department based on their message.
+If it's unclear which department applies, ask one clarifying question before routing.
+```
+
+The router sees this prompt plus every child's `description`. It picks the best match — it doesn't need to know how each child works internally.
+
+---
+
+## `agents`
+
+An agent is an **executor**. Once the router sends it a request, it runs an LLM with its own prompt and can call whatever tools or MCP servers it's been given access to — declared above under [`tools`](#tools), [`mcps`](#mcps), and [`resolvers`](#resolvers).
+
+```yaml
+agents:
+  orders_agent:
+    name: "Orders"
+    description: "Handles order status, tracking, and delivery questions."
+    model:
+      provider: anthropic
+      name: claude-sonnet-4-6
+    prompts:
+      system: "prompts/orders/system.md"
+      user: "prompts/orders/user.md"       # optional
+    resolvers: [current_date, customer_name]
+    tools: [get_order_status, cancel_order]
+    mcps: [orders_mcp]
+
+  returns_agent:
+    name: "Returns"
+    description: "Handles return requests, refund status, and return policy questions."
+    prompts:
+      system: "prompts/returns/system.md"
+    tools: [create_return_request]
+    mcps: [orders_mcp]
+
+  catalog_agent:
+    name: "Catalog"
+    description: "Answers questions about products, availability, and specifications."
+    prompts:
+      system: "prompts/catalog/system.md"
+    mcps: [catalog_mcp]
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | No | Display name. |
+| `description` | Required if this agent sits under an orchestrator | Tells the router when to send requests here. |
+| `model` | No | Overrides `defaults.model`. Full replacement. |
+| `prompts.system` | No | Defines the agent's behavior and persona. |
+| `prompts.user` | No | User-turn context injection. |
+| `resolvers` | No | Resolver ids to run before this agent executes. |
+| `tools` | No | Tool ids this agent is allowed to call. |
+| `mcps` | No | MCP server ids this agent has access to. |
+| `protected` | No | `true` to gate this node behind [access control](#access-control). |
+
+An agent only ever sees the tools, MCP servers, and resolvers it explicitly lists — nothing is shared by default.
+
+### Writing the system prompt
+
+```markdown prompts/orders/system.md
+You are an orders specialist for Acme Store.
+Today's date is {{current_date}}.
+You are helping {{customer_name}}.
+
+You can:
+- Check order status and tracking
+- Cancel orders that haven't shipped yet
+- Escalate to a human agent for complex issues
+
+You cannot process refunds — direct those questions to the returns team.
+```
+
+`{{current_date}}` and `{{customer_name}}` are filled in automatically before the agent runs — see [resolvers](#resolvers) above.
+
+---
+
 ## `hooks`
 
 A hook is trusted code that runs automatically at a fixed point in the request lifecycle — never exposed to the model, never chosen by it. The most common use is injecting auth headers before an MCP call:
@@ -352,6 +356,19 @@ hooks:
 This runs before every outgoing MCP request and attaches an `Authorization` header read from the environment — the token never touches a prompt, a log line, or the YAML file itself.
 
 Full list of lifecycle points, audit hooks, and result-transform examples: [Runtime Hooks](/docs/runtime-hooks).
+
+---
+
+## `plugins`
+
+Tells Extra where to find your plugin code, so imports work regardless of which directory you run commands from.
+
+```yaml
+plugins:
+  import_roots: ["."]
+```
+
+Set this once, at the project root, and forget about it.
 
 ---
 
@@ -401,19 +418,6 @@ At runtime, `main_router` first decides between `store_router`, `account_agent`,
 - Every key must already be declared under `orchestrators` or `agents`.
 - Orchestrators can have children; agents are leaves.
 - No cycles.
-
----
-
-## `plugins`
-
-Tells Extra where to find your plugin code, so imports work regardless of which directory you run commands from.
-
-```yaml
-plugins:
-  import_roots: ["."]
-```
-
-Set this once, at the project root, and forget about it.
 
 ---
 
