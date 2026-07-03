@@ -65,7 +65,12 @@ Tags are sent as the `X-MCP-Tool-Tag` header during tool discovery. The server f
 
 Multiple tags are sent comma-joined: `X-MCP-Tool-Tag: orders,returns`
 
-**Custom transport** — if your server expects a different header or a query param:
+**Custom transport** — if your server expects a different header or a query param, `tool_tag_transport` supports two types:
+
+| `type` | Where the tag goes | Required field |
+|--------|--------------------|-----------------|
+| `header` | A custom request header | `header_name` |
+| `query_param` | A query string parameter on the MCP `url` | `param_name` |
 
 ```yaml
 mcps:

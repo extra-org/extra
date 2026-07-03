@@ -173,15 +173,38 @@ mcps:
     tool_tags: ["admin"]         # admin_agent sees write tools
 ```
 
-By default, tags are sent as an `X-MCP-Tool-Tag` header. If your server expects something else:
+By default, tags are sent as an `X-MCP-Tool-Tag` header. If your server expects something else, set `tool_tag_transport` to one of two types:
 
-```yaml
+| `type` | Where the tag goes | Required field |
+|--------|--------------------|-----------------|
+| `header` | A custom request header, instead of `X-MCP-Tool-Tag` | `header_name` — the header to use |
+| `query_param` | A query string parameter appended to the MCP `url` | `param_name` — the parameter name |
+
+<CodeGroup>
+```yaml Custom header
+mcps:
+  internal_api:
+    url: "https://internal.acme.com/mcp"
+    tool_tags: ["v2"]
+    tool_tag_transport:
+      type: header
+      header_name: "X-Internal-Tag"
+    # sends: X-Internal-Tag: v2
+```
+
+```yaml Query parameter
 mcps:
   legacy_api:
     url: "https://legacy.acme.com/mcp"
     tool_tags: ["v2"]
-    tool_tag_transport: { type: query_param, param_name: "tag" }
+    tool_tag_transport:
+      type: query_param
+      param_name: "tag"
+    # requests: https://legacy.acme.com/mcp?tag=v2
 ```
+</CodeGroup>
+
+Pick whichever matches how your MCP server actually reads the tag — check its docs or ask whoever built it. `type` must be exactly `header` or `query_param`; anything else fails validation with a clear error.
 
 ---
 
