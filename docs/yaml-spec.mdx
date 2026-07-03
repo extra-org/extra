@@ -26,21 +26,7 @@ Every top-level key:
 
 Extra validates the whole file before running anything — bad references, missing prompt files, or broken graph structure fail immediately with a clear error, not at request time.
 
----
-
-## Running example
-
-Every example on this page builds toward the same system: a customer support bot for an online store. It routes incoming messages to the right department, and each department has its own tools and data.
-
-```text
-User message
-     │
-     ▼
-  router                  orchestrator — decides where to send the request
-  ├── orders_agent        handles order status, tracking
-  ├── returns_agent       handles refunds and returns
-  └── catalog_agent       handles product questions
-```
+Every example below builds toward one running system: a customer support bot for an online store, with separate agents for orders, returns, and catalog questions.
 
 ---
 
@@ -372,6 +358,20 @@ Full list of lifecycle points, audit hooks, and result-transform examples: [Runt
 ## `graph`
 
 `graph` is where routing topology is declared. Indentation defines parent/child relationships. There is exactly one root — the entry point every request hits first.
+
+Here's the running example we've been building — one orchestrator routing to three agents:
+
+```text
+User message
+     │
+     ▼
+  router                  orchestrator — decides where to send the request
+  ├── orders_agent        handles order status, tracking
+  ├── returns_agent       handles refunds and returns
+  └── catalog_agent       handles product questions
+```
+
+The YAML is a direct translation of that tree:
 
 ```yaml
 graph:
