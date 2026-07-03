@@ -5,30 +5,24 @@ description: Every field you can declare in agents.yml, with examples across dif
 
 ## What this file does
 
-`agents.yml` is the complete definition of your agent system. It declares every agent, what each one can do, and how requests are routed between them. Extra reads this file, validates it, and runs a live system from it — nothing else is required.
+`agents.yml` is the complete definition of your agent system. It declares every agent, what each one can do, and how requests are routed between them. Extra reads this file, validates it, and compiles it into a running system.
 
-A spec has two parts:
+The YAML alone isn't the whole system — you still write the prompt files it references, and implement any tools or resolvers you declare. `agentctl generate` scaffolds all of that for you from the spec, so you fill in logic, not boilerplate.
 
-- **Declarations** — the building blocks: agents, orchestrators, tools, MCP servers, resolvers, hooks.
-- **`graph`** — how those blocks connect at runtime. Indentation is the routing topology.
+Every top-level key:
 
-```yaml
-# Declarations — what exists
-system: ...
-defaults: ...
-mcps: ...
-tools: ...
-resolvers: ...
-orchestrators: ...
-agents: ...
-hooks: ...
-
-# Graph — how it connects
-graph:
-  root_orchestrator:
-    child_agent_a:
-    child_agent_b:
-```
+| Key | Required | What it declares |
+|-----|----------|-------------------|
+| [`system`](#system) | Yes | Name and metadata for this system |
+| [`graph`](#graph) | Yes | How agents and orchestrators connect — the routing topology |
+| [`orchestrators`](#orchestrators) | No | Routers that decide which agent handles a request |
+| [`agents`](#agents) | No | Executors that run an LLM and can call tools |
+| [`defaults`](#defaults) | No | The default model, used unless a node overrides it |
+| [`tools`](#tools) | No | Python functions agents can call |
+| [`mcps`](#mcps) | No | Remote MCP servers agents can call |
+| [`resolvers`](#resolvers) | No | Values auto-filled into prompts before an agent runs |
+| [`hooks`](#hooks) | No | Trusted code that runs at fixed points — auth, audit |
+| [`plugins`](#plugins) | No | Where Extra finds your plugin code |
 
 Extra validates the whole file before running anything — bad references, missing prompt files, or broken graph structure fail immediately with a clear error, not at request time.
 
@@ -38,17 +32,15 @@ Extra validates the whole file before running anything — bad references, missi
 
 Every example on this page builds toward the same system: a customer support bot for an online store. It routes incoming messages to the right department, and each department has its own tools and data.
 
-<Frame>
-```
+```text
 User message
      │
      ▼
-  router          orchestrator — decides where to send the request
-  ├── orders_agent     handles order status, tracking
-  ├── returns_agent     handles refunds and returns
-  └── catalog_agent     handles product questions
+  router                  orchestrator — decides where to send the request
+  ├── orders_agent        handles order status, tracking
+  ├── returns_agent       handles refunds and returns
+  └── catalog_agent       handles product questions
 ```
-</Frame>
 
 ---
 
