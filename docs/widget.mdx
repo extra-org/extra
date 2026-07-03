@@ -1,0 +1,146 @@
+---
+title: Embeddable Widget
+description: Add a chat widget to any web app with a single script tag.
+---
+
+## Overview
+
+The widget is a standard Web Component (`<agent-chat>`). Drop one script tag and one HTML element into any page — React, Angular, Vue, plain HTML — and it works. The host app doesn't need to install React or any chat dependencies.
+
+Requires `agent-manager` running (not `agentctl serve`). See [Quickstart — Path 2](/docs/quickstart#path-2).
+
+---
+
+## Basic embed
+
+```html
+<script type="module" src="https://your-backend.example/widget.js"></script>
+<agent-chat title="Support" color="#6366f1"></agent-chat>
+```
+
+---
+
+## Modes
+
+### Floating (launcher button)
+
+A circular button in the corner. Clicking it opens the chat panel.
+
+```html
+<agent-chat
+  title="Support"
+  color="#6366f1"
+  greeting="Hi! How can I help you today?"
+  mode="floating"
+  position="bottom-right">
+</agent-chat>
+```
+
+`position` options: `bottom-right` (default), `bottom-left`
+
+### Inline
+
+Renders as a fixed panel directly in the page — no launcher button.
+
+```html
+<agent-chat
+  title="Assistant"
+  color="#7c3aed"
+  mode="inline">
+</agent-chat>
+```
+
+---
+
+## All attributes
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `title` | `"Assistant"` | Header text |
+| `color` | `"#6366f1"` | Accent color (launcher button, send button, focus ring) |
+| `greeting` | — | First message shown when the chat opens |
+| `mode` | `"floating"` | `"floating"` or `"inline"` |
+| `position` | `"bottom-right"` | Floating position: `"bottom-right"` or `"bottom-left"` |
+
+---
+
+## Script-only embed (no HTML tag)
+
+For apps where you can only inject a `<script>` — like a CMS or a platform that restricts HTML — the widget auto-mounts if you set `window.agentChatConfig`:
+
+```html
+<script>
+  window.agentChatConfig = {
+    title: "Support",
+    color: "#6366f1",
+    greeting: "Hi! How can I help?",
+    mode: "floating"
+  };
+</script>
+<script type="module" src="https://your-backend.example/widget.js"></script>
+```
+
+If no `<agent-chat>` element exists on the page, the widget creates one on `<body>` automatically.
+
+---
+
+## Framework integration
+
+### React
+
+```tsx
+export function SupportChat() {
+  return <agent-chat title="Support" color="#6366f1" mode="floating" />;
+}
+```
+
+### Angular
+
+Allow custom elements in your module:
+
+```ts
+import { CUSTOM_ELEMENTS_SCHEMA, NgModule } from "@angular/core";
+
+@NgModule({
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
+})
+export class AppModule {}
+```
+
+Then use it in a template:
+
+```html
+<agent-chat title="Support" color="#6366f1"></agent-chat>
+```
+
+### Vue / plain HTML
+
+No setup needed — just the script tag and the element.
+
+---
+
+## Listening to events
+
+The widget emits a DOM event after each answer, with routing and tool metadata:
+
+```js
+document.querySelector("agent-chat").addEventListener("agent-chat:answer", (e) => {
+  console.log(e.detail.answer);        // final text response
+  console.log(e.detail.visited);       // routing path, e.g. ["router", "router/orders_agent"]
+  console.log(e.detail.used_tools);    // tools called during this run
+});
+```
+
+Only safe metadata is exposed — no internal reasoning, no prompt content.
+
+---
+
+## Streaming
+
+The widget connects to the streaming endpoint (`POST /conversations/{id}/messages/stream`) and renders tokens as they arrive. If streaming fails before a usable answer, it falls back to the standard endpoint automatically.
+
+---
+
+## Session recovery
+
+The widget stores the `conversation_id` in `localStorage`. If the backend restarts and no longer knows that conversation, the widget detects it, clears the stale id, and starts a fresh conversation automatically — no action needed from the user.

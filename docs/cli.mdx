@@ -1,0 +1,137 @@
+---
+title: CLI Reference
+description: All agentctl commands and their flags.
+---
+
+## Installation
+
+```bash
+pip install agent-engine
+agentctl --help
+```
+
+Global flag available on every command:
+
+```bash
+agentctl --log-level DEBUG|INFO|WARNING|ERROR <command>
+```
+
+---
+
+## Commands
+
+### `validate`
+
+Check a spec file offline — no LLM calls, no network, no MCP connections.
+
+```bash
+agentctl validate agents.yml
+```
+
+Checks schema, all references (tools, resolvers, MCPs), prompt file paths, graph structure, and imports any declared hooks to verify they load. Exits non-zero on any error.
+
+---
+
+### `inspect`
+
+Print a summary of the spec — agents, orchestrators, MCP servers, hooks, and tool tags — without running anything.
+
+```bash
+agentctl inspect agents.yml
+```
+
+Hook config is shown as key names only, never values. MCP tool tags and transport type are shown per server.
+
+---
+
+### `generate`
+
+Create plugin stubs from the spec. Safe to run repeatedly — existing implementations are preserved by default.
+
+```bash
+agentctl generate agents.yml                          # all stubs
+agentctl generate agents.yml --mode all               # regenerate everything
+agentctl generate agents.yml --mode children          # agent resolver files only
+agentctl generate agents.yml --mode child --agent orders_agent  # one agent
+agentctl generate agents.yml --force                  # overwrite existing files
+```
+
+Generates:
+- `plugins/resolvers/shared.py` — `SharedResolver` with shared methods
+- `plugins/resolvers/<agent_id>.py` — per-agent `Resolver` subclass
+- `plugins/tools/<tool_id>.py` — tool stubs
+- `plugins/hooks/<hook_id>.py` — hook stubs
+- `plugins/plugins.toml` — plugin manifest
+
+---
+
+### `run`
+
+Send one message through the engine. Persists the conversation via `agent_manager`.
+
+```bash
+agentctl run --config agents.yml --message "Where is my order?"
+agentctl run --config agents.yml --message "Where is my order?" --stream
+agentctl run --config agents.yml --message "..." --session-id abc123
+agentctl run --config agents.yml --message "..." --user-id user-456
+agentctl run --config agents.yml --message "..." --env .env
+```
+
+| Flag | Description |
+|------|-------------|
+| `--config` | Path to the spec file |
+| `--message` | The user message |
+| `--stream` | Print tokens as they arrive |
+| `--session-id` | Attach to an existing session |
+| `--user-id` | Associate with a user |
+| `--env` | Load environment variables from a file |
+
+---
+
+### `serve`
+
+Start the stateless engine HTTP API. No persistence, no widget.
+
+```bash
+agentctl serve --config agents.yml
+agentctl serve --config agents.yml --host 0.0.0.0 --port 8080
+agentctl serve --config agents.yml --env .env
+```
+
+Endpoints: `GET /health`, `POST /invoke`, `POST /stream`
+
+Default port: **8080**
+
+---
+
+### `chat`
+
+Interactive developer console. Keeps one engine alive, lets you ask multiple questions without restarting. Nothing is persisted.
+
+```bash
+# Local engine
+agentctl chat --config agents.yml
+agentctl chat --config agents.yml --stream
+
+# Against a running agentctl serve
+agentctl chat --url http://localhost:8080
+agentctl chat --url http://localhost:8080 --stream
+```
+
+Pass `--config` (local) or `--url` (remote), not both. Type `exit`, `quit`, or press Ctrl-C to stop.
+
+---
+
+## agent-manager
+
+Separate command for the conversation layer + widget:
+
+```bash
+agent-manager --config agents.yml
+agent-manager --config agents.yml --host 0.0.0.0 --port 8100
+agent-manager --config agents.yml --env .env
+```
+
+Default port: **8100**
+
+Endpoints: `POST /conversations`, `GET /conversations/{id}/messages`, `POST /conversations/{id}/messages`, `POST /conversations/{id}/messages/stream`, `GET /widget.js`

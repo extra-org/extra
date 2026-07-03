@@ -1,0 +1,54 @@
+---
+title: Execution Limits
+description: Built-in guardrails that cap tool calls and iteration loops per run.
+---
+
+## Why limits exist
+
+Without limits, a stuck model can loop forever — calling the same tool repeatedly, or an orchestrator delegating endlessly. Each loop costs money and time.
+
+The engine enforces these caps at the runtime level, not through prompts. A prompt can ask the model to behave; only the runtime can guarantee it stops.
+
+---
+
+## Default limits
+
+| Limit | Default | Meaning |
+|-------|---------|---------|
+| `max_iterations` | 20 | Model→tools→model rounds per node |
+| `max_tool_calls` | 10 | Total tool calls per run (local + MCP combined) |
+| `max_tool_calls_per_agent` | 4 | Tool calls per agent per run |
+| `max_child_agent_calls` | 8 | Times an orchestrator can call child agents |
+| `allow_duplicate_tool_calls` | false | Block identical repeated calls |
+
+A **duplicate** is the same tool called with identical arguments in the same run.
+
+These defaults apply automatically even with no `execution:` block in your YAML.
+
+---
+
+## Configuring limits
+
+Add an `execution:` block to your spec. Any omitted key keeps its default.
+
+```yaml
+execution:
+  max_iterations: 30
+  max_tool_calls: 20
+  max_tool_calls_per_agent: 8
+  max_child_agent_calls: 10
+  allow_duplicate_tool_calls: false
+```
+
+Limits are validated at parse time — invalid values (non-integers, wrong types) fail `agentctl validate` with a clear error.
+
+---
+
+## What happens when a limit is hit
+
+The run **degrades gracefully** — no exception, no crash.
+
+- **Tool/child-agent limits and duplicates** — the call is blocked. The model receives a short message like *"Tool call limit reached, finish with what you have."* and naturally wraps up.
+- **`max_iterations`** — the node's loop stops and returns the latest model response.
+
+The engine logs a warning with the run id, limit name, and current count. It never logs prompts, tool arguments, or secrets.

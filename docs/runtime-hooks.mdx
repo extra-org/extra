@@ -1,0 +1,229 @@
+---
+title: Runtime Hooks
+description: Trusted code that runs automatically at fixed lifecycle points — for auth, policy, and audit.
+---
+
+## What are hooks?
+
+Hooks are Python code that the engine runs automatically at specific moments in the request lifecycle. They are **never exposed to the LLM** — the model can't see them, name them, or call them.
+
+They're the right place for:
+- **Auth** — inject credentials before MCP requests
+- **Audit** — log tool calls and run outcomes
+- **Policy** — block or transform tool results
+- **Context enrichment** — attach identity to a run
+
+---
+
+## Hooks vs. tools
+
+| | Tool | Hook |
+|---|---|---|
+| Called by | LLM (when it decides to) | Engine (automatically) |
+| Visible to model | Yes | **Never** |
+| Purpose | Do work the model asks for | Auth, audit, policy |
+
+---
+
+## Lifecycle points
+
+```
+on_engine_start          when the engine starts up
+on_engine_stop           when the engine shuts down
+
+on_run_start             start of a request
+on_run_end               successful request completion
+on_run_error             request failure
+
+before_tool_call         before any tool runs (observe only)
+after_tool_call          after a tool succeeds (observe only)
+transform_tool_result    after a tool succeeds — can modify the result
+on_tool_error            when a tool fails
+
+before_mcp_request       before each outgoing MCP HTTP request ← most common
+after_mcp_response       after each MCP HTTP response (observe only)
+```
+
+Most hooks are observe-only. Three can return a modified value:
+- `on_run_start` → updated `RunContext`
+- `before_mcp_request` → updated request with new headers
+- `transform_tool_result` → modified tool result before it reaches the LLM
+
+---
+
+## Declaring hooks in YAML
+
+```yaml
+hooks:
+  before_mcp_request:
+    - plugin: mcp_auth
+      method: before_mcp_request
+      config:
+        credential_env: INTERNAL_MCP_SECRET
+
+  after_tool_call:
+    - plugin: audit
+      method: record_tool_call
+      failure_policy: warn   # log and continue on failure; don't abort
+
+  on_run_error:
+    - plugin: audit
+      method: record_failure
+```
+
+| Field | Description |
+|-------|-------------|
+| `plugin` | Logical plugin id, resolved through `plugins/plugins.toml` |
+| `method` | Method name on the plugin class |
+| `config` | Optional config passed to the hook on each call |
+| `failure_policy` | `fail` (default) aborts the operation. `warn` logs and continues. |
+
+<Warning>
+  Do not put secrets in `config`. Use environment variables and read them inside the hook code. The YAML validator rejects values containing `token`, `secret`, `password`, `api_key`, or `private_key`.
+</Warning>
+
+---
+
+## MCP auth {#mcp-auth}
+
+The most common hook. Adds auth headers to every outgoing MCP request so private servers work — without putting tokens in prompts or YAML.
+
+**YAML:**
+```yaml
+hooks:
+  before_mcp_request:
+    - plugin: mcp_auth
+      method: before_mcp_request
+      config:
+        credential_env: INTERNAL_MCP_SECRET
+```
+
+**`plugins/plugins.toml`:**
+```toml
+[hooks.plugins]
+mcp_auth = "plugins.hooks.mcp_auth:McpAuthHook"
+```
+
+**`plugins/hooks/mcp_auth.py`:**
+```python
+import os
+from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
+
+class McpAuthHook:
+    def __init__(self, config=None):
+        self.config = config
+
+    async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
+        request = event.payload_as(McpRequestContext)
+        credential = os.environ[dict(event.config or {})["credential_env"]]
+        return request.with_headers({"Authorization": f"Bearer {credential}"})
+```
+
+The token is read from the environment at request time. It never appears in YAML, prompts, or logs.
+
+### Token exchange
+
+If you need to exchange the user's inbound token for an MCP-scoped one:
+
+```python
+async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
+    request = event.payload_as(McpRequestContext)
+    inbound_token = event.run_context.auth_context.inbound_access_token
+    mcp_token = await exchange_token(inbound_token, audience="mcp-service")
+    return request.with_headers({"Authorization": f"Bearer {mcp_token}"})
+```
+
+### HMAC signing
+
+```python
+import hashlib, hmac, os, time
+
+async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
+    request = event.payload_as(McpRequestContext)
+    secret = os.environ["HMAC_SECRET"].encode()
+    ts = str(int(time.time()))
+    sig = hmac.new(secret, f"{ts}:{request.url}".encode(), hashlib.sha256).hexdigest()
+    return request.with_headers({"X-Timestamp": ts, "X-Signature": sig})
+```
+
+---
+
+## Audit hook example
+
+```python
+class AuditHook:
+    async def record_tool_call(self, event: HookInvocation) -> None:
+        call = event.payload_as(ToolCallContext)
+        await audit_log.write({
+            "run_id": event.run_context.run_id,
+            "tool": call.tool_name,
+            "provider": call.provider,
+            "status": call.status,
+            "latency_ms": call.latency_ms,
+        })
+```
+
+Set `failure_policy: warn` on audit hooks — a logging failure shouldn't abort the user's request.
+
+---
+
+## Truncating tool results
+
+Use `transform_tool_result` to shorten large MCP responses before they reach the model:
+
+```python
+async def trim_result(self, event: HookInvocation) -> ToolResultContext:
+    result = event.payload_as(ToolResultContext)
+    if isinstance(result.result, str) and len(result.result) > 2000:
+        return result.with_result(result.result[:2000] + "\n… [truncated]")
+    return result
+```
+
+---
+
+## Failure policy
+
+By default, hooks are **fail-closed** — if a hook fails, the operation is aborted. This is the right default for auth hooks.
+
+For audit or logging hooks that shouldn't block the user, use `failure_policy: warn`:
+
+```yaml
+hooks:
+  after_tool_call:
+    - plugin: audit
+      method: record_tool_call
+      failure_policy: warn
+```
+
+---
+
+## Passing identity into hooks
+
+The embedding application can pass per-request identity through `RunContext`:
+
+```python
+from agent_engine.runtime.hooks import AuthContext, RunContext
+
+ctx = RunContext(
+    user_id="user-123",
+    organization_id="org-7",
+    auth_context=AuthContext(
+        inbound_access_token=request.headers["Authorization"],
+        scopes=("support:read",)
+    )
+)
+result = await engine.run(message, context=ctx)
+```
+
+Inside a hook, access it through `event.run_context`:
+
+```python
+user_id = event.run_context.user_id
+token = event.run_context.auth_context.inbound_access_token
+```
+
+---
+
+## Security
+
+Hooks are trusted in-process code. The engine never logs auth headers, tokens, HMAC signatures, or hook config values. Your hook code must follow the same rule — never log secrets.

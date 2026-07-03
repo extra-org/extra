@@ -1,0 +1,176 @@
+---
+title: MCP & Tools
+description: Connect remote MCP servers and local Python tools to your agents.
+---
+
+## Two ways to give agents capabilities
+
+<CardGroup cols={2}>
+  <Card title="MCP servers" icon="plug">
+    Remote servers you connect by URL. Tools are discovered automatically at startup. The server can be in any language.
+  </Card>
+  <Card title="Python tools" icon="code">
+    Local Python functions. You write the implementation; the engine binds them to agents that declare them.
+  </Card>
+</CardGroup>
+
+From the agent's (and the LLM's) perspective, both look identical — they're just tools the model can call.
+
+---
+
+## MCP servers
+
+Declare a server by URL. The engine connects and discovers its tools automatically at startup.
+
+```yaml
+mcps:
+  orders_mcp:
+    url: "https://api.acme.com/mcp"
+
+  catalog_mcp:
+    url: "https://catalog.acme.com/mcp"
+```
+
+Then give agents access to the servers they need:
+
+```yaml
+agents:
+  orders_agent:
+    description: "Handles order questions."
+    mcps: [orders_mcp]
+
+  catalog_agent:
+    description: "Answers product questions."
+    mcps: [catalog_mcp]
+```
+
+Each agent only sees the MCP tools from its own declared servers.
+
+<Note>
+  MCP connections are created once at startup, not per request. If a server is unreachable, the engine logs a warning and continues — local tools still work.
+</Note>
+
+### Tool tags
+
+If your MCP server groups tools into categories, you can limit which tools an agent sees:
+
+```yaml
+mcps:
+  crm_mcp:
+    url: "https://crm.acme.com/mcp"
+    tool_tags: ["read-only"]       # only discover tools tagged "read-only"
+```
+
+Tags are sent as the `X-MCP-Tool-Tag` header during tool discovery. The server filters — the engine binds only what comes back. The LLM never sees the tags.
+
+Multiple tags are sent comma-joined: `X-MCP-Tool-Tag: orders,returns`
+
+**Custom transport** — if your server expects a different header or a query param:
+
+```yaml
+mcps:
+  legacy_api:
+    url: "https://legacy.acme.com/mcp"
+    tool_tags: ["v2"]
+    tool_tag_transport:
+      type: query_param
+      param_name: "tag"
+      # result: ?tag=v2 appended to the URL
+```
+
+```yaml
+mcps:
+  internal_api:
+    url: "https://internal.acme.com/mcp"
+    tool_tags: ["support"]
+    tool_tag_transport:
+      type: header
+      header_name: "X-Api-Group"
+```
+
+### MCP auth
+
+To add auth headers to outgoing MCP requests, use a `before_mcp_request` hook. The token never appears in the YAML or in prompts. See [Runtime Hooks](/docs/runtime-hooks#mcp-auth).
+
+---
+
+## Python tools
+
+Declare a tool with a description. That description is what the LLM uses to decide whether to call it.
+
+```yaml
+tools:
+  get_order_status:
+    description: "Get the current status and tracking info for an order. Requires an order ID."
+
+  create_return:
+    description: "Open a return request for a delivered order. Requires order ID and reason."
+
+  send_notification:
+    description: "Send an email or SMS notification to the customer."
+```
+
+Agents declare which tools they have access to:
+
+```yaml
+agents:
+  orders_agent:
+    tools: [get_order_status]
+
+  returns_agent:
+    tools: [create_return, send_notification]
+```
+
+An agent can only call tools it explicitly declares. The engine enforces this — the model cannot reach a tool that isn't in its list.
+
+### Implementing a tool
+
+Run `agentctl generate` to create stubs. Then fill in the logic:
+
+```python
+# plugins/tools/get_order_status.py
+
+def get_order_status(order_id: str) -> dict:
+    """Get the current status and tracking info for an order. Requires an order ID."""
+    # your business logic here
+    return {
+        "status": "shipped",
+        "tracking_number": "1Z999AA10123456784",
+        "estimated_delivery": "2026-07-05"
+    }
+```
+
+The docstring becomes the tool description the LLM sees. The engine wraps the function automatically.
+
+<Tip>
+  Write clear descriptions and typed parameters. The LLM reads both when deciding how to call a tool. Vague descriptions lead to wrong or missed tool calls.
+</Tip>
+
+---
+
+## Resolvers vs. tools
+
+Both are Python code. The difference is *when* they run and *who* calls them.
+
+| | Resolver | Tool |
+|---|---|---|
+| Called by | Engine (always, before the node runs) | LLM (when it decides to) |
+| Visible to LLM | No | Yes (name + description) |
+| Token cost | None | Yes |
+| Purpose | Fill `{{variables}}` in prompts | Perform actions on request |
+
+Use a **resolver** for context the prompt always needs: current date, user name, account info.
+
+Use a **tool** for actions the user may or may not need: look up an order, create a return, send a message.
+
+---
+
+## Tool call tracing
+
+Every tool call is tracked in the run result — agent, tool name, provider (local or MCP), success or failure, latency. You can see this in logs and in Langfuse if tracing is enabled.
+
+```
+tools used:
+  * get_order_status [local] succeeded (42ms)
+  * crm_lookup [mcp: crm_mcp] succeeded (118ms)
+```

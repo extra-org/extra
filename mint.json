@@ -1,0 +1,71 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Agent Engine",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#6366f1",
+    "light": "#818cf8",
+    "dark": "#4f46e5",
+    "anchors": {
+      "from": "#6366f1",
+      "to": "#a855f7"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/amitavital/extra"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "docs/quickstart"
+  },
+  "navigation": [
+    {
+      "group": "Get Started",
+      "pages": [
+        "docs/introduction",
+        "docs/quickstart"
+      ]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": [
+        "docs/architecture",
+        "docs/yaml-spec",
+        "docs/prompt-rendering"
+      ]
+    },
+    {
+      "group": "Features",
+      "pages": [
+        "docs/mcp-and-tools",
+        "docs/runtime-hooks",
+        "docs/plugins",
+        "docs/execution-limits"
+      ]
+    },
+    {
+      "group": "Widget",
+      "pages": [
+        "docs/widget"
+      ]
+    },
+    {
+      "group": "Reference",
+      "pages": [
+        "docs/cli",
+        "docs/api",
+        "docs/roadmap"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/amitavital/extra"
+  }
+}

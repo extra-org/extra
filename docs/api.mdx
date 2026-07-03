@@ -1,0 +1,183 @@
+---
+title: HTTP API
+description: REST endpoints for the engine and the conversation layer.
+---
+
+## Two APIs
+
+<CardGroup cols={2}>
+  <Card title="Engine API" icon="bolt">
+    Stateless. Started by `agentctl serve`. Port 8080. Takes a messages array, returns a response. No session management.
+  </Card>
+  <Card title="Conversation API" icon="database">
+    Stateful. Started by `agent-manager`. Port 8100. Manages conversations, history, and SSE streaming. Also serves the widget.
+  </Card>
+</CardGroup>
+
+---
+
+## Engine API
+
+Base URL: `http://localhost:8080`
+
+### `GET /health`
+
+```json
+{ "status": "ok" }
+```
+
+### `POST /invoke`
+
+Send a complete conversation and get a response.
+
+```bash
+curl -X POST http://localhost:8080/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      { "role": "user", "content": "Where is my order #12345?" }
+    ]
+  }'
+```
+
+Response:
+
+```json
+{
+  "answer": "Your order #12345 shipped yesterday and is arriving Thursday.",
+  "visited": ["router", "router/orders_agent"],
+  "used_tools": [
+    { "tool": "get_order_status", "provider": "local", "status": "succeeded" }
+  ]
+}
+```
+
+Headers you include are passed into `ctx` and available to resolvers, tools, and hooks:
+
+```bash
+curl -X POST http://localhost:8080/invoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -H "X-Customer-Id: cust-123" \
+  -d '{ "messages": [...] }'
+```
+
+### `POST /stream`
+
+Same as `/invoke` but streams tokens as Server-Sent Events.
+
+```bash
+curl -X POST http://localhost:8080/stream \
+  -H "Content-Type: application/json" \
+  -d '{ "messages": [{ "role": "user", "content": "Hello" }] }'
+```
+
+Events:
+
+```
+data: {"type": "answer_delta", "delta": "Your "}
+data: {"type": "answer_delta", "delta": "order "}
+data: {"type": "final", "answer": "Your order is on the way.", "visited": [...]}
+```
+
+---
+
+## Conversation API
+
+Base URL: `http://localhost:8100`
+
+Manages multi-turn conversations with history persisted in SQLite (or Postgres via `DATABASE_URL`).
+
+### `POST /conversations`
+
+Create a new conversation.
+
+```bash
+curl -X POST http://localhost:8100/conversations \
+  -H "Content-Type: application/json" \
+  -d '{ "user_id": "user-123" }'
+```
+
+Response:
+
+```json
+{ "id": "conv-abc123", "created_at": "2026-07-02T10:00:00Z" }
+```
+
+### `POST /conversations/{id}/messages`
+
+Send a message. Prior history is assembled automatically.
+
+```bash
+curl -X POST http://localhost:8100/conversations/conv-abc123/messages \
+  -H "Content-Type: application/json" \
+  -d '{ "content": "Where is my order?" }'
+```
+
+Response:
+
+```json
+{
+  "id": "msg-xyz",
+  "role": "assistant",
+  "content": "Your order shipped yesterday.",
+  "visited": ["router", "router/orders_agent"],
+  "used_tools": [...]
+}
+```
+
+### `POST /conversations/{id}/messages/stream`
+
+Same as above but streams via SSE. Preferred by the widget.
+
+```bash
+curl -X POST http://localhost:8100/conversations/conv-abc123/messages/stream \
+  -H "Content-Type: application/json" \
+  -d '{ "content": "Where is my order?" }'
+```
+
+Events:
+
+```
+data: {"type": "answer_delta", "delta": "Your order "}
+data: {"type": "route", "visited": ["router", "router/orders_agent"]}
+data: {"type": "tool_started", "tool": "get_order_status"}
+data: {"type": "tool_succeeded", "tool": "get_order_status", "latency_ms": 42}
+data: {"type": "final", "answer": "Your order shipped yesterday.", "visited": [...]}
+```
+
+### `GET /conversations/{id}/messages`
+
+Retrieve message history for a conversation.
+
+```bash
+curl http://localhost:8100/conversations/conv-abc123/messages
+```
+
+Response:
+
+```json
+[
+  { "role": "user", "content": "Where is my order?" },
+  { "role": "assistant", "content": "Your order shipped yesterday." }
+]
+```
+
+---
+
+## Passing context to plugins
+
+Any HTTP header you include is available in `ctx` inside resolvers, tools, and hooks:
+
+```python
+# In a resolver
+def customer_name(self, ctx) -> str:
+    return ctx.headers.get("X-Customer-Name", "Customer")
+
+# In a hook
+async def before_mcp_request(self, event):
+    token = event.run_context.auth_context.inbound_access_token
+    ...
+```
+
+The `Authorization` header is automatically parsed into `run_context.auth_context.inbound_access_token`.

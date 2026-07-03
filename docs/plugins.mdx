@@ -1,0 +1,173 @@
+---
+title: Plugins
+description: Resolver plugins, the access plugin, and how to generate and implement them.
+---
+
+## Overview
+
+Plugins are where your business logic lives. The engine is generic — it doesn't know what a customer is or what a subscription tier means. You teach it through plugins.
+
+There are three plugin types:
+
+| Plugin | Purpose |
+|--------|---------|
+| **Resolver** | Fill `{{variables}}` in prompts before a node runs |
+| **Tool** | Python functions the LLM can call |
+| **Access** | Decide whether a caller can reach a `protected` node |
+
+All live under a single `plugins/` package, described by one manifest file.
+
+---
+
+## File layout
+
+```
+plugins/
+  __init__.py
+  plugins.toml          ← single manifest for all plugins
+  resolvers/
+    __init__.py
+    shared.py           ← SharedResolver (shared methods)
+    orders_agent.py     ← per-agent Resolver subclass
+    returns_agent.py
+  tools/
+    __init__.py
+    get_order_status.py
+    create_return.py
+  hooks/
+    __init__.py
+    mcp_auth.py
+  access.py             ← access control (only if you use protected nodes)
+```
+
+Run `agentctl generate --config agents.yml` to create all stubs from your YAML.
+
+---
+
+## Resolver plugins
+
+Resolvers fill prompt variables. They run before the agent, they're chosen by the engine (not the LLM), and they cost no tokens.
+
+### Declaration
+
+```yaml
+resolvers:
+  current_date:
+    scope: shared    # generated once on SharedResolver, all agents inherit it
+  customer_name:
+    scope: shared
+  account_tier:
+    scope: agent     # generated per-agent, only agents that declare it get it
+```
+
+### Implementation
+
+`agentctl generate` produces the file layout. Fill in the methods:
+
+```python
+# plugins/resolvers/shared.py
+from datetime import datetime
+
+class SharedResolver:
+    def current_date(self, ctx) -> str:
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def customer_name(self, ctx) -> str:
+        # ctx carries request headers and metadata
+        return ctx.headers.get("X-Customer-Name", "Customer")
+```
+
+```python
+# plugins/resolvers/orders_agent.py
+from plugins.resolvers.shared import SharedResolver
+
+class Resolver(SharedResolver):
+    def account_tier(self, ctx) -> str:
+        customer_id = ctx.headers.get("X-Customer-Id")
+        return lookup_account_tier(customer_id)   # your business logic
+```
+
+`Resolver` inherits `current_date` and `customer_name` from `SharedResolver`. Only `account_tier` (agent-scoped) needs an implementation here.
+
+### Generation modes
+
+```bash
+agentctl generate agents.yml               # default: all stubs
+agentctl generate agents.yml --mode all    # regenerate everything
+agentctl generate agents.yml --mode child --agent orders_agent   # one agent
+```
+
+Without `--force`, existing method bodies are preserved — only missing stubs are added.
+
+### Manifest
+
+The `plugins.toml` manifest maps plugin ids to class paths. Generated automatically:
+
+```toml
+[resolvers]
+shared = "plugins.resolvers.shared:SharedResolver"
+orders_agent = "plugins.resolvers.orders_agent:Resolver"
+
+[tools]
+get_order_status = "plugins.tools.get_order_status:get_order_status"
+
+[hooks.plugins]
+mcp_auth = "plugins.hooks.mcp_auth:McpAuthHook"
+```
+
+---
+
+## Access plugin {#access-plugin}
+
+Marks certain nodes as `protected` and gates them behind your own access logic. Protected nodes are hidden from the router entirely if access is denied — the model never knows they exist.
+
+### Declaration
+
+```yaml
+agents:
+  admin_agent:
+    description: "Internal admin operations."
+    protected: true
+    prompts:
+      system: "prompts/admin/system.md"
+
+  vip_agent:
+    description: "Exclusive offers for VIP members."
+    protected: true
+    prompts:
+      system: "prompts/vip/system.md"
+```
+
+### Implementation
+
+When any node has `protected: true`, the engine requires `plugins/access.py`:
+
+```python
+# plugins/access.py
+class AccessResolver:
+    def can_access(self, ctx, node_id: str) -> bool:
+        if node_id == "admin_agent":
+            return ctx.headers.get("X-Role") == "admin"
+        if node_id == "vip_agent":
+            return ctx.headers.get("X-Customer-Tier") == "vip"
+        return True
+```
+
+`ctx` carries request headers and metadata — use whatever your auth system provides. The engine calls this before routing and removes any node where `can_access` returns `False`.
+
+<Note>
+  `protected: true` without `plugins/access.py` is a startup error. The engine won't serve requests until it's provided.
+</Note>
+
+---
+
+## Making plugins importable
+
+If you run `agentctl` from different directories, declare `import_roots` so Python can always find your package:
+
+```yaml
+plugins:
+  import_roots: ["."]   # resolved relative to the agents.yml file
+```
+
+This is the recommended approach. Alternatively, install your package with `pip install -e .`.

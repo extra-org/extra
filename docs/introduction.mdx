@@ -1,0 +1,77 @@
+---
+title: Introduction
+description: A declarative Python engine for hierarchical multi-agent systems.
+---
+
+## What is Agent Engine?
+
+Agent Engine is an open-source platform for building and running AI agent systems declaratively.
+
+You describe your agents, orchestrators, tools, MCP servers, and their connections in a YAML file.
+The engine validates, compiles, and runs that system — without you writing plumbing code.
+
+```yaml
+system:
+  name: "My AI System"
+
+orchestrators:
+  router:
+    description: "Routes user requests."
+    prompts:
+      orchestrator: "prompts/router.md"
+
+agents:
+  support_agent:
+    description: "Handles support questions."
+    prompts:
+      system: "prompts/support.md"
+    mcps: [helpdesk]
+
+graph:
+  router:
+    support_agent:
+```
+
+## Why Agent Engine?
+
+Building multi-agent systems by hand means re-implementing the same plumbing every time:
+prompt rendering, agent routing, tool wiring, MCP auth, and tracing.
+
+Agent Engine moves that plumbing into a reusable runtime so you focus on **what** your system does,
+not **how** it runs.
+
+<CardGroup cols={2}>
+  <Card title="Declarative" icon="file-code">
+    Define agents, tools, and topology in YAML. No framework boilerplate.
+  </Card>
+  <Card title="LangGraph Runtime" icon="diagram-project">
+    Orchestrators run as supervisors. Children are exposed to the LLM as tools.
+  </Card>
+  <Card title="MCP Native" icon="plug">
+    Connect remote MCP servers by URL. Tools are discovered at build time.
+  </Card>
+  <Card title="Embeddable Widget" icon="message-bot">
+    Drop a `<agent-chat>` element into any web app. No framework required.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+- **YAML-first** — orchestrators, agents, prompts, resolvers, tools, and graph topology in one file
+- **Runtime hooks** — trusted lifecycle code for auth, policy, and audit — never seen by the LLM
+- **MCP auth** — `before_mcp_request` hooks inject headers per request; tokens never reach the model
+- **Conversation persistence** — `agent_manager` layer with SQLite/Postgres and SSE streaming
+- **Embeddable widget** — Shadow DOM-isolated `<agent-chat>` custom element
+- **Observability** — pluggable LangChain callbacks; Langfuse tracing auto-enables via env vars
+- **Docker-ready** — official image, defaults to `serve` mode
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/docs/quickstart">
+    Install and run your first agent in 5 minutes.
+  </Card>
+  <Card title="Architecture" icon="building" href="/docs/architecture">
+    Understand the layers and request flow.
+  </Card>
+</CardGroup>

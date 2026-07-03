@@ -1,0 +1,48 @@
+---
+title: Roadmap
+description: What's implemented, what's coming next.
+---
+
+## Current status
+
+Agent Engine is under active development. The core is stable and production-usable. Some advanced features are still being finalized.
+
+### Implemented
+
+| Area | Status |
+|------|--------|
+| YAML schema & validation | ✅ |
+| Compiler (typed graph) | ✅ |
+| Runtime engine (LangGraph) | ✅ |
+| Orchestrators as supervisors | ✅ |
+| Prompt rendering | ✅ |
+| Resolver plugins | ✅ |
+| Tool plugins (local Python) | ✅ |
+| Remote MCP tools | ✅ |
+| MCP tool tags | ✅ |
+| Runtime hooks (10 lifecycle points) | ✅ |
+| MCP auth via `before_mcp_request` | ✅ |
+| Execution limits (loop guards) | ✅ |
+| CLI (`validate`, `inspect`, `generate`, `run`, `serve`, `chat`) | ✅ |
+| Stateless HTTP API (`/invoke`, `/stream`) | ✅ |
+| Conversation persistence (SQLite/Postgres) | ✅ |
+| SSE streaming | ✅ |
+| Embeddable chat widget | ✅ |
+| Docker image | ✅ |
+| Anthropic + Amazon Bedrock providers | ✅ |
+| Langfuse tracing | ✅ |
+
+### In progress / planned
+
+| Area | Status |
+|------|--------|
+| Access control enforcement (protected nodes) | 🔶 Wired, not fully enforced yet |
+| Per-tool input policies (trusted parameter injection) | Planned |
+| Prompt template caching module | Planned |
+| Structured observability / trace export | Planned |
+| Additional model providers | Planned |
+| Long-term conversation memory | Planned |
+
+<Note>
+  `protected: true` nodes are structurally supported and the access plugin contract is defined, but the security context gate that passes real caller identity into the filter is not yet implemented. Treat protected-node access as not actively enforced in the current release.
+</Note>
