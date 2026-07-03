@@ -1,77 +1,66 @@
 ---
 title: Introduction
-description: A declarative Python engine for hierarchical multi-agent systems.
+description: Extra — an agent engine for hierarchical multi-agent systems.
 ---
 
 ## What is Extra?
 
 Extra is an open-source platform for building and running AI agent systems declaratively.
+You describe your agents, orchestrators, tools, MCP servers, and their connections in a YAML file. Extra validates, compiles, and runs that system — without you writing plumbing code.
 
-You describe your agents, orchestrators, tools, MCP servers, and their connections in a YAML file.
-The engine validates, compiles, and runs that system — without you writing plumbing code.
+Because each agent is strictly scoped to its own domain — with its own tools, prompts, and data sources — the system produces accurate, grounded responses with no hallucination bleeding between domains. One spec file can orchestrate agents across any number of domains, all routing correctly with no coordination code.
 
-```yaml
-system:
-  name: "My AI System"
-
-orchestrators:
-  router:
-    description: "Routes user requests."
-    prompts:
-      orchestrator: "prompts/router.md"
-
-agents:
-  support_agent:
-    description: "Handles support questions."
-    prompts:
-      system: "prompts/support.md"
-    mcps: [helpdesk]
-
-graph:
-  router:
-    support_agent:
-```
+---
 
 ## Why Extra?
 
-Building multi-agent systems by hand means re-implementing the same plumbing every time:
-prompt rendering, agent routing, tool wiring, MCP auth, and tracing.
+Most agent frameworks give you primitives and leave the hard parts to you: routing logic, prompt wiring, tool access control, auth, and tracing — all written by hand, every time.
 
-Extra moves that plumbing into a reusable runtime so you focus on **what** your system does,
-not **how** it runs.
+Extra moves that into a reusable runtime. You declare what your system is. Extra handles how it runs.
+
+---
+
+## How it works
+
+```
+Your YAML spec
+  → Validate        check structure and all references
+  → Compile         build an immutable agent graph
+  → Route           orchestrators direct requests to the right agent
+  → Execute         agents run with only their scoped tools and data
+  → Respond         structured response with routing trace
+```
+
+Each agent sees only what it's supposed to — no cross-contamination, no access to other agents' tools or data.
+
+---
+
+## Key benefits
 
 <CardGroup cols={2}>
-  <Card title="Declarative" icon="file-code">
-    Define agents, tools, and topology in YAML. No framework boilerplate.
+  <Card title="No coordination code" icon="file-code">
+    Define agents and their connections in YAML. Extra handles routing, scoping, and execution.
   </Card>
-  <Card title="LangGraph Runtime" icon="diagram-project">
-    Orchestrators run as supervisors. Children are exposed to the LLM as tools.
+  <Card title="Domain isolation" icon="shield">
+    Each agent is scoped to its domain. No hallucination bleeds between agents.
   </Card>
-  <Card title="MCP Native" icon="plug">
-    Connect remote MCP servers by URL. Tools are discovered at build time.
+  <Card title="Any data source" icon="plug">
+    Connect agents to remote MCP servers, local tools, or your own APIs — in any language.
   </Card>
-  <Card title="Embeddable Widget" icon="message-bot">
-    Drop a `<agent-chat>` element into any web app. No framework required.
+  <Card title="Drop-in widget" icon="message-bot">
+    Embed a full chat interface into any web app with a single HTML tag.
   </Card>
 </CardGroup>
 
-## Key Features
-
-- **YAML-first** — orchestrators, agents, prompts, resolvers, tools, and graph topology in one file
-- **Runtime hooks** — trusted lifecycle code for auth, policy, and audit — never seen by the LLM
-- **MCP auth** — `before_mcp_request` hooks inject headers per request; tokens never reach the model
-- **Conversation persistence** — `agent_manager` layer with SQLite/Postgres and SSE streaming
-- **Embeddable widget** — Shadow DOM-isolated `<agent-chat>` custom element
-- **Observability** — pluggable LangChain callbacks; Langfuse tracing auto-enables via env vars
-- **Docker-ready** — official image, defaults to `serve` mode
+---
 
 ## Next Steps
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/docs/quickstart">
-    Install and run your first agent in 5 minutes.
+    Run your first agent in 5 minutes.
   </Card>
   <Card title="Architecture" icon="building" href="/docs/architecture">
-    Understand the layers and request flow.
+    Understand how Extra routes and executes requests.
   </Card>
 </CardGroup>
