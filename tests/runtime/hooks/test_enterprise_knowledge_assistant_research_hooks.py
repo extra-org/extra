@@ -1,6 +1,6 @@
-"""Behavior tests for the full-test example hook plugin.
+"""Behavior tests for the enterprise-knowledge-assistant example hook plugin.
 
-The directory is named ``full-test``, so import the plugin by file path instead
+The directory contains a hyphen, so import the plugin by file path instead
 of relying on normal package imports.
 """
 
@@ -17,11 +17,20 @@ import pytest
 from agent_engine.runtime.hooks import HookInvocation, RunContext, ToolResultContext
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-RESEARCH_HOOKS = REPO_ROOT / "examples" / "full-test" / "plugins" / "hooks" / "research_hooks.py"
+RESEARCH_HOOKS = (
+    REPO_ROOT
+    / "examples"
+    / "enterprise-knowledge-assistant"
+    / "plugins"
+    / "hooks"
+    / "research_hooks.py"
+)
 
 
 def _load_research_hooks() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("full_test_research_hooks", RESEARCH_HOOKS)
+    spec = importlib.util.spec_from_file_location(
+        "enterprise_knowledge_assistant_research_hooks", RESEARCH_HOOKS
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -29,7 +38,7 @@ def _load_research_hooks() -> ModuleType:
     return module
 
 
-async def test_full_test_hook_truncates_large_deepwiki_results(
+async def test_research_hook_truncates_large_deepwiki_results(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     module = _load_research_hooks()
@@ -59,7 +68,7 @@ async def test_full_test_hook_truncates_large_deepwiki_results(
     assert "XXXXX" not in caplog.text
 
 
-async def test_full_test_hook_leaves_non_deepwiki_results_unchanged() -> None:
+async def test_research_hook_leaves_non_deepwiki_results_unchanged() -> None:
     module = _load_research_hooks()
     hook = module.ResearchHooksHook()
     result = "Z" * 9000

@@ -73,10 +73,10 @@ def test_validate_counts_hooks_for_hook_example() -> None:
     assert result.import_roots  # ".." resolved
 
 
-def test_validate_passes_on_full_test_research_assistant_demo() -> None:
-    """Smoke test for the richest example (`examples/full-test/agents.yaml`).
+def test_validate_passes_on_enterprise_knowledge_assistant_demo() -> None:
+    """Smoke test for the richest example (`examples/enterprise-knowledge-assistant/agents.yaml`).
 
-    This is the AI Research Assistant reference demo — multi-level
+    This is the Enterprise Knowledge Assistant reference demo — multi-level
     orchestration, remote + authenticated MCPs, local tools, shared/agent-scoped
     resolvers, and all five hook lifecycle points. Nothing else in the test
     suite parses it, so it can silently drift out of sync with the schema. This
@@ -84,7 +84,7 @@ def test_validate_passes_on_full_test_research_assistant_demo() -> None:
     calls, no MCP network, no tool execution — hooks are imported/instantiated
     but their methods are never invoked.
     """
-    result = validate_spec(_ex("full-test/agents.yaml"))
+    result = validate_spec(_ex("enterprise-knowledge-assistant/agents.yaml"))
     assert result.ok, result.errors
     assert result.agents == 5
     assert result.mcp_servers == 2
