@@ -5,6 +5,16 @@ source for the current example is [`examples/config.schema.json`](../examples/co
 and the reference sample is [`examples/enterprise-knowledge-assistant/agents.yaml`](../examples/enterprise-knowledge-assistant/agents.yaml).
 Validation, schema models, compilation, and runtime execution are implemented.
 
+This JSON Schema is a reference artifact for editor tooling — it is not loaded
+by the engine at runtime (the real validation logic lives in
+`src/agent_engine/core/validator.py`). To get autocomplete/validation in your
+editor (e.g. VS Code with the YAML extension), add this line to the top of
+your spec file:
+
+```yaml
+# yaml-language-server: $schema=path/to/examples/config.schema.json
+```
+
 The YAML has two conceptual halves:
 
 - **Flat declarations** describe what exists: MCP servers, plugin tools,
