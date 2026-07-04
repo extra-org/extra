@@ -99,7 +99,6 @@ class HookInvocation:
     method: str | None = None
     ref: str | None = None
     run_context: RunContext | None = None
-    config: object | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
     def payload_as(self, expected_type: type[T]) -> T:

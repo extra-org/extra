@@ -202,14 +202,13 @@ def _write_long_tool(base_dir: Path, tool_id: str, size: int) -> None:
 async def test_transform_tool_result_truncates_result_reaching_conversation(
     tmp_path: Path,
 ) -> None:
-    # Tool returns 5000 chars; the transform hook truncates to 100.
+    # Tool returns 5000 chars; the transform hook owns its truncation policy.
     _write_long_tool(tmp_path, "big_tool", 5000)
     spec = _system(
         _agent("research", tools=(ToolSpec("big_tool", "big"),)),
         HookSpec(
             "transform_tool_result",
             f"{_FIX}:truncate_tool_result",
-            config={"limit": 100},
         ),
     )
 
@@ -224,8 +223,8 @@ async def test_transform_tool_result_truncates_result_reaching_conversation(
     transformed = next(c[1] for c in fixtures.CALLS if c[0] == "transform_tool_result")
     assert len(transformed.result) == 5000
     assert transformed.tool_name == "big_tool"
-    # ...and the conversation (echoed by the model) received the truncated 100.
-    assert result.answer == "Y" * 100
+    # ...and the conversation (echoed by the model) received the truncated text.
+    assert result.answer == "Y" * 3
 
 
 async def test_after_tool_call_receives_provider_and_server_id(

@@ -7,7 +7,8 @@ import/instantiation) but stops before connecting MCP servers or compiling the
 graph. ``inspect`` summarizes what the spec declares and what would be loaded.
 
 Security: this module never prints tokens, Authorization values, or raw hook
-config values — only safe metadata (config *keys*, auth mode, tag names).
+runtime data — only safe metadata such as hook identity, auth mode, and tag
+names.
 
 Note: hooks are *trusted code*. Like the engine's build, ``validate`` imports
 hook refs and instantiates class/plugin hooks to confirm they resolve; it never
@@ -265,7 +266,6 @@ def _inspect_hook(hook: object, plugin_refs: dict[str, str]) -> list[str]:
     ref = getattr(hook, "ref", None)
     plugin = getattr(hook, "plugin", None)
     method = getattr(hook, "method", None)
-    config = getattr(hook, "config", {}) or {}
     failure_policy = getattr(hook, "failure_policy", "fail")
 
     if ref:
@@ -274,8 +274,4 @@ def _inspect_hook(hook: object, plugin_refs: dict[str, str]) -> list[str]:
         resolved = "yes" if plugin in plugin_refs else "no"
         target = f"plugin={plugin} method={method} (resolved_from_manifest={resolved})"
 
-    lines = [f"  - {point}: {target}", f"      failure_policy: {failure_policy}"]
-    if config:
-        # Keys only — config VALUES may contain secrets and are never printed.
-        lines.append(f"      config_keys: {sorted(config)}")
-    return lines
+    return [f"  - {point}: {target}", f"      failure_policy: {failure_policy}"]

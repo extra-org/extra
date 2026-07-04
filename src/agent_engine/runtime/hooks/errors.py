@@ -1,8 +1,8 @@
 """Errors raised while loading or executing runtime hooks.
 
 Every error carries the hook *point* and *ref* so failures are traceable to the
-exact entry in the YAML ``hooks`` section. Hook config values are never included
-in messages — they may contain secrets.
+exact entry in the YAML ``hooks`` section without including runtime payload or
+credential material.
 """
 
 from __future__ import annotations

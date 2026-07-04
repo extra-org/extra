@@ -9,7 +9,7 @@ Skills, roles, and workflows live in `.ai/` — the single source of truth. `.cl
 ## Commands
 
 ```bash
-make generate-ai   # regenerate .claude/, .cursor/, .codex/ from .ai/
+make generate-ai   # regenerate .claude/, .codex/ from .ai/
 make format        # ruff format
 make lint          # ruff check
 make typecheck     # mypy

@@ -108,14 +108,13 @@ class HookSpec:
 
     ``point`` is a hook lifecycle point (e.g. "before_mcp_request"). A hook is
     declared either by explicit Python ``ref`` or by managed ``plugin`` +
-    ``method`` resolved through plugins.toml. ``config`` is an opaque mapping
-    passed to the hook invocation; ``failure_policy`` is "fail" (default,
-    fail-closed) or "warn" (best-effort: log and continue on hook error).
+    ``method`` resolved through plugins.toml. ``failure_policy`` is "fail"
+    (default, fail-closed) or "warn" (best-effort: log and continue on hook
+    error).
     """
 
     point: str
     ref: str | None = None
-    config: dict[str, object] = field(default_factory=dict)
     failure_policy: str = "fail"
     plugin: str | None = None
     method: str | None = None

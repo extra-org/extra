@@ -10,8 +10,7 @@ A ref may point to:
   * a class — it is instantiated with no arguments and the instance, which must
     be callable, is returned.
   * a class method, written ``module:Class.method`` — the class is instantiated
-    once during loading, config is passed to its constructor if supported, and
-    the bound method is returned.
+    once during loading and the bound method is returned.
 
 Hooks are *trusted application code*. The loader imports normal Python modules
 from the host application's environment; it does not sandbox them.
@@ -32,21 +31,17 @@ logger = logging.getLogger(__name__)
 
 
 class HookLoader:
-    def load(
-        self, point: str, ref: str, config: dict[str, object] | None = None
-    ) -> Callable[..., Any]:
+    def load(self, point: str, ref: str) -> Callable[..., Any]:
         module_path, attr_path = self._split(point, ref)
         try:
             module = importlib.import_module(module_path)
         except Exception as exc:  # ImportError and anything raised at import time
             raise HookLoadError(point, ref, f"cannot import '{module_path}': {exc}") from exc
 
-        target = self._resolve_target(point, ref, module_path, module, attr_path, config or {})
+        target = self._resolve_target(point, ref, module_path, module, attr_path)
 
         if not callable(target):
             raise HookLoadError(point, ref, f"'{ref}' is not callable")
-        # Module path / attribute are safe to log; hook config (which may hold
-        # secrets) is never touched here.
         logger.debug(
             "hook loaded point=%s ref=%s module=%s attr=%s",
             point,
@@ -88,7 +83,7 @@ class HookLoader:
                     plugin_id,
                     f"hook plugin '{plugin_id}' target '{class_name}' is not a class",
                 )
-            instances[plugin_id] = self._instantiate_class(point, plugin_id, cls, {})
+            instances[plugin_id] = self._instantiate_class(point, plugin_id, cls)
 
         instance = instances[plugin_id]
         method = getattr(instance, method_name, None)
@@ -119,7 +114,6 @@ class HookLoader:
         module_path: str,
         module: Any,
         attr_path: str,
-        config: dict[str, object],
     ) -> Callable[..., Any]:
         parts = attr_path.split(".")
         if len(parts) == 1:
@@ -128,7 +122,7 @@ class HookLoader:
             if target is None:
                 raise HookLoadError(point, ref, f"'{module_path}' has no attribute '{attr}'")
             if inspect.isclass(target):
-                target = self._instantiate_class(point, ref, target, config)
+                target = self._instantiate_class(point, ref, target)
             return target
 
         if len(parts) != 2:
@@ -150,7 +144,7 @@ class HookLoader:
             raise HookLoadError(point, ref, f"'{module_path}' has no class '{class_name}'")
         if not inspect.isclass(cls):
             raise HookLoadError(point, ref, f"'{module_path}.{class_name}' is not a class")
-        instance = self._instantiate_class(point, ref, cls, config)
+        instance = self._instantiate_class(point, ref, cls)
         method = getattr(instance, method_name, None)
         if method is None:
             raise HookLoadError(point, ref, f"class '{class_name}' has no method '{method_name}'")
@@ -161,21 +155,15 @@ class HookLoader:
                 f"'{class_name}.{method_name}' exists but is not callable",
             )
 
-        def invoke_without_config(*args: Any) -> Any:
-            # Method-style class hooks receive config once in __init__; function
-            # hooks continue to receive config on each invocation.
-            if args and isinstance(args[-1], dict):
-                return method(*args[:-1])
+        def invoke(*args: Any) -> Any:
             return method(*args)
 
-        update_wrapper(invoke_without_config, method)
-        invoke_without_config.__agent_hook_instance__ = instance  # type: ignore[attr-defined]
-        return invoke_without_config
+        update_wrapper(invoke, method)
+        invoke.__agent_hook_instance__ = instance  # type: ignore[attr-defined]
+        return invoke
 
-    def _instantiate_class(self, point: str, ref: str, cls: type, config: dict[str, object]) -> Any:
+    def _instantiate_class(self, point: str, ref: str, cls: type) -> Any:
         try:
-            if self._constructor_accepts_config(cls):
-                return cls(dict(config))
             return cls()
         except TypeError as exc:
             raise HookLoadError(
@@ -189,28 +177,6 @@ class HookLoader:
                 ref,
                 f"could not instantiate class '{cls.__name__}': {exc}",
             ) from exc
-
-    @staticmethod
-    def _constructor_accepts_config(cls: type) -> bool:
-        try:
-            signature = inspect.signature(cls)
-        except (TypeError, ValueError):
-            return False
-
-        params = list(signature.parameters.values())
-        if any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params):
-            return True
-        if any(p.name == "config" for p in params):
-            return True
-
-        required = [
-            p
-            for p in params
-            if p.default is inspect.Parameter.empty
-            and p.kind
-            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        ]
-        return len(required) == 1
 
     @staticmethod
     def _split(point: str, ref: str) -> tuple[str, str]:

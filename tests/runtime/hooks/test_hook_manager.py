@@ -90,12 +90,12 @@ async def test_empty_manager_hook_points_are_no_ops() -> None:
 
 async def test_executes_hooks_in_declaration_order() -> None:
     mgr = _manager(
-        HookSpec("on_run_start", f"{_FIX}:sync_hook", {"n": 1}),
-        HookSpec("on_run_start", f"{_FIX}:async_hook", {"n": 2}),
-        HookSpec("on_run_start", f"{_FIX}:sync_hook", {"n": 3}),
+        HookSpec("on_run_start", f"{_FIX}:sync_hook"),
+        HookSpec("on_run_start", f"{_FIX}:async_hook"),
+        HookSpec("on_run_start", f"{_FIX}:sync_hook"),
     )
     await mgr.run_run_start(RunContext())
-    assert [c[2]["n"] for c in fixtures.CALLS] == [1, 2, 3]
+    assert [c[0] for c in fixtures.CALLS] == ["sync", "async", "sync"]
 
 
 async def test_supports_sync_and_async_hooks() -> None:
@@ -113,13 +113,12 @@ async def test_supports_callable_class_hook() -> None:
     assert fixtures.CALLS[0][0] == "callable"
 
 
-async def test_class_method_hook_receives_config_once_and_reuses_instance() -> None:
+async def test_class_method_hook_reuses_instance() -> None:
     fixtures.McpAuthHook.instances_created = 0
     mgr = _manager(
         HookSpec(
             "before_mcp_request",
             f"{_FIX}:McpAuthHook.before_mcp_request",
-            {"audience": "internal-docs"},
         )
     )
 
@@ -137,10 +136,10 @@ async def test_class_method_hook_receives_config_once_and_reuses_instance() -> N
     assert fixtures.CALLS[1][0] == "mcp_auth_method"
     assert fixtures.CALLS[0][1] == fixtures.CALLS[1][1]
     assert [call[2] for call in fixtures.CALLS] == [1, 2]
-    assert fixtures.CALLS[0][3] == {"audience": "internal-docs"}
+    assert fixtures.CALLS[0][3].run_id == "r1"
 
 
-async def test_plugin_method_hook_receives_invocation_and_config(tmp_path: Path) -> None:
+async def test_plugin_method_hook_receives_invocation(tmp_path: Path) -> None:
     fixtures.ManagedHook.instances_created = 0
     mgr = HookManager.from_config(
         HooksConfig(
@@ -149,7 +148,6 @@ async def test_plugin_method_hook_receives_invocation_and_config(tmp_path: Path)
                     "before_mcp_request",
                     plugin="managed",
                     method="before_mcp_request",
-                    config={"credential": "abc"},
                 ),
             )
         ),
@@ -160,12 +158,12 @@ async def test_plugin_method_hook_receives_invocation_and_config(tmp_path: Path)
         RunContext(run_id="r1"), McpRequestContext(server_id="s", url="https://x/mcp")
     )
 
-    assert request.headers["Authorization"] == "Bearer abc"
+    assert request.headers["Authorization"] == "Bearer static"
+    assert request.headers["X-Tenant"] == "acme"
     assert fixtures.ManagedHook.instances_created == 1
     event = fixtures.CALLS[0][3]
     assert event.plugin == "managed"
     assert event.method == "before_mcp_request"
-    assert event.config == {"credential": "abc"}
     assert isinstance(event.payload, McpRequestContext)
     assert event.run_context.run_id == "r1"
 
@@ -184,7 +182,6 @@ async def test_explicit_ref_hook_does_not_read_manifest(
                 HookSpec(
                     "on_run_start",
                     f"{_FIX}:run_start_enrich",
-                    config={"user_id": "alice"},
                 ),
             )
         ),
@@ -205,13 +202,11 @@ async def test_plugin_instance_reused_across_hook_points_and_executions(tmp_path
                     "on_run_start",
                     plugin="managed",
                     method="attach_user_context",
-                    config={"user_id": "alice"},
                 ),
                 HookSpec(
                     "before_mcp_request",
                     plugin="managed",
                     method="before_mcp_request",
-                    config={"credential": "abc"},
                 ),
             )
         ),
@@ -219,10 +214,16 @@ async def test_plugin_instance_reused_across_hook_points_and_executions(tmp_path
     )
 
     updated = await mgr.run_run_start(RunContext(run_id="r1"))
-    await mgr.run_before_mcp_request(updated, McpRequestContext(server_id="s", url="https://x/mcp"))
-    await mgr.run_before_mcp_request(updated, McpRequestContext(server_id="s", url="https://x/mcp"))
+    first = await mgr.run_before_mcp_request(
+        updated, McpRequestContext(server_id="s", url="https://x/mcp")
+    )
+    second = await mgr.run_before_mcp_request(
+        updated, McpRequestContext(server_id="s", url="https://x/mcp")
+    )
 
-    assert updated.user_id == "alice"
+    assert updated.user_id == "managed-user"
+    assert first.headers == {"Authorization": "Bearer static", "X-Tenant": "acme"}
+    assert second.headers == {"Authorization": "Bearer static", "X-Tenant": "acme"}
     assert fixtures.ManagedHook.instances_created == 1
     instance_ids = [call[1] for call in fixtures.CALLS]
     assert instance_ids == [instance_ids[0], instance_ids[0], instance_ids[0]]
@@ -264,25 +265,25 @@ def test_plugin_method_hook_with_missing_manifest_fails_clearly(tmp_path: Path) 
     assert "not declared in [hooks.plugins]" in str(exc.value)
 
 
-async def test_passes_config_to_hook() -> None:
-    mgr = _manager(HookSpec("on_engine_start", f"{_FIX}:sync_hook", {"audience": "mcp"}))
+async def test_runs_hook_without_yaml_config() -> None:
+    mgr = _manager(HookSpec("on_engine_start", f"{_FIX}:sync_hook"))
     await mgr.run_engine_start(EngineContext(system_name="s"))
-    assert fixtures.CALLS[0][2] == {"audience": "mcp"}
+    assert fixtures.CALLS[0][0] == "sync"
 
 
 async def test_run_start_returns_updated_context() -> None:
-    mgr = _manager(HookSpec("on_run_start", f"{_FIX}:run_start_enrich", {"user_id": "alice"}))
+    mgr = _manager(HookSpec("on_run_start", f"{_FIX}:run_start_enrich"))
     result = await mgr.run_run_start(RunContext(run_id="r1"))
     assert result.user_id == "alice"
     assert result.run_id == "r1"
 
 
 async def test_before_mcp_request_returns_updated_request() -> None:
-    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_auth_header", {"token": "abc"}))
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_auth_header"))
     req = await mgr.run_before_mcp_request(
         RunContext(), McpRequestContext(server_id="s", url="https://x/mcp")
     )
-    assert req.headers["Authorization"] == "Bearer abc"
+    assert req.headers["Authorization"] == "Bearer static"
 
 
 async def test_hook_failure_raises_with_point_and_ref() -> None:
@@ -331,15 +332,12 @@ async def test_run_error_hook_failure_is_swallowed() -> None:
     await mgr.run_run_error(RunContext(), ValueError("original"))
 
 
-async def test_logs_do_not_leak_config_values(caplog: pytest.LogCaptureFixture) -> None:
-    mgr = _manager(
-        HookSpec("on_engine_start", f"{_FIX}:sync_hook", {"token_env": "SECRET_VALUE_XYZ"})
-    )
+async def test_logs_do_not_leak_hook_payload_values(caplog: pytest.LogCaptureFixture) -> None:
+    mgr = _manager(HookSpec("on_engine_start", f"{_FIX}:sync_hook"))
     with caplog.at_level(logging.DEBUG, logger="agent_engine.runtime.hooks.manager"):
-        await mgr.run_engine_start(EngineContext(system_name="s"))
+        await mgr.run_engine_start(EngineContext(system_name="SECRET_VALUE_XYZ"))
     text = caplog.text
-    assert "SECRET_VALUE_XYZ" not in text  # value never logged
-    assert "token_env" in text  # key only, at DEBUG
+    assert "SECRET_VALUE_XYZ" not in text
 
 
 def test_has_reports_declared_points() -> None:
@@ -352,9 +350,7 @@ def test_has_reports_declared_points() -> None:
 
 
 async def test_transform_tool_result_returns_modified_result() -> None:
-    mgr = _manager(
-        HookSpec("transform_tool_result", f"{_FIX}:truncate_tool_result", config={"limit": 3})
-    )
+    mgr = _manager(HookSpec("transform_tool_result", f"{_FIX}:truncate_tool_result"))
     out = await mgr.run_transform_tool_result(
         None, ToolResultContext("a", "t", "mcp", result="abcdefgh")
     )

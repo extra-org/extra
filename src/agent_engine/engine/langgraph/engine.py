@@ -62,11 +62,14 @@ def _root_cause(exc: BaseException) -> str:
 def _new_state(
     message: str,
     *,
+    run_context: dict[str, Any] | None = None,
     answer_stream: Callable[[str], None] | None = None,
     route_stream: Callable[[tuple[str, ...]], None] | None = None,
     token_stream: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     state: dict[str, Any] = {"message": message, "used_tools": []}
+    if run_context is not None:
+        state["run_context"] = run_context
     if answer_stream is not None:
         state["answer_stream"] = answer_stream
     if route_stream is not None:
@@ -74,6 +77,32 @@ def _new_state(
     if token_stream is not None:
         state["token_stream"] = token_stream
     return state
+
+
+def _state_run_context(ctx: RunContext) -> dict[str, Any]:
+    """Return the generic, non-secret context exposed to graph runtime filters."""
+    data: dict[str, Any] = {}
+    for key in ("run_id", "conversation_id", "user_id", "organization_id"):
+        value = getattr(ctx, key)
+        if value is not None:
+            data[key] = value
+    if ctx.metadata:
+        data["metadata"] = dict(ctx.metadata)
+    if ctx.auth_context is not None:
+        auth: dict[str, Any] = {}
+        for key in ("user_id", "organization_id"):
+            value = getattr(ctx.auth_context, key)
+            if value is not None:
+                auth[key] = value
+        if ctx.auth_context.scopes:
+            auth["scopes"] = tuple(ctx.auth_context.scopes)
+        if ctx.auth_context.roles:
+            auth["roles"] = tuple(ctx.auth_context.roles)
+        if ctx.auth_context.metadata:
+            auth["metadata"] = dict(ctx.auth_context.metadata)
+        if auth:
+            data["auth"] = auth
+    return data
 
 
 def _trace_metadata(ctx: RunContext) -> dict[str, Any]:
@@ -203,6 +232,7 @@ class LangGraphEngine(Engine):
 
     async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
         app, hook_manager = self._require_built("running")
+        has_caller_context = context is not None
         ctx = await self._begin_run(context)
         token = current_run_context.set(ctx)
         exec_token = current_execution.set(ExecutionLimiter(self._policy))
@@ -222,7 +252,15 @@ class LangGraphEngine(Engine):
         log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
         try:
             result = await app.ainvoke(
-                cast(Any, _new_state(message, token_stream=accumulate_tokens)), config
+                cast(
+                    Any,
+                    _new_state(
+                        message,
+                        run_context=_state_run_context(ctx) if has_caller_context else None,
+                        token_stream=accumulate_tokens,
+                    ),
+                ),
+                config,
             )
             run_result = RunResult(
                 system_name=self._system_name,
@@ -265,6 +303,7 @@ class LangGraphEngine(Engine):
     ) -> AsyncIterator[RunStreamEvent]:
         app, hook_manager = self._require_built("streaming")
 
+        has_caller_context = context is not None
         ctx = await self._begin_run(context)
         queue: asyncio.Queue[RunStreamEvent | BaseException | None] = asyncio.Queue()
         input_tokens = 0
@@ -277,6 +316,7 @@ class LangGraphEngine(Engine):
 
         state = _new_state(
             message,
+            run_context=_state_run_context(ctx) if has_caller_context else None,
             answer_stream=lambda c: queue.put_nowait(
                 RunStreamEvent(type="answer_delta", content=c)
             ),

@@ -6,7 +6,6 @@ the way a YAML ``ref`` would (``tests.runtime.hooks.fixtures:sync_hook``).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 from agent_engine.runtime.hooks.models import (
@@ -21,29 +20,24 @@ from agent_engine.runtime.hooks.models import (
 CALLS: list[Any] = []
 
 
-def sync_hook(context: Any, config: dict[str, Any]) -> None:
-    CALLS.append(("sync", context, config))
+def sync_hook(context: Any) -> None:
+    CALLS.append(("sync", context))
 
 
-async def async_hook(context: Any, config: dict[str, Any]) -> None:
-    CALLS.append(("async", context, config))
+async def async_hook(context: Any) -> None:
+    CALLS.append(("async", context))
 
 
-def run_start_enrich(context: RunContext, config: dict[str, Any]) -> RunContext:
-    return context.replace(user_id=config.get("user_id", "u-1"))
+def run_start_enrich(context: RunContext) -> RunContext:
+    return context.replace(user_id="alice")
 
 
-def add_auth_header(
-    context: RunContext | None, request: McpRequestContext, config: dict[str, Any]
-) -> McpRequestContext:
-    request.headers["Authorization"] = f"Bearer {config.get('token', 'static')}"
-    return request
+def add_auth_header(context: RunContext | None, request: McpRequestContext) -> McpRequestContext:
+    return request.with_headers({"Authorization": "Bearer static"})
 
 
-def add_tenant_header(
-    context: RunContext | None, request: McpRequestContext, config: dict[str, Any]
-) -> McpRequestContext:
-    return request.with_headers({"X-Tenant": config.get("tenant", "acme")})
+def add_tenant_header(context: RunContext | None, request: McpRequestContext) -> McpRequestContext:
+    return request.with_headers({"X-Tenant": "acme"})
 
 
 def boom(*args: Any) -> None:
@@ -53,8 +47,8 @@ def boom(*args: Any) -> None:
 class CallableHook:
     """A class hook: instantiated by the loader, called like a function."""
 
-    def __call__(self, context: Any, config: dict[str, Any]) -> None:
-        CALLS.append(("callable", context, config))
+    def __call__(self, context: Any) -> None:
+        CALLS.append(("callable", context))
 
 
 class McpAuthHook:
@@ -62,9 +56,8 @@ class McpAuthHook:
 
     instances_created = 0
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(self) -> None:
         type(self).instances_created += 1
-        self.config = dict(config or {})
         self.calls = 0
 
     async def before_mcp_request(
@@ -76,11 +69,10 @@ class McpAuthHook:
                 "mcp_auth_method",
                 id(self),
                 self.calls,
-                self.config,
                 context,
             )
         )
-        return request.with_headers({"X-Audience": str(self.config.get("audience", "default"))})
+        return request.with_headers({"X-Audience": "internal-docs"})
 
 
 class MissingConfigConstructorHook:
@@ -101,24 +93,21 @@ class NonCallableMethodHook:
 class ManagedHook:
     instances_created = 0
 
-    def __init__(self, config: object | None = None) -> None:
+    def __init__(self) -> None:
         type(self).instances_created += 1
-        self.config = config
         self.calls = 0
 
     async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
         self.calls += 1
         request = event.payload_as(McpRequestContext)
         CALLS.append(("managed_before_mcp", id(self), self.calls, event))
-        config = dict(event.config) if isinstance(event.config, Mapping) else {}
-        return request.with_headers({"Authorization": f"Bearer {config['credential']}"})
+        return request.with_headers({"Authorization": "Bearer static", "X-Tenant": "acme"})
 
     def attach_user_context(self, event: HookInvocation) -> RunContext:
         self.calls += 1
         context = event.payload_as(RunContext)
         CALLS.append(("managed_run_start", id(self), self.calls, event))
-        config = dict(event.config) if isinstance(event.config, Mapping) else {}
-        return context.replace(user_id=str(config.get("user_id", "managed-user")))
+        return context.replace(user_id="managed-user")
 
     def audit_warn(self, event: HookInvocation) -> None:
         CALLS.append(("managed_warn", id(self), event))
@@ -131,51 +120,49 @@ not_callable = 123
 # -- engine-integration recording hooks (tagged by point) -------------------
 
 
-def record_engine_start(context: Any, config: dict[str, Any]) -> None:
+def record_engine_start(context: Any) -> None:
     CALLS.append(("on_engine_start", context))
 
 
-def record_run_start(context: RunContext, config: dict[str, Any]) -> RunContext:
+def record_run_start(context: RunContext) -> RunContext:
     CALLS.append(("on_run_start", context))
     return context.replace(metadata={**context.metadata, "seen": True})
 
 
-def record_before_tool_call(context: Any, request: Any, config: dict[str, Any]) -> None:
+def record_before_tool_call(context: Any, request: Any) -> None:
     CALLS.append(("before_tool_call", request))
 
 
-def record_after_tool_call(context: Any, call: Any, config: dict[str, Any]) -> None:
+def record_after_tool_call(context: Any, call: Any) -> None:
     CALLS.append(("after_tool_call", call))
 
 
-def record_on_tool_error(context: Any, call: Any, config: dict[str, Any]) -> None:
+def record_on_tool_error(context: Any, call: Any) -> None:
     CALLS.append(("on_tool_error", call))
 
 
-def record_run_end(context: Any, summary: Any, config: dict[str, Any]) -> None:
+def record_run_end(context: Any, summary: Any) -> None:
     CALLS.append(("on_run_end", summary))
 
 
-def record_engine_stop(context: Any, config: dict[str, Any]) -> None:
+def record_engine_stop(context: Any) -> None:
     CALLS.append(("on_engine_stop", context))
 
 
-def record_after_mcp_response(context: Any, response: Any, config: dict[str, Any]) -> None:
+def record_after_mcp_response(context: Any, response: Any) -> None:
     CALLS.append(("after_mcp_response", response))
 
 
-def record_run_error(context: Any, error: BaseException, config: dict[str, Any]) -> None:
+def record_run_error(context: Any, error: BaseException) -> None:
     CALLS.append(("on_run_error", error))
 
 
 def truncate_tool_result(
-    context: RunContext | None, result: ToolResultContext, config: dict[str, Any]
+    context: RunContext | None, result: ToolResultContext
 ) -> ToolResultContext:
-    """transform_tool_result hook: record the (full) result, then truncate it to
-    ``config['limit']`` chars. Returns the modified context so the engine appends
-    the truncated text to the conversation."""
+    """Record the full result, then truncate it before the engine stores it."""
     CALLS.append(("transform_tool_result", result))
-    limit = int(config.get("limit", 100))
+    limit = 3
     if len(result.result) <= limit:
         return result
     return result.with_result(result.result[:limit])

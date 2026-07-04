@@ -327,7 +327,7 @@ class OrchestratorNode:
 
     def _filter_children(self, state: GraphState) -> list[ChildEntry]:
         """Apply every RouteFilter to narrow down which child tools are available."""
-        ctx: dict[str, Any] = cast(dict[str, Any], state.get("run_context", {}))
+        ctx: dict[str, Any] = state.get("run_context", {})
         candidates = list(self._children)
         for f in self._filters:
             candidates = f.filter(ctx, candidates)

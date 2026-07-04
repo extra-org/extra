@@ -5,7 +5,6 @@
 
     make generate-ai              # all targets
     make generate-ai TARGET=claude
-    make generate-ai TARGET=cursor
     make generate-ai TARGET=codex
 
 Each target reads .ai/skills/, .ai/roles/, and .ai/workflows/ and writes
@@ -38,15 +37,6 @@ MARKDOWN_HEADER = """\
 ---
 name: {name}
 description: {description}
-generated: true
-source: .ai/{source_kind}/{name}.md
----
-"""
-
-CURSOR_HEADER = """\
----
-description: {description}
-alwaysApply: false
 generated: true
 source: .ai/{source_kind}/{name}.md
 ---
@@ -257,49 +247,6 @@ class ClaudeTarget:
             delete_dir(root / ".claude" / subdir, deleted)
 
 
-class CursorTarget:
-    name = "cursor"
-
-    def generate(
-        self, root: Path, source_kind: str, ai_name: str, description: str, body: str
-    ) -> Path:
-        path = root / ".cursor" / "rules" / source_kind / f"{ai_name}.mdc"
-        write_adapter(
-            path,
-            build_adapter(
-                CURSOR_HEADER,
-                name=ai_name,
-                description=description,
-                body=body,
-                source_kind=source_kind,
-            ),
-        )
-        return path
-
-    def remove_stale(
-        self, root: Path, source_names_by_kind: dict[str, set[str]], removed: list[Path]
-    ) -> None:
-        rules_dir = root / ".cursor" / "rules"
-        if rules_dir.exists():
-            for f in rules_dir.glob("*.mdc"):  # legacy flat files
-                remove_generated(f, removed)
-
-        remove_stale_in(
-            rules_dir / "skills", source_names_by_kind.get("skills", set()), removed
-        )
-        remove_stale_in(
-            rules_dir / "roles", source_names_by_kind.get("roles", set()), removed
-        )
-        remove_stale_in(
-            rules_dir / "workflows", source_names_by_kind.get("workflows", set()), removed
-        )
-
-    def delete(self, root: Path, deleted: list[Path]) -> None:
-        rules_dir = root / ".cursor" / "rules"
-        for subdir in ("skills", "roles", "workflows"):
-            delete_dir(rules_dir / subdir, deleted)
-
-
 class CodexTarget:
     name = "codex"
 
@@ -337,9 +284,8 @@ class CodexTarget:
 
 
 # Registry — add new targets here.
-TARGETS: dict[str, ClaudeTarget | CursorTarget | CodexTarget] = {
+TARGETS: dict[str, ClaudeTarget | CodexTarget] = {
     "claude": ClaudeTarget(),
-    "cursor": CursorTarget(),
     "codex": CodexTarget(),
 }
 

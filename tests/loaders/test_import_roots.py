@@ -49,9 +49,7 @@ def _make_pkg(root: Path, pkg: str) -> None:
     pkg_dir = root / pkg
     pkg_dir.mkdir(parents=True)
     (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
-    (pkg_dir / "hooks.py").write_text(
-        "def my_hook(context, config):\n    return None\n", encoding="utf-8"
-    )
+    (pkg_dir / "hooks.py").write_text("def my_hook(context):\n    return None\n", encoding="utf-8")
 
 
 # -- resolution --------------------------------------------------------------

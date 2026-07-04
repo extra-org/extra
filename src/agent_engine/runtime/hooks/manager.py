@@ -24,7 +24,7 @@ Error policy (fail-closed by default, per hook ``failure_policy``):
   * ``on_run_error`` failure      -> logged; the original run error is preserved.
 
 A hook with ``failure_policy: warn`` is logged and skipped on failure instead of
-aborting. Hook config values are never logged (only their keys, at DEBUG).
+aborting.
 """
 
 from __future__ import annotations
@@ -58,12 +58,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class LoadedHook:
-    """A resolved hook ready to run, with its declared config and policy."""
+    """A resolved hook ready to run, with its declared policy."""
 
     point: HookPoint
     ref: str
     func: Any
-    config: dict[str, Any]
     failure_policy: str = "fail"
     plugin: str | None = None
     method: str | None = None
@@ -124,7 +123,7 @@ class HookManager:
         for spec in specs:
             if spec.ref:
                 ref = spec.ref
-                func = loader.load(spec.point, ref, config=dict(spec.config))
+                func = loader.load(spec.point, ref)
                 event_mode = False
             else:
                 plugin = spec.plugin or ""
@@ -150,7 +149,6 @@ class HookManager:
                     point=spec.point,
                     ref=ref,
                     func=func,
-                    config=dict(spec.config),
                     failure_policy=spec.failure_policy,
                     plugin=spec.plugin,
                     method=spec.method,
@@ -172,14 +170,14 @@ class HookManager:
 
     async def run_engine_start(self, context: EngineContext) -> None:
         for hook in self._hooks["on_engine_start"]:
-            await self._invoke(hook, payload=context, positional=(context, hook.config))
+            await self._invoke(hook, payload=context, positional=(context,))
 
     async def run_engine_stop(self, context: EngineContext) -> None:
         """Engine-stop hooks are best-effort: a failure is logged and never
         prevents resource cleanup during shutdown."""
         for hook in self._hooks["on_engine_stop"]:
             try:
-                await self._invoke(hook, payload=context, positional=(context, hook.config))
+                await self._invoke(hook, payload=context, positional=(context,))
             except Exception:  # cleanup must proceed regardless
                 logger.exception(
                     "on_engine_stop hook failed (continuing shutdown) ref=%s", hook.ref
@@ -191,7 +189,7 @@ class HookManager:
                 hook,
                 payload=context,
                 run_context=context,
-                positional=(context, hook.config),
+                positional=(context,),
             )
             if isinstance(result, RunContext):
                 context = result
@@ -204,7 +202,7 @@ class HookManager:
                 hook,
                 payload=summary,
                 run_context=run_context,
-                positional=(run_context, summary, hook.config),
+                positional=(run_context, summary),
             )
 
     async def run_before_tool_call(
@@ -216,7 +214,7 @@ class HookManager:
                 hook,
                 payload=request,
                 run_context=run_context,
-                positional=(run_context, request, hook.config),
+                positional=(run_context, request),
             )
 
     async def run_after_tool_call(
@@ -227,7 +225,7 @@ class HookManager:
                 hook,
                 payload=call,
                 run_context=run_context,
-                positional=(run_context, call, hook.config),
+                positional=(run_context, call),
             )
 
     async def run_transform_tool_result(
@@ -245,7 +243,7 @@ class HookManager:
                 hook,
                 payload=result,
                 run_context=run_context,
-                positional=(run_context, result, hook.config),
+                positional=(run_context, result),
             )
             if isinstance(transformed, ToolResultContext):
                 result = transformed
@@ -260,7 +258,7 @@ class HookManager:
                 hook,
                 payload=call,
                 run_context=run_context,
-                positional=(run_context, call, hook.config),
+                positional=(run_context, call),
             )
 
     async def run_before_mcp_request(
@@ -271,7 +269,7 @@ class HookManager:
                 hook,
                 payload=request,
                 run_context=run_context,
-                positional=(run_context, request, hook.config),
+                positional=(run_context, request),
             )
             if isinstance(result, McpRequestContext):
                 request = result
@@ -286,7 +284,7 @@ class HookManager:
                 hook,
                 payload=response,
                 run_context=run_context,
-                positional=(run_context, response, hook.config),
+                positional=(run_context, response),
             )
 
     async def run_run_error(self, run_context: RunContext | None, error: BaseException) -> None:
@@ -297,7 +295,7 @@ class HookManager:
                     hook,
                     payload=error,
                     run_context=run_context,
-                    positional=(run_context, error, hook.config),
+                    positional=(run_context, error),
                 )
             except Exception:  # preserve the original run error above all
                 logger.exception(
@@ -315,8 +313,6 @@ class HookManager:
         run_context: RunContext | None = None,
     ) -> Any:
         logger.info("hook start point=%s ref=%s", hook.point, hook.ref)
-        if hook.config:
-            logger.debug("hook config keys=%s", sorted(hook.config))
         start = time.perf_counter()
         try:
             if hook.event_mode:
@@ -328,7 +324,6 @@ class HookManager:
                         ref=None,
                         run_context=run_context,
                         payload=payload,
-                        config=dict(hook.config),
                     )
                 )
             else:

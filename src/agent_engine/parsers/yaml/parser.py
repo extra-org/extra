@@ -128,7 +128,6 @@ def _build_hooks(raw: Any) -> HooksConfig:
                 HookSpec(
                     point=point,
                     ref=entry.get("ref"),
-                    config=dict(entry.get("config", {}) or {}),
                     failure_policy=entry.get("failure_policy", "fail"),
                     plugin=entry.get("plugin"),
                     method=entry.get("method"),
@@ -220,8 +219,13 @@ def _validate_hook_entry(point: str, index: int, entry: Any, errors: list[Valida
     else:
         errors.append(ValidationError(f"{base}.ref", "Required field 'ref' or 'plugin' + 'method'"))
 
-    if "config" in entry and not isinstance(entry["config"], dict):
-        errors.append(ValidationError(f"{base}.config", "Must be a mapping if present"))
+    if "config" in entry:
+        errors.append(
+            ValidationError(
+                f"{base}.config",
+                "Removed field; hook configuration belongs in hook/plugin code",
+            )
+        )
     policy = entry.get("failure_policy", "fail")
     if policy not in ("fail", "warn"):
         errors.append(ValidationError(f"{base}.failure_policy", "Must be 'fail' or 'warn'"))

@@ -8,6 +8,7 @@ it per request (mirrors the MCPAuthLoader tests).
 from __future__ import annotations
 
 import logging
+import os
 
 import httpx
 import pytest
@@ -35,17 +36,43 @@ async def _apply(auth: httpx.Auth, request: httpx.Request | None = None) -> http
 
 
 async def test_before_mcp_request_adds_authorization_header() -> None:
-    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_auth_header", {"token": "tok-1"}))
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_auth_header"))
     auth = HookedMCPAuth(mgr, "internal-mcp")
     request = await _apply(auth)
-    assert request.headers["authorization"] == "Bearer tok-1"
+    assert request.headers["authorization"] == "Bearer static"
 
 
 async def test_before_mcp_request_adds_tenant_header() -> None:
-    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_tenant_header", {"tenant": "acme"}))
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_tenant_header"))
     auth = HookedMCPAuth(mgr, "internal-mcp")
     request = await _apply(auth)
     assert request.headers["x-tenant"] == "acme"
+
+
+async def test_hook_can_read_environment_and_construct_multiple_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("INTERNAL_MCP_BEARER", "env-token")
+    monkeypatch.setenv("INTERNAL_MCP_TENANT", "env-tenant")
+
+    def add_env_auth(context, request):
+        return request.with_headers(
+            {
+                "Authorization": f"Bearer {os.environ['INTERNAL_MCP_BEARER']}",
+                "X-Tenant": os.environ["INTERNAL_MCP_TENANT"],
+            }
+        )
+
+    import tests.runtime.hooks.fixtures as fx
+
+    fx.add_env_auth = add_env_auth  # type: ignore[attr-defined]
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_env_auth"))
+    auth = HookedMCPAuth(mgr, "internal-mcp")
+
+    request = await _apply(auth)
+
+    assert request.headers["authorization"] == "Bearer env-token"
+    assert request.headers["x-tenant"] == "env-tenant"
 
 
 async def test_base_auth_and_hooks_compose() -> None:
@@ -55,15 +82,15 @@ async def test_base_auth_and_hooks_compose() -> None:
             request.headers["X-Base"] = "1"
             yield request
 
-    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_tenant_header", {"tenant": "z"}))
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_tenant_header"))
     auth = HookedMCPAuth(mgr, "internal-mcp", base=_Base())
     request = await _apply(auth)
     assert request.headers["x-base"] == "1"
-    assert request.headers["x-tenant"] == "z"
+    assert request.headers["x-tenant"] == "acme"
 
 
 async def test_hook_reads_current_run_context() -> None:
-    def add_user(context, request, config):
+    def add_user(context, request):
         uid = context.user_id if context else "anon"
         return request.with_headers({"X-User": uid})
 
@@ -101,13 +128,10 @@ async def test_hook_failure_prevents_request() -> None:
 
 
 async def test_header_values_are_not_logged(caplog: pytest.LogCaptureFixture) -> None:
-    mgr = _manager(
-        HookSpec("before_mcp_request", f"{_FIX}:add_auth_header", {"token": "super-secret-xyz"})
-    )
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_auth_header"))
     auth = HookedMCPAuth(mgr, "internal-mcp")
     with caplog.at_level(logging.DEBUG):
         await _apply(auth)
-    assert "super-secret-xyz" not in caplog.text
     assert "Bearer" not in caplog.text
 
 

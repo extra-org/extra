@@ -75,19 +75,16 @@ def test_inspect_shows_managed_hook_points() -> None:
     assert "plugin=research_hooks method=validate_environment" in out
 
 
-def test_inspect_does_not_print_token_like_values(tmp_path: Path) -> None:
-    # A hook config whose key does not trip the YAML secret scanner, with a
-    # non-secret-looking value; inspect must still print the key only.
+def test_inspect_shows_hook_without_config(tmp_path: Path) -> None:
     spec = tmp_path / "spec.yml"
     spec.write_text(
         "system: {name: t}\nagents: {a: {description: d}}\ngraph: {a: }\n"
-        "hooks:\n  on_run_start:\n    - ref: company.x:f\n"
-        "      config: {audience: my-private-value-123}\n",
+        "hooks:\n  on_run_start:\n    - ref: company.x:f\n",
         encoding="utf-8",
     )
     out = inspect_spec(str(spec))
-    assert "config_keys: ['audience']" in out
-    assert "my-private-value-123" not in out
+    assert "on_run_start: ref=company.x:f" in out
+    assert "config_keys" not in out
 
 
 def test_inspect_handles_no_hooks_and_no_tags(tmp_path: Path) -> None:

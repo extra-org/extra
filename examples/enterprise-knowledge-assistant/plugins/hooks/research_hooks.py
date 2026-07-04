@@ -53,8 +53,7 @@ _CONTEXT7_HEADER = "CONTEXT7_API_KEY"  # Context7 reads the key from this header
 
 
 class ResearchHooksHook:
-    def __init__(self, config: object | None = None) -> None:
-        self.config = config
+    def __init__(self) -> None:
         # Safe long-lived state can live here: initialized clients,
         # tenant metadata, keyed caches, audit/metrics clients.
         self._cache: dict[str, object] = {}

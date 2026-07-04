@@ -38,6 +38,8 @@ from agent_engine.core.spec import (
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.engine.langgraph.filters import AccessFilter
 from agent_engine.engine.types import RunResult
+from agent_engine.runtime.hooks import AuthContext, RunContext
+from agent_engine.runtime.state import GraphState
 
 # ---------------------------------------------------------------------------
 # Fake chat model
@@ -154,15 +156,31 @@ def write_access(base_dir: Path, *, allow: bool) -> None:
     )
 
 
+def write_context_access(base_dir: Path) -> None:
+    plugins = base_dir / "plugins"
+    plugins.mkdir(parents=True, exist_ok=True)
+    (plugins / "access.py").write_text(
+        "class AccessResolver:\n"
+        "    def can_access(self, ctx: dict, node_id: str) -> bool:\n"
+        "        allowed_nodes = ctx.get('metadata', {}).get('allowed_nodes', ())\n"
+        "        groups = ctx.get('auth', {}).get('metadata', {}).get('groups', ())\n"
+        "        has_no_raw_token = 'inbound_access_token' not in ctx.get('auth', {})\n"
+        "        return node_id in allowed_nodes and 'docs' in groups and has_no_raw_token\n",
+        encoding="utf-8",
+    )
+
+
 async def run_message(
     spec: SystemSpec,
     base_dir: Path,
     model_factory: Callable[[str, str, float | None], BaseChatModel],
     message: str,
+    *,
+    context: RunContext | None = None,
 ) -> RunResult:
     async with LangGraphEngine(base_dir, model_factory=model_factory) as engine:
         await engine.build(spec)
-        return await engine.run(message)
+        return await engine.run(message, context=context)
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +240,63 @@ async def test_protected_child_allowed_is_reachable(tmp_path: Path, model_factor
     assert result.visited == ["root", "root/admin"]
 
 
+async def test_protected_child_can_be_allowed_by_run_context(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    write_context_access(tmp_path)
+    spec = system(orchestrator("root", [agent("public"), agent("admin", protected=True)]))
+    context = RunContext(
+        user_id="u1",
+        organization_id="org-1",
+        metadata={"allowed_nodes": ("admin",), "department": "support"},
+        auth_context=AuthContext(
+            inbound_access_token="secret-token",
+            metadata={"groups": ("docs",), "custom_policy_flag": True},
+        ),
+    )
+
+    result = await run_message(spec, tmp_path, model_factory, "admin please", context=context)
+
+    assert result.visited == ["root", "root/admin"]
+
+
+async def test_protected_child_denied_when_run_context_missing_custom_data(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    write_context_access(tmp_path)
+    spec = system(orchestrator("root", [agent("public"), agent("admin", protected=True)]))
+
+    result = await run_message(
+        spec,
+        tmp_path,
+        model_factory,
+        "admin please",
+        context=RunContext(metadata={"allowed_nodes": ("admin",)}),
+    )
+
+    assert result.visited == ["root", "root/public"]
+
+
+async def test_stream_passes_run_context_to_access_filter(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    write_context_access(tmp_path)
+    spec = system(orchestrator("root", [agent("public"), agent("admin", protected=True)]))
+    context = RunContext(
+        metadata={"allowed_nodes": ("admin",)},
+        auth_context=AuthContext(metadata={"groups": ("docs",)}),
+    )
+
+    final_route: tuple[str, ...] = ()
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        async for ev in engine.stream("admin please", context=context):
+            if ev.type == "final" and ev.route:
+                final_route = ev.route
+
+    assert final_route == ("root", "root/admin")
+
+
 async def test_only_root_answer_is_streamed(tmp_path: Path, model_factory: Any) -> None:
     # Both nodes answer "ok"; if children also streamed we'd see "okok".
     spec = system(orchestrator("root", [agent("child")]))
@@ -263,3 +338,13 @@ def test_access_filter_keeps_protected_when_allowed(tmp_path: Path) -> None:
     kept = f.filter({}, [_Candidate("adm", True)])
 
     assert [c.id for c in kept] == ["adm"]
+
+
+def test_graph_state_accepts_generic_run_context() -> None:
+    state: GraphState = {
+        "message": "hello",
+        "used_tools": [],
+        "run_context": {"metadata": {"allowed_nodes": ("admin",)}},
+    }
+
+    assert state["run_context"]["metadata"]["allowed_nodes"] == ("admin",)

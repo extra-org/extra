@@ -84,8 +84,6 @@ hooks:
   on_engine_start:
     - plugin: "mcp_auth"
       method: "validate_auth_setup"
-      config:
-        required_env: ["INTERNAL_MCP_CREDENTIAL"]
 
   on_run_start:
     - plugin: "mcp_auth"
@@ -94,8 +92,6 @@ hooks:
   before_mcp_request:
     - plugin: "mcp_auth"
       method: "before_mcp_request"
-      config:
-        credential_env: "INTERNAL_MCP_CREDENTIAL"
 
   after_tool_call:
     - plugin: "mcp_auth"
@@ -113,19 +109,16 @@ hooks:
   The id is resolved through `plugins/plugins.toml` `[hooks.plugins]`.
 - **`ref`** *(advanced / backwards compatible)* — explicit import path to the
   hook callable. Use either `ref` or `plugin` + `method`, never both.
-- **`config`** *(optional, mapping)* — opaque settings passed to the hook on
-  that invocation as `HookInvocation.config`. **Do not put secrets here** (see
-  Security).
 - **`failure_policy`** *(optional, `fail` | `warn`, default `fail`)* — `fail`
   aborts the operation (fail-closed); `warn` logs and continues.
 
 ### Validation
 
-Loading is fail-closed. The config is rejected if a hook point is unknown, a hook
-entry does not use exactly one of `ref` or `plugin` + `method`, a `config` is not
-a mapping, or a `failure_policy` is not `fail`/`warn`. A `ref` that cannot be
-imported or a plugin id that cannot be resolved aborts `Engine.build()` before
-any request is served.
+Loading is fail-closed. The YAML is rejected if a hook point is unknown, a hook
+entry does not use exactly one of `ref` or `plugin` + `method`, declares
+implementation-specific hook settings, or a `failure_policy` is not
+`fail`/`warn`. A `ref` that cannot be imported or a plugin id that cannot be
+resolved aborts `Engine.build()` before any request is served.
 
 ---
 
@@ -138,8 +131,6 @@ hooks:
   before_mcp_request:
     - plugin: "mcp_auth"
       method: "before_mcp_request"
-      config:
-        credential_env: "INTERNAL_MCP_CREDENTIAL"
 ```
 
 The plugin id is resolved through `plugins/plugins.toml`:
@@ -155,16 +146,30 @@ including different hook points. Hook methods receive a single
 `HookInvocation` object.
 
 ```python
+import os
+from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
+
 class McpAuthHook:
-    def __init__(self, config: object | None = None) -> None:
-        self.config = config
+    _REQUIRED_ENV = ("INTERNAL_MCP_BEARER", "INTERNAL_MCP_TENANT")
+
+    def __init__(self) -> None:
         self._cache: dict[str, object] = {}
 
-    async def before_mcp_request(self, event: HookInvocation) -> object:
+    def validate_auth_setup(self, event: HookInvocation) -> None:
+        missing = [name for name in self._REQUIRED_ENV if not os.environ.get(name)]
+        if missing:
+            raise RuntimeError(f"Missing MCP auth environment: {', '.join(missing)}")
+
+    async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
         request = event.payload_as(McpRequestContext)
-        credential_env = dict(event.config or {})["credential_env"]
-        credential = os.environ[credential_env]
-        return request.with_headers({"Authorization": f"Bearer {credential}"})
+        bearer = os.environ["INTERNAL_MCP_BEARER"]
+        tenant = os.environ["INTERNAL_MCP_TENANT"]
+        return request.with_headers(
+            {
+                "Authorization": f"Bearer {bearer}",
+                "X-Tenant": tenant,
+            }
+        )
 ```
 
 `HookInvocation` contains:
@@ -173,7 +178,6 @@ class McpAuthHook:
 - `plugin`, `method`, `ref`
 - `run_context`
 - `payload`
-- `config`
 - `metadata`
 
 The `payload` is hook-specific: `EngineContext` for `on_engine_start`,
@@ -181,8 +185,8 @@ The `payload` is hook-specific: `EngineContext` for `on_engine_start`,
 `ToolCallContext` for `after_tool_call`, `ToolResultContext` for
 `transform_tool_result`, and the exception for `on_run_error`.
 
-Class-hook instances may keep safe long-lived state such as config, initialized
-clients, tenant metadata, keyed caches, or audit/metrics clients. They must not
+Class-hook instances may keep safe long-lived state such as initialized clients,
+tenant metadata, keyed caches, or audit/metrics clients. They must not
 store unsafe per-request state such as the current user, organization, inbound
 token, request object, headers, or last request; that data must come from
 `event.run_context` and `event.payload` on each call. If a cache stores user- or
@@ -293,24 +297,24 @@ The manager bridges sync and async uniformly — a hook may be a plain `def` or 
 Explicit refs keep the historical positional signatures:
 
 ```python
-def on_engine_start(context: EngineContext, config: dict) -> None: ...
+def on_engine_start(context: EngineContext) -> None: ...
 
-def on_run_start(context: RunContext, config: dict) -> RunContext | None: ...
+def on_run_start(context: RunContext) -> RunContext | None: ...
 
 def before_mcp_request(
-    context: RunContext | None, request: McpRequestContext, config: dict
+    context: RunContext | None, request: McpRequestContext
 ) -> McpRequestContext | None: ...
 
 def after_tool_call(
-    context: RunContext | None, call: ToolCallContext, config: dict
+    context: RunContext | None, call: ToolCallContext
 ) -> None: ...
 
 def transform_tool_result(
-    context: RunContext | None, result: ToolResultContext, config: dict
+    context: RunContext | None, result: ToolResultContext
 ) -> ToolResultContext | None: ...
 
 def on_run_error(
-    context: RunContext | None, error: BaseException, config: dict
+    context: RunContext | None, error: BaseException
 ) -> None: ...
 ```
 
@@ -376,33 +380,33 @@ runtime calls a private MCP server, a `before_mcp_request` hook adds the right
 credentials. **The LLM never sees the token; the user never sees MCP internals;
 core needs no per-server code.**
 
-### Add an Authorization header
+### Add auth headers
 
 ```python
 import os
 from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
 
 class McpAuthHook:
-    def __init__(self, config: object | None = None) -> None:
-        self.config = config
-
     async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
         request = event.payload_as(McpRequestContext)
-        credential = os.environ[dict(event.config or {})["credential_env"]]
-        return request.with_headers({"Authorization": f"Bearer {credential}"})
+        bearer = os.environ["INTERNAL_MCP_BEARER"]
+        tenant = os.environ["INTERNAL_MCP_TENANT"]
+        return request.with_headers(
+            {
+                "Authorization": f"Bearer {bearer}",
+                "X-Tenant": tenant,
+            }
+        )
 ```
 
 ### Exchange the inbound token for an MCP-scoped token
 
 ```python
 class McpAuthHook:
-    def __init__(self, config: object | None = None) -> None:
-        self.config = config
-
     async def before_mcp_request(self, event):
         request = event.payload_as(McpRequestContext)
         inbound = event.run_context.auth_context.inbound_access_token if event.run_context else None
-        credential = exchange_token(inbound, audience=dict(event.config or {})["audience"])
+        credential = exchange_token(inbound, audience="internal-mcp")
         request.headers["Authorization"] = f"Bearer {credential}"
         return request
 ```
@@ -412,8 +416,8 @@ class McpAuthHook:
 ```python
 import hashlib, hmac, os, time
 
-def sign_mcp_request(context, request, config):
-    secret = os.environ[config["hmac_key_env"]].encode()
+def sign_mcp_request(context, request):
+    secret = os.environ["INTERNAL_MCP_HMAC_KEY"].encode()
     ts = str(int(time.time()))
     mac = hmac.new(secret, f"{ts}:{request.url}".encode(), hashlib.sha256).hexdigest()
     return request.with_headers({"X-Timestamp": ts, "X-Signature": mac})
@@ -475,7 +479,7 @@ The runtime emits structured logs at hook and lifecycle boundaries:
   `after_mcp_response` (status + latency, count of applied headers).
 
 Never logged: Authorization headers, tokens, refresh tokens, HMAC secrets or
-signatures, hook config values, raw prompts, raw tool arguments/results, or raw
+signatures, raw prompts, raw tool arguments/results, or raw
 MCP request/response bodies.
 
 **Hooks are fully optional.** With no `hooks:` section, `hooks: {}`, no
@@ -493,21 +497,18 @@ for untrusted third-party code.**
 
 Because hooks are trusted code, `agentctl validate` (like the engine's build)
 **imports** hook refs and **instantiates** class/plugin hooks to confirm they
-resolve — it never calls hook *methods*. `agentctl inspect` shows hook
-`config_keys` only, never config values.
+resolve — it never calls hook *methods*. `agentctl inspect` shows hook identity
+and failure policy, not hook runtime data.
 
-The platform never logs, and your hooks must never log:
-
-- Authorization headers, HMAC signatures, or any inbound access token;
-- hook **config values** — the manager logs config **keys only**, at DEBUG.
+The platform never logs, and your hooks must never log, Authorization headers,
+HMAC signatures, or any inbound access token.
 
 Secrets come from environment variables or your organization's secret manager,
 **resolved inside hook code** — never inlined in YAML. The YAML secret scanner
 rejects secret-like keys/values (including in the `hooks:` section): any string
 containing `token`, `secret`, `password`, `api_key`, or `private_key` is
-rejected, **even as a plain env-var reference**. Name your env-var references
-without those words — e.g. `credential_env: INTERNAL_MCP_CREDENTIAL` rather than
-`token_env: INTERNAL_MCP_TOKEN`. Hook outputs are never placed into prompts.
+rejected. If a hook needs configuration, put that logic in the hook
+implementation. Hook outputs are never placed into prompts.
 
 ---
 

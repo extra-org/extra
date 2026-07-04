@@ -7,9 +7,10 @@
 PYTHON ?= python3
 SRC := src
 TESTS := tests
+FLAGSHIP := examples/enterprise-knowledge-assistant/agents.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help install generate-ai test lint format typecheck check clean
+.PHONY: help install generate-ai sync-ai sync-skills test lint format typecheck check clean validate inspect
 
 help: ## Show available targets.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -19,8 +20,12 @@ install: generate-ai ## Install the package (editable) with dev dependencies.
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -e ".[dev]"
 
-generate-ai: ## Generate adapters from .ai/. Use TARGET=claude|cursor|codex to limit scope.
+generate-ai: ## Generate adapters from .ai/. Use TARGET=claude|codex to limit scope.
 	$(PYTHON) -m tools.skills $(if $(TARGET),--target $(TARGET),)
+
+sync-ai: generate-ai ## Alias for generate-ai (older name, kept for docs compatibility).
+
+sync-skills: generate-ai ## Alias for generate-ai (older name, kept for docs compatibility).
 
 format: ## Auto-format the codebase (ruff format).
 	ruff format $(SRC) $(TESTS)
@@ -35,6 +40,12 @@ test: ## Run the test suite (pytest).
 	pytest
 
 check: lint typecheck test ## Quality gate: lint + typecheck + test.
+
+validate: ## Validate the flagship example offline (no LLM calls, no network, no API keys).
+	agentctl validate $(FLAGSHIP)
+
+inspect: ## Inspect the flagship example offline (agents, MCPs, hooks, plugins, tags).
+	agentctl inspect $(FLAGSHIP)
 
 clean: ## Remove caches and build artifacts.
 	rm -rf .pytest_cache .mypy_cache .ruff_cache dist build *.egg-info

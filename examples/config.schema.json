@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agent-engine.dev/schemas/config.schema.json",
+  "$id": "https://raw.githubusercontent.com/Asaf-prog/extra/main/examples/config.schema.json",
   "title": "Agent Engine Configuration",
   "description": "Declarative configuration for a hierarchical multi-agent system. Declarations are flat; the runtime topology is expressed by indentation under `graph`. The engine is stateless with respect to conversation: it receives a full conversation and runs the graph.",
   "type": "object",
@@ -191,10 +191,6 @@
           "type": "string",
           "minLength": 1,
           "description": "Method on the managed hook plugin class."
-        },
-        "config": {
-          "type": "object",
-          "description": "Per-hook invocation config. Store env-var names here, not raw secrets."
         },
         "failure_policy": {
           "type": "string",

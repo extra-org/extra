@@ -28,23 +28,20 @@ def test_loads_class_hook_as_instance() -> None:
     assert hook.__class__.__name__ == "CallableHook"
 
 
-def test_loads_class_method_hook_with_configured_instance() -> None:
+def test_loads_class_method_hook_with_unconfigured_instance() -> None:
     hook = HookLoader().load(
         "before_mcp_request",
         f"{_FIX}:McpAuthHook.before_mcp_request",
-        config={"audience": "internal-docs"},
     )
     assert callable(hook)
     instance = hook.__agent_hook_instance__  # type: ignore[attr-defined]
     assert instance.__class__.__name__ == "McpAuthHook"
-    assert instance.config == {"audience": "internal-docs"}
 
 
-async def test_class_method_hook_callable_can_be_invoked_without_trailing_config() -> None:
+async def test_class_method_hook_callable_can_be_invoked() -> None:
     hook = HookLoader().load(
         "before_mcp_request",
         f"{_FIX}:McpAuthHook.before_mcp_request",
-        config={"audience": "internal-docs"},
     )
     request = await hook(RunContext(), McpRequestContext(server_id="s", url="https://x/mcp"))
     assert request.headers["X-Audience"] == "internal-docs"
@@ -75,11 +72,11 @@ async def test_loads_managed_plugin_method_and_reuses_instance() -> None:
             method="before_mcp_request",
             run_context=RunContext(run_id="r1"),
             payload=McpRequestContext(server_id="s", url="https://x/mcp"),
-            config={"credential": "abc"},
         )
     )
 
-    assert request.headers["Authorization"] == "Bearer abc"
+    assert request.headers["Authorization"] == "Bearer static"
+    assert request.headers["X-Tenant"] == "acme"
     assert hook.__agent_hook_instance__ is second.__agent_hook_instance__  # type: ignore[attr-defined]
 
 

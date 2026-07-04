@@ -30,7 +30,8 @@ def sync_skills():
 
 @pytest.fixture
 def repo():
-    # Use a workspace-local temp dir so sandboxed test runs can create `.cursor/`.
+    # Use a workspace-local temp dir so sandboxed test runs can create the
+    # generated adapter directories.
     base = ROOT / "tests" / "_sync_tmp"
     base.mkdir(exist_ok=True)
     repo_path = base / f"repo-{uuid.uuid4().hex}"
@@ -64,27 +65,21 @@ def repo():
     shutil.rmtree(repo_path, ignore_errors=True)
 
 
-def test_generates_claude_cursor_and_codex_adapters(sync_skills, repo: Path) -> None:
+def test_generates_claude_and_codex_adapters(sync_skills, repo: Path) -> None:
     sync_skills.sync(repo)
 
     claude = repo / ".claude" / "skills" / "testing" / "SKILL.md"
-    cursor = repo / ".cursor" / "rules" / "skills" / "testing.mdc"
     codex = repo / ".codex" / "skills" / "testing.md"
     claude_role = repo / ".claude" / "agents" / "reviewer.md"
-    cursor_role = repo / ".cursor" / "rules" / "roles" / "reviewer.mdc"
     codex_role = repo / ".codex" / "agents" / "reviewer.md"
     claude_workflow = repo / ".claude" / "workflows" / "feature-task.md"
-    cursor_workflow = repo / ".cursor" / "rules" / "workflows" / "feature-task.mdc"
     codex_workflow = repo / ".codex" / "workflows" / "feature-task.md"
 
     assert claude.exists()
-    assert cursor.exists()
     assert codex.exists()
     assert claude_role.exists()
-    assert cursor_role.exists()
     assert codex_role.exists()
     assert claude_workflow.exists()
-    assert cursor_workflow.exists()
     assert codex_workflow.exists()
 
 
@@ -92,10 +87,9 @@ def test_generated_adapters_include_full_skill_body(sync_skills, repo: Path) -> 
     sync_skills.sync(repo)
 
     claude = (repo / ".claude" / "skills" / "testing" / "SKILL.md").read_text()
-    cursor = (repo / ".cursor" / "rules" / "skills" / "testing.mdc").read_text()
     codex = (repo / ".codex" / "skills" / "testing.md").read_text()
 
-    for content in (claude, cursor, codex):
+    for content in (claude, codex):
         assert "# Skill: Testing" in content
         assert "Canonical testing guidance lives here." in content
         assert "generated: true" in content
@@ -105,7 +99,7 @@ def test_generated_adapters_include_full_skill_body(sync_skills, repo: Path) -> 
         assert "# Skill Pointer:" not in content
 
     role = (repo / ".codex" / "agents" / "reviewer.md").read_text()
-    workflow = (repo / ".cursor" / "rules" / "workflows" / "feature-task.mdc").read_text()
+    workflow = (repo / ".claude" / "workflows" / "feature-task.md").read_text()
     assert "# Role: Reviewer" in role
     assert "source: .ai/roles/reviewer.md" in role
     assert "# Workflow: Feature Task" in workflow
@@ -149,8 +143,6 @@ def test_removes_stale_generated_adapters(sync_skills, repo: Path) -> None:
     )
     stale_flat = repo / ".claude" / "skills" / "legacy.md"
     stale_flat.write_text("---\nname: legacy\ngenerated: true\n---\n")
-    stale_cursor = repo / ".cursor" / "rules" / "old-skill.mdc"
-    stale_cursor.write_text("---\ngenerated: true\n---\n")
     stale_codex = repo / ".codex" / "skills" / "old-skill.md"
     stale_codex.write_text("---\nname: old-skill\ngenerated: true\n---\n")
 
@@ -158,19 +150,14 @@ def test_removes_stale_generated_adapters(sync_skills, repo: Path) -> None:
 
     assert not stale_claude_dir.exists()
     assert not stale_flat.exists()
-    assert not stale_cursor.exists()
     assert not stale_codex.exists()
 
 
 def test_does_not_remove_manual_non_generated_files(sync_skills, repo: Path) -> None:
-    manual_rule = repo / ".cursor" / "rules" / "project.mdc"
+    manual_rule = repo / ".claude" / "agents" / "project.md"
     manual_rule.parent.mkdir(parents=True, exist_ok=True)
     manual_rule.write_text(
-        "---\n"
-        "description: Project-wide AI instructions\n"
-        "alwaysApply: true\n"
-        "---\n\n"
-        "Manual project adapter.\n"
+        "---\ndescription: Project-wide AI instructions\n---\n\nManual project adapter.\n"
     )
 
     sync_skills.sync(repo)
