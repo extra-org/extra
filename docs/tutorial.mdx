@@ -1,22 +1,24 @@
 ---
 title: Full Example — Zero to Hero
-description: Build a real, multi-domain support system from an empty file, one YAML section at a time.
+description: Build a real support system from an empty file, one YAML section at a time.
 ---
 
 ## What we're building
 
-**Nimbus Cloud** — a fictional cloud hosting company — needs a support assistant for two different kinds of questions: billing, and infrastructure status. If one agent tried to handle both, it would only half-know each one — and end up guessing. So we give each its own agent instead.
+An online store — Acme Store — needs a support assistant. Three obvious jobs, three separate agents: someone to check order status, someone to handle returns, someone to answer product questions. Nobody would ask one person to do all three well, and an AI agent is no different — so each gets its own agent, with only the tools and data that job actually needs.
+
+We'll also add one members-only agent, visible only to verified VIP customers.
 
 ```text
-                    main_router
-                   /            \
-          account_router      platform_router
-           /        \            /         \
-   billing_agent  security_agent   infra_agent   docs_agent
-   (local tool)   (protected)      (MCP)         (MCP)
+                     main_router
+                    /            \
+             store_router        vip_agent
+            /      |      \      (protected)
+    orders_agent returns_agent catalog_agent
+    (local tool)  (prompt only)  (MCP)
 ```
 
-Two orchestrators, four agents, a mix of a local tool and MCP servers — this is a realistic shape for a real company, not a toy demo. We'll build the YAML section by section, explaining *why* each decision keeps agents accurate and scoped, then generate, implement, and run it for real.
+We'll build this YAML section by section, explaining why each piece is there, then generate, implement, and run it for real.
 
 ---
 
@@ -26,10 +28,10 @@ Every file starts here. Nothing else exists yet:
 
 ```yaml agents.yml
 system:
-  name: "Nimbus Cloud Support"
+  name: "Acme Store Support"
 ```
 
-That's a valid — if useless — spec. `system.name` is the only thing every single spec requires. Everything below gets added to this same file, one block at a time.
+That's a valid — if useless — spec. `system.name` is the only thing every spec requires. Everything below adds to this same file, one block at a time.
 
 ---
 
@@ -37,7 +39,7 @@ That's a valid — if useless — spec. `system.name` is the only thing every si
 
 ```yaml agents.yml
 system:
-  name: "Nimbus Cloud Support"
+  name: "Acme Store Support"
 
 defaults:
   model:
@@ -46,78 +48,64 @@ defaults:
     temperature: 0.0
 ```
 
-**Why Haiku, and why `temperature: 0.0`?** Most of this system is routing and factual lookups, not creative reasoning. A fast, cheap, deterministic model is the right default. Cranking temperature down further reduces the chance an agent improvises instead of sticking to what it actually knows — the first lever against hallucination, before we've even written an agent.
+Most of this system is routing and factual lookups, not creative writing — a fast, cheap, deterministic model is the right default everywhere until an agent proves it needs more.
 
 ---
 
-## Step 3 — Declare the tool billing needs
+## Step 3 — Declare the tool orders needs
 
 ```yaml agents.yml
 tools:
-  get_invoice_status:
-    description: "Get the current invoice status and amount due for a customer account by account ID."
+  get_order_status:
+    description: "Get the current status and tracking info for an order by order ID."
 ```
 
-We declare this *before* any agent, because an agent will reference it by id in a moment — Extra needs `get_invoice_status` to already exist in this list, or the reference fails validation. Declaring capabilities before wiring them up is the pattern for the rest of the file: tools, then MCPs, then resolvers, *then* the agents that use them.
+We declare this before any agent, because an agent is about to reference it by id — Extra needs `get_order_status` to already exist in this list, or the reference fails validation. Tools and MCP servers get declared first; the agents that use them come later.
 
 ---
 
-## Step 4 — Declare the MCP servers platform support needs
+## Step 4 — Declare the MCP server catalog needs
 
 ```yaml agents.yml
 mcps:
-  status_mcp:
-    url: "https://mcp.nimbuscloud.internal/status"
-  docs_mcp:
-    url: "https://mcp.nimbuscloud.internal/docs"
+  catalog_mcp:
+    url: "https://mcp.acmestore.internal/catalog"
 ```
 
 <Note>
-  These URLs are illustrative — they point at Nimbus Cloud's own internal servers, which don't exist outside this example. In your real deployment, this is where you'd put your company's actual internal MCP endpoints — an incident-status API, an internal docs search index, anything already running as an MCP server. The point of this step is that connecting one is exactly this simple: a name and a URL. No client code, no SDK.
+  This URL is illustrative — it points at Acme's own internal catalog server, which doesn't exist outside this example. In your real deployment, this is where your actual product catalog or inventory system's MCP endpoint goes. The point of this step is that connecting one is exactly this simple: a name and a URL, no client code.
 </Note>
 
 ---
 
-## Step 5 — Build the orchestrators, one at a time
+## Step 5 — Build the orchestrators
 
-Start with the two *sub*-routers — the ones closer to the actual work:
+Start with the one that sits closer to the actual work:
 
 ```yaml agents.yml
 orchestrators:
-  account_router:
-    description: "Routes billing and account-security questions."
+  store_router:
+    description: "Routes order status and return questions."
     prompts:
-      orchestrator: "prompts/account_router/orchestrator.md"
-
-  platform_router:
-    description: "Routes infrastructure status and technical documentation questions."
-    prompts:
-      orchestrator: "prompts/platform_router/orchestrator.md"
+      orchestrator: "prompts/store_router/orchestrator.md"
 ```
 
-**Why split into two routers instead of one flat list of four agents?** A single router choosing between "billing", "security", "infra status", and "docs" has to hold four unrelated domains in its head at once, using one prompt. Splitting into `account_router` and `platform_router` means each router only ever has to make an easy, narrow decision — and each one's prompt only needs to describe *its own* two children, not all four. Smaller decision surface, less room for the router to guess wrong.
-
-Now add the top-level router that sits above both:
+Now add the top-level router above it:
 
 ```yaml agents.yml
 orchestrators:
   main_router:
-    description: "Routes the user to account/billing support or platform/infrastructure support."
+    description: "Routes to store support, or to the VIP desk for verified members."
     prompts:
       orchestrator: "prompts/main_router/orchestrator.md"
 
-  account_router:
-    description: "Routes billing and account-security questions."
+  store_router:
+    description: "Routes order status and return questions."
     prompts:
-      orchestrator: "prompts/account_router/orchestrator.md"
-
-  platform_router:
-    description: "Routes infrastructure status and technical documentation questions."
-    prompts:
-      orchestrator: "prompts/platform_router/orchestrator.md"
+      orchestrator: "prompts/store_router/orchestrator.md"
 ```
 
-`main_router` doesn't need to know that `billing_agent` or `docs_agent` exist at all — it only ever sees `account_router` and `platform_router`, via their `description` fields. This is the same accuracy principle one level up: each orchestrator's world is exactly as big as it needs to be, no bigger.
+`main_router` never needs to know that `orders_agent` or `returns_agent` exist — it only ever sees `store_router` and `vip_agent`, through their `description` fields. Each router's decision stays small and easy.
 
 ---
 
@@ -125,92 +113,86 @@ orchestrators:
 
 ```yaml agents.yml
 agents:
-  billing_agent:
-    description: "Handles invoice status, billing amounts, and payment questions."
+  orders_agent:
+    description: "Handles order status and tracking questions."
     prompts:
-      system: "prompts/billing/system.md"
-    tools: [get_invoice_status]
+      system: "prompts/orders/system.md"
+    tools: [get_order_status]
 
-  security_agent:
-    description: "Handles account security: password resets, 2FA, and suspicious login reports."
+  returns_agent:
+    description: "Explains the return policy and how to start a return."
     prompts:
-      system: "prompts/security/system.md"
+      system: "prompts/returns/system.md"
+
+  catalog_agent:
+    description: "Answers product questions using the live catalog."
+    prompts:
+      system: "prompts/catalog/system.md"
+    mcps: [catalog_mcp]
+
+  vip_agent:
+    description: "Exclusive support line for verified VIP members."
+    prompts:
+      system: "prompts/vip/system.md"
     protected: true
-
-  infra_agent:
-    description: "Reports on current infrastructure status and ongoing incidents."
-    prompts:
-      system: "prompts/infra/system.md"
-    mcps: [status_mcp]
-
-  docs_agent:
-    description: "Answers technical questions using Nimbus Cloud's API and product documentation."
-    prompts:
-      system: "prompts/docs/system.md"
-    mcps: [docs_mcp]
 ```
 
-Four agents, four completely separate scopes:
+Each agent gets exactly what its job needs, nothing more:
 
-- `billing_agent` gets exactly one tool: `get_invoice_status`. It has no MCP access and no security tools — it structurally *cannot* touch account security, even if a user tries to steer it there.
-- `security_agent` is `protected: true` — more on this in [Step 9](#step-9-protect-the-sensitive-agent).
-- `infra_agent` and `docs_agent` each get exactly one MCP server. `infra_agent` can't accidentally answer from documentation, and `docs_agent` can't accidentally report live incident status — they're reading from different systems entirely.
+- `orders_agent` gets one tool — real order data, looked up, not guessed.
+- `returns_agent` gets **no tool at all**. The return policy is fixed text, not something to look up per request, so a tool would just be unused ceremony — the prompt alone is the right amount of machinery here.
+- `catalog_agent` gets one MCP server — live product data, and nothing else.
+- `vip_agent` is `protected: true` — more on that in [Step 9](#step-9-protect-the-vip-agent).
 
-This is the actual mechanism behind "no hallucination bleed between domains": it's not a prompt instruction asking the model to behave — it's that each agent is *structurally* wired to only one slice of tools and data. There's nothing else for it to reach for.
+None of these agents can reach outside their own lane. `orders_agent` has no path to the catalog; `catalog_agent` has no path to order data. That separation — not prompt wording — is what keeps each one from guessing at a job it wasn't given.
 
 ---
 
 ## Step 7 — Write the prompt files
 
-The YAML above references six prompt files that don't exist on disk yet. `agentctl generate` (next step) only scaffolds *plugin code* — tools, resolvers, hooks. It never writes prompt files for you, and `validate` will fail if a referenced prompt file is missing. So we write these first.
+The YAML above references five prompt files that don't exist on disk yet. `agentctl generate` (next step) only scaffolds *plugin code* — tools, resolvers, hooks. It never writes prompt files, and `validate` fails if a referenced prompt file is missing. So we write these first.
 
 ```markdown prompts/main_router/orchestrator.md
-You are the top-level router for Nimbus Cloud Support.
-Route account and billing questions to account_router.
-Route infrastructure status and technical documentation questions to platform_router.
+You are the top-level router for Acme Store Support.
+Route order status and return questions to store_router.
+Route anything from a verified VIP member to vip_agent.
 ```
 
-```markdown prompts/account_router/orchestrator.md
-You route between billing and account security.
-Route invoice, payment, and billing amount questions to billing_agent.
-Route password, 2FA, and suspicious login questions to security_agent.
+```markdown prompts/store_router/orchestrator.md
+You route between order status and returns.
+Route tracking and delivery questions to orders_agent.
+Route return and refund questions to returns_agent.
 ```
 
-```markdown prompts/platform_router/orchestrator.md
-You route between infrastructure status and documentation.
-Route questions about outages, incidents, or current system status to infra_agent.
-Route questions about how to use the API or product features to docs_agent.
+```markdown prompts/orders/system.md
+You are an order status specialist for Acme Store.
+Use the get_order_status tool to check real order data before answering.
+Never guess a status or delivery date — always look it up.
 ```
 
-```markdown prompts/billing/system.md
-You are a billing specialist for Nimbus Cloud.
-Use the get_invoice_status tool to check real invoice data before answering.
-Never guess an amount or a due date — always look it up.
+```markdown prompts/returns/system.md
+You are a returns specialist for Acme Store.
+Standard policy: returns are accepted within 30 days of delivery, in original condition, for a full refund.
+Explain the policy clearly and tell the customer how to start a return.
 ```
 
-```markdown prompts/security/system.md
-You are an account security specialist for Nimbus Cloud.
-You only assist customers whose identity has already been verified.
-Be precise about what security actions were taken.
+```markdown prompts/catalog/system.md
+You are a product specialist for Acme Store.
+Answer using the catalog search tool. If it doesn't have an answer, say so instead of guessing.
 ```
 
-```markdown prompts/infra/system.md
-You are an infrastructure status specialist for Nimbus Cloud.
-Report only what the status tool returns — do not speculate about causes or resolution times you weren't given.
+```markdown prompts/vip/system.md
+You are the VIP support specialist for Acme Store.
+You only assist customers whose VIP status has already been verified.
 ```
 
-```markdown prompts/docs/system.md
-You are a documentation specialist for Nimbus Cloud's API and product.
-Answer using the documentation search tool. If it doesn't have an answer, say so instead of guessing.
-```
-
-Notice the repeated pattern: every prompt tells the agent to defer to its tool's real data rather than "reason" its way to an answer. That instruction only works *because* the agent has nothing else available to reach for — the prompt and the structure reinforce each other.
+Notice `orders_agent` and `catalog_agent` are both told to defer to their tool's real data rather than reason their way to an answer — and that instruction only works because each one has nothing else available to reach for.
 
 ---
 
 ## Step 8 — Generate the plugin stub
 
-Only `billing_agent`'s tool needs real code — `infra_agent` and `docs_agent` get their capabilities from MCP servers, which need no local implementation at all.
+Only `orders_agent`'s tool needs real code — `catalog_agent` gets its data from an MCP server, which needs no local implementation, and `returns_agent` needs no tool at all.
 
 ```bash
 docker run --rm \
@@ -228,56 +210,56 @@ plugins/
   plugins.toml
   tools/
     __init__.py
-    get_invoice_status.py
+    get_order_status.py
 ```
 
-`plugins/tools/get_invoice_status.py`, freshly generated:
+`plugins/tools/get_order_status.py`, freshly generated:
 
-```python plugins/tools/get_invoice_status.py
-def get_invoice_status(account_id: str) -> dict:
-    """Get the current invoice status and amount due for a customer account by account ID."""
+```python plugins/tools/get_order_status.py
+def get_order_status(order_id: str) -> dict:
+    """Get the current status and tracking info for an order by order ID."""
     raise NotImplementedError
 ```
 
-`raise NotImplementedError` is a deliberate placeholder, not an error in the tool — it won't stop `generate` or `validate` from succeeding. If the model tries to call this before you implement it, you get a loud, clear failure instead of silent wrong behavior. `plugins/plugins.toml` is the manifest `generate` wrote mapping `get_invoice_status` to this file — **you never hand-edit this file**; it's regenerated as your tools change. That's a different thing entirely from a Python dependency file, which is next.
+`raise NotImplementedError` is a deliberate placeholder, not a bug — it won't stop `generate` or `validate` from succeeding. If the model calls this before you implement it, you get a loud, clear failure instead of silent wrong behavior. `plugins/plugins.toml` is the manifest `generate` wrote, mapping `get_order_status` to this file — **you never hand-edit this file**; it's regenerated as your tools change. That's a different thing from a Python dependency file, which comes up in the next step.
 
 ---
 
-## Step 9 — Protect the sensitive agent {#step-9-protect-the-sensitive-agent}
+## Step 9 — Protect the VIP agent {#step-9-protect-the-vip-agent}
 
-`security_agent` is marked `protected: true` in Step 6. Any spec with a protected node requires `plugins/access.py`:
+`vip_agent` is marked `protected: true` in Step 6. Any spec with a protected node requires `plugins/access.py`:
 
 ```python plugins/access.py
 class AccessResolver:
     def can_access(self, ctx, node_id: str) -> bool:
-        if node_id == "security_agent":
-            return ctx.headers.get("X-Customer-Verified") == "true"
+        if node_id == "vip_agent":
+            return ctx.headers.get("X-Customer-Tier") == "vip"
         return True
 ```
 
-Until a caller's request carries that header, `security_agent` is invisible to `account_router` entirely — not refused, not filtered after the fact, just never offered as an option. That's a stronger guarantee than anything you could put in a prompt.
+Until a request carries that header, `vip_agent` is invisible to `main_router` entirely — not refused after the fact, just never offered as an option. That's a stronger guarantee than anything you could write into a prompt.
 
 ---
 
 ## Step 10 — Implement the tool
 
-Real companies don't expose their billing database as a public API, so we simulate one with an in-memory lookup — in production, swap this for your real database or internal billing service call:
+Real stores don't expose their order database as a public API, so we simulate one with an in-memory lookup — in production, swap this for your real database or order-service call:
 
-```python plugins/tools/get_invoice_status.py
-_INVOICES = {
-    "acct-1001": {"status": "paid", "amount_due": 0.00, "due_date": None},
-    "acct-1002": {"status": "overdue", "amount_due": 149.00, "due_date": "2026-06-15"},
+```python plugins/tools/get_order_status.py
+_ORDERS = {
+    "ord-1001": {"status": "delivered", "tracking": None},
+    "ord-1002": {"status": "shipped", "tracking": "1Z999AA10123456784"},
 }
 
-def get_invoice_status(account_id: str) -> dict:
-    """Get the current invoice status and amount due for a customer account by account ID."""
-    invoice = _INVOICES.get(account_id)
-    if invoice is None:
-        return {"error": f"No account found with ID '{account_id}'."}
-    return {"account_id": account_id, **invoice}
+def get_order_status(order_id: str) -> dict:
+    """Get the current status and tracking info for an order by order ID."""
+    order = _ORDERS.get(order_id)
+    if order is None:
+        return {"error": f"No order found with ID '{order_id}'."}
+    return {"order_id": order_id, **order}
 ```
 
-No new dependency needed here — this tool uses nothing beyond the standard library. If yours does (an HTTP client, a database driver), that goes in `requirements.txt` at the project root — a plain pip file, not TOML, and a different mechanism entirely from `plugins.toml`.
+No new dependency needed here — this uses nothing beyond the standard library. If yours does (an HTTP client, a database driver), that goes in `requirements.txt` at the project root — a plain pip file, not TOML, and a different mechanism entirely from `plugins.toml`.
 
 ---
 
@@ -291,7 +273,7 @@ docker run --rm \
   validate agents.yml
 ```
 
-Fully offline. It checks the YAML shape, that every tool/MCP/resolver id referenced by an agent is actually declared, that all six prompt files exist on disk, and that `plugins/access.py` is importable since a protected node exists. Exits non-zero with a specific error location if anything's wrong.
+Fully offline. It checks the YAML shape, that every tool/MCP id an agent references is actually declared, that all five prompt files exist on disk, and that `plugins/access.py` is importable since a protected node exists. Exits non-zero with a specific error location if anything's wrong.
 
 ---
 
@@ -303,10 +285,10 @@ docker run --rm \
   -w /workspace \
   -e ANTHROPIC_API_KEY=sk-... \
   ghcr.io/asaf-prog/extra:latest \
-  run --config agents.yml --message "What's the status of invoice for account acct-1002?"
+  run --config agents.yml --message "What's the status of order ord-1002?"
 ```
 
-The path: `main_router` → `account_router` → `billing_agent` → `get_invoice_status("acct-1002")` → a real, looked-up answer: overdue, $149.00, due 2026-06-15.
+The path: `main_router` → `store_router` → `orders_agent` → `get_order_status("ord-1002")` → a real, looked-up answer: shipped, tracking `1Z999AA10123456784`.
 
 ```bash
 docker run --rm \
@@ -314,19 +296,30 @@ docker run --rm \
   -w /workspace \
   -e ANTHROPIC_API_KEY=sk-... \
   ghcr.io/asaf-prog/extra:latest \
-  run --config agents.yml --message "Is there an ongoing outage right now?"
+  run --config agents.yml --message "What's your return policy?"
 ```
 
-This one routes `main_router` → `platform_router` → `infra_agent`. Since `status_mcp` points at an illustrative URL that doesn't really exist, the engine logs a warning and connects with no tools bound for that agent — it'll answer from the prompt alone, without a real status lookup. Point `status_mcp`'s `url` at your actual internal server and this same call starts returning real incident data, with no other change to the spec.
+This one routes to `returns_agent` — no tool call, just the prompt's own policy text, answered instantly.
+
+```bash
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  -e ANTHROPIC_API_KEY=sk-... \
+  ghcr.io/asaf-prog/extra:latest \
+  run --config agents.yml --message "Do you have this jacket in size medium?"
+```
+
+This one routes to `catalog_agent`. Since `catalog_mcp` points at an illustrative URL that doesn't really exist, the engine logs a warning and connects with no tools bound — it'll answer from the prompt alone, without a real catalog lookup. Point `catalog_mcp`'s `url` at your real internal server and this same call starts returning real inventory data, with no other change to the spec.
 
 ---
 
 ## What you just built
 
-- A two-level routing hierarchy where every orchestrator's decision space is as narrow as possible
-- Four agents with completely non-overlapping tool/MCP access — the actual mechanism behind avoiding cross-domain hallucination
+- A two-level routing hierarchy where every orchestrator's decision stays narrow
+- Four agents with completely separate tool/MCP access — the real mechanism behind not guessing outside your lane
 - One protected node, gated by a real access plugin instead of prompt wording
-- A real, working local tool, plus two MCP declarations ready to point at real internal servers
+- A working local tool, an MCP declaration ready for a real server, and an agent that needed no tool at all
 
 ## Next steps
 
@@ -335,7 +328,7 @@ This one routes `main_router` → `platform_router` → `infra_agent`. Since `st
     Turn this into a live chat you can embed on a website.
   </Card>
   <Card title="MCP auth" icon="shield" href="/docs/runtime-hooks#mcp-auth">
-    Add real credentials to status_mcp and docs_mcp with a hook.
+    Add real credentials to catalog_mcp with a hook.
   </Card>
   <Card title="Full YAML reference" icon="file-code" href="/docs/yaml-spec">
     Every field you can declare, explained in depth.
