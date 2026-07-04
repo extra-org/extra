@@ -28,90 +28,46 @@ They're the right place for:
 
 ## Lifecycle points
 
-Every point below is a moment the engine will call your hook, if you've declared one for it. Grouped by what part of a request they attach to.
+Every row below is a moment the engine will call your hook, if you've declared one for it.
 
 ### Engine lifecycle
 
 Fire once per engine process, not per request.
 
-<AccordionGroup>
-  <Accordion title="on_engine_start — when the engine boots up">
-    Runs once, before any request is served. Good for validating that required secrets or connections exist.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-  <Accordion title="on_engine_stop — when the engine shuts down">
-    Runs once, best-effort, during shutdown.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-</AccordionGroup>
+| Hook point | Fires | Can modify | Typical use |
+|---|---|---|---|
+| `on_engine_start` | Once, before any request is served | No — observe only | Validate required secrets/connections exist at boot |
+| `on_engine_stop` | Once, during shutdown (best-effort) | No — observe only | Cleanup, flush buffers |
 
 ### Run lifecycle
 
 Fire once per request.
 
-<AccordionGroup>
-  <Accordion title="on_run_start — a request has just come in">
-    Runs before the graph executes. The only hook that can attach identity/metadata to the run itself.
-
-    Can modify: **yes** — may return an updated run context.
-  </Accordion>
-  <Accordion title="on_run_end — the request finished successfully">
-    Runs after a successful response is ready.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-  <Accordion title="on_run_error — the request failed">
-    Runs when a request fails for any reason. Never masks or replaces the original error.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-</AccordionGroup>
+| Hook point | Fires | Can modify | Typical use |
+|---|---|---|---|
+| `on_run_start` | Before the graph executes | **Yes** — may return an updated run context | Attach identity/metadata to the run |
+| `on_run_end` | After a successful response is ready | No — observe only | Log run outcome |
+| `on_run_error` | When a request fails, for any reason | No — never masks the original error | Alert, log failures |
 
 ### Tool lifecycle
 
 Fire around every local or MCP tool call.
 
-<AccordionGroup>
-  <Accordion title="before_tool_call — right before a tool runs">
-    Fires for every tool call, local or MCP.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-  <Accordion title="after_tool_call — a tool call just succeeded">
-    Fires only on success.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-  <Accordion title="transform_tool_result — reshape a tool's result before the model sees it">
-    Fires after a tool succeeds, before its result is added to the conversation. The one tool-lifecycle hook that can change what the model actually sees — use it to truncate, redact, or normalize a result.
-
-    Can modify: **yes** — may return an updated result.
-  </Accordion>
-  <Accordion title="on_tool_error — a tool call failed">
-    Fires when a local or MCP tool call raises an error.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-</AccordionGroup>
+| Hook point | Fires | Can modify | Typical use |
+|---|---|---|---|
+| `before_tool_call` | Right before any tool runs | No — observe only | Audit, policy checks |
+| `after_tool_call` | After a tool call succeeds | No — observe only | Audit logging |
+| `transform_tool_result` | After a tool succeeds, before its result reaches the model | **Yes** — may return an updated result | Truncate, redact, or normalize a result |
+| `on_tool_error` | When a tool call raises an error | No — observe only | Alert, log failures |
 
 ### MCP lifecycle
 
 Fire around every outgoing MCP HTTP request.
 
-<AccordionGroup>
-  <Accordion title="before_mcp_request — right before an MCP HTTP request goes out">
-    The most commonly used hook — this is where auth headers get attached. Fires for every MCP operation: connecting, listing tools, and calling a tool.
-
-    Can modify: **yes** — may return the request with updated headers.
-  </Accordion>
-  <Accordion title="after_mcp_response — an MCP HTTP response just came back">
-    Fires after every MCP HTTP response, success or error status.
-
-    Can modify: nothing — observe only.
-  </Accordion>
-</AccordionGroup>
+| Hook point | Fires | Can modify | Typical use |
+|---|---|---|---|
+| `before_mcp_request` | Right before an MCP HTTP request goes out — every operation: connect, list tools, call tool | **Yes** — may return the request with updated headers | Inject auth headers ([most common use](#mcp-auth)) |
+| `after_mcp_response` | After every MCP HTTP response, success or error status | No — observe only | Log latency, status codes |
 
 ---
 
