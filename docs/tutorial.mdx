@@ -1,0 +1,265 @@
+---
+title: Full Example — Zero to Hero
+description: Every step from an empty folder to a running agent, in about 10 minutes.
+---
+
+## What we're building
+
+A support assistant for a bike rental shop, with two agents:
+
+```text
+User message
+     │
+     ▼
+  router
+  ├── booking_agent     answers rental, pricing, and policy questions
+  └── weather_agent     checks real, live weather for a city — good biking day or not
+```
+
+`weather_agent` calls a real public weather API. By the end, you'll have a working system that answers a real question with real data — not a mock.
+
+<Steps>
+
+<Step title="Write the spec">
+
+Create a folder and `agents.yml` inside it:
+
+```bash
+mkdir bike-shop && cd bike-shop
+```
+
+```yaml agents.yml
+system:
+  name: "Bike Shop Assistant"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+
+tools:
+  get_weather:
+    description: "Get the current weather for a city — temperature and wind speed. Use this to tell the customer if it's a good day for biking."
+
+orchestrators:
+  router:
+    description: "Routes the user to the right assistant: booking questions or weather checks."
+    prompts:
+      orchestrator: "prompts/router/orchestrator.md"
+
+agents:
+  booking_agent:
+    description: "Answers questions about bike rentals, pricing, and rental policy."
+    prompts:
+      system: "prompts/booking/system.md"
+
+  weather_agent:
+    description: "Checks the current weather to help the customer decide if it's a good day to bike."
+    prompts:
+      system: "prompts/weather/system.md"
+    tools: [get_weather]
+
+graph:
+  router:
+    booking_agent:
+    weather_agent:
+```
+
+This is the whole system definition. Everything else — prompts and the tool's real code — gets built in the next steps.
+
+</Step>
+
+<Step title="Write your prompt files">
+
+The spec references three prompt files that don't exist yet. Create them:
+
+```markdown prompts/router/orchestrator.md
+You are the router for a bike rental shop's support assistant.
+Route booking, pricing, and policy questions to booking_agent.
+Route anything about weather or "is it a good day to bike" to weather_agent.
+```
+
+```markdown prompts/booking/system.md
+You are a booking assistant for a bike rental shop.
+Standard rentals are $15/day for city bikes and $25/day for e-bikes.
+Rentals can be cancelled up to 24 hours in advance for a full refund.
+Answer clearly and keep responses short.
+```
+
+```markdown prompts/weather/system.md
+You are a biking weather advisor.
+Use the get_weather tool to check current conditions for the city the customer mentions.
+Recommend biking if temperature is above 10°C and wind speed is below 30 km/h — otherwise advise caution or suggest an alternative day.
+```
+
+</Step>
+
+<Step title="Generate the plugin stubs">
+
+Run `generate` to scaffold the code for your one tool:
+
+```bash
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  ghcr.io/asaf-prog/extra:latest \
+  generate --config agents.yml
+```
+
+This creates a `plugins/` folder:
+
+```text
+plugins/
+  __init__.py
+  plugins.toml
+  tools/
+    __init__.py
+    get_weather.py
+```
+
+Open `plugins/tools/get_weather.py` — this is what a freshly generated stub looks like:
+
+```python plugins/tools/get_weather.py
+def get_weather(city: str) -> dict:
+    """Get the current weather for a city — temperature and wind speed. Use this to tell the customer if it's a good day for biking."""
+    raise NotImplementedError
+```
+
+`raise NotImplementedError` is intentional — this is a placeholder, not a bug. It won't stop `generate` or `validate` from succeeding. If the model tries to call this tool before you've implemented it, you'll get a clear error at that point, instead of silently wrong behavior. Step 5 replaces this with real code.
+
+`plugins/plugins.toml` is the manifest `generate` writes for you — it maps `get_weather` to this file. **You don't edit this by hand**; it's regenerated automatically as you add tools, resolvers, or hooks. This is a different thing from a Python dependency file — see the next step.
+
+</Step>
+
+<Step title="Add a dependency your tool needs">
+
+The real weather lookup needs the `requests` library, which isn't in the base image. Extra dependencies go in **`requirements.txt`** at your project root — a plain pip file, not TOML:
+
+```text requirements.txt
+requests
+```
+
+<Note>
+  Two different files are involved here and it's easy to mix them up: `plugins/plugins.toml` is auto-generated bookkeeping for your own plugin code — never add third-party libraries there. `requirements.txt` is where you list actual Python packages you want installed, like `requests`, `pandas`, or your company's internal SDK.
+</Note>
+
+The bundled image installs `requirements.txt` automatically when running `serve`. For `run`, `agent-manager`, or `generate`, install it yourself before those commands, or bake it into your own image:
+
+```dockerfile Dockerfile
+FROM ghcr.io/asaf-prog/extra:latest
+COPY requirements.txt /workspace/requirements.txt
+RUN pip install -r /workspace/requirements.txt
+```
+
+For local development without Docker, it's the usual `pip install -r requirements.txt` inside your virtualenv.
+
+</Step>
+
+<Step title="Implement the tool">
+
+Replace the stub with real code. This calls Open-Meteo — a free public weather API, no signup or key needed:
+
+```python plugins/tools/get_weather.py
+import requests
+
+def get_weather(city: str) -> dict:
+    """Get the current weather for a city — temperature and wind speed. Use this to tell the customer if it's a good day for biking."""
+    geo = requests.get(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params={"name": city, "count": 1},
+    ).json()
+
+    if not geo.get("results"):
+        return {"error": f"Could not find a location named '{city}'."}
+
+    lat = geo["results"][0]["latitude"]
+    lon = geo["results"][0]["longitude"]
+
+    weather = requests.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params={"latitude": lat, "longitude": lon, "current_weather": True},
+    ).json()
+
+    current = weather["current_weather"]
+    return {
+        "city": city,
+        "temperature_c": current["temperature"],
+        "windspeed_kmh": current["windspeed"],
+    }
+```
+
+That's it — no API key, no config. The function takes the argument the model provides (`city`) and returns real data.
+
+</Step>
+
+<Step title="Validate">
+
+Check everything is wired correctly before running anything live:
+
+```bash
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  ghcr.io/asaf-prog/extra:latest \
+  validate agents.yml
+```
+
+Fully offline — no LLM calls, no network calls. It checks the YAML, the prompt files exist, and that `get_weather` resolves to a real function. Exits non-zero with a clear message if anything's wrong.
+
+</Step>
+
+<Step title="Run it">
+
+```bash
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  -e ANTHROPIC_API_KEY=sk-... \
+  ghcr.io/asaf-prog/extra:latest \
+  run --config agents.yml --message "Is it a good day to bike in Amsterdam?"
+```
+
+The router sees the message, routes it to `weather_agent`, which calls the real `get_weather` tool, gets back live data for Amsterdam, and answers with an actual recommendation based on the real temperature and wind speed right now.
+
+Try a booking question too:
+
+```bash
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  -e ANTHROPIC_API_KEY=sk-... \
+  ghcr.io/asaf-prog/extra:latest \
+  run --config agents.yml --message "How much does an e-bike cost per day?"
+```
+
+This time the router sends it to `booking_agent` instead — no tool call, just the prompt's own knowledge.
+
+</Step>
+
+</Steps>
+
+---
+
+## What you just built
+
+- A working multi-agent system with real routing logic
+- One agent that calls a real external API through a tool you wrote yourself
+- A dependency (`requests`) installed alongside the engine
+- A fully validated, runnable spec — no mocks
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Add the chat widget" icon="message-bot" href="/docs/quickstart#with-conversation-history-and-widget">
+    Turn this into a live chat you can embed on a website.
+  </Card>
+  <Card title="Add auth to a tool" icon="shield" href="/docs/runtime-hooks#mcp-auth">
+    Learn how to protect a tool or MCP server with real credentials.
+  </Card>
+  <Card title="Full YAML reference" icon="file-code" href="/docs/yaml-spec">
+    Every field you can declare, explained in depth.
+  </Card>
+  <Card title="Execution limits" icon="gauge" href="/docs/execution-limits">
+    Cap tool calls and loops before they run away.
+  </Card>
+</CardGroup>

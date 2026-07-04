@@ -21,7 +21,8 @@
         "group": "Get Started",
         "pages": [
           "docs/introduction",
-          "docs/quickstart"
+          "docs/quickstart",
+          "docs/tutorial"
         ]
       },
       {
