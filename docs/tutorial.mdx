@@ -22,16 +22,23 @@ We'll build this YAML section by section, explaining why each piece is there, th
 
 ---
 
-## Step 1 — Start with identity
+## Step 1 — Create a project folder
 
-Every file starts here. Nothing else exists yet:
+```bash
+mkdir acme-store
+cd acme-store
+```
+
+Everything from here — the spec, the prompt files, the generated plugin code — lives inside this one folder.
+
+Start the spec file with just the one thing every spec requires:
 
 ```yaml agents.yml
 system:
   name: "Acme Store Support"
 ```
 
-That's a valid — if useless — spec. `system.name` is the only thing every spec requires. Everything below adds to this same file, one block at a time.
+That's already a valid, if useless, spec. Everything below adds to this same file, one block at a time.
 
 ---
 
@@ -136,15 +143,91 @@ Each agent gets exactly what its job needs, nothing more:
 - `orders_agent` gets one tool — real order data, looked up, not guessed.
 - `returns_agent` gets **no tool at all**. The return policy is fixed text, not something to look up per request, so a tool would just be unused ceremony — the prompt alone is the right amount of machinery here.
 - `catalog_agent` gets one MCP server — live product data, and nothing else.
-- `vip_agent` is `protected: true` — more on that in [Step 9](#step-9-protect-the-vip-agent).
+- `vip_agent` is `protected: true` — more on that in [Step 8](#step-8-fill-in-vip-access-control).
 
 None of these agents can reach outside their own lane. `orders_agent` has no path to the catalog; `catalog_agent` has no path to order data. That separation — not prompt wording — is what keeps each one from guessing at a job it wasn't given.
 
+The full YAML is done. Nothing else gets added to `agents.yml` from here — the rest is generating and writing the code and prompts it points to.
+
 ---
 
-## Step 7 — Write the prompt files
+## Step 7 — Generate the plugin stubs
 
-The YAML above references five prompt files that don't exist on disk yet. `agentctl generate` (next step) only scaffolds *plugin code* — tools, resolvers, hooks. It never writes prompt files, and `validate` fails if a referenced prompt file is missing. So we write these first.
+Before writing a single prompt file or line of Python, run `generate`. It reads the YAML and scaffolds everything it references, so you know exactly what's left to fill in.
+
+```bash
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  ghcr.io/asaf-prog/extra:latest \
+  generate --config agents.yml
+```
+
+Go into the folder it created — here's exactly what's inside and why each piece exists:
+
+```text
+plugins/
+  __init__.py
+  plugins.toml
+  tools/
+    __init__.py
+    get_order_status.py
+  access.py
+```
+
+<AccordionGroup>
+  <Accordion title="plugins/__init__.py and plugins/tools/__init__.py — empty package markers">
+    These make `plugins` and `plugins/tools` proper Python packages so the engine can import your code. You never need to open or edit them.
+  </Accordion>
+
+  <Accordion title="plugins/plugins.toml — the manifest">
+    Maps `get_order_status` to `plugins/tools/get_order_status.py`. `generate` writes and updates this automatically every time you run it — **never edit it by hand.**
+  </Accordion>
+
+  <Accordion title="plugins/tools/get_order_status.py — your tool, unimplemented">
+    ```python plugins/tools/get_order_status.py
+    def get_order_status(input: dict) -> str:
+        """Get the current status and tracking info for an order by order ID."""
+        raise NotImplementedError
+    ```
+
+    `input` is a dict of whatever arguments the model passes when it calls this tool, and the return value is a plain string the model reads back. `raise NotImplementedError` is a deliberate placeholder, not a bug — it doesn't stop `generate` or `validate` from succeeding. If the model calls this before you replace the body, you get a loud, clear failure instead of silent wrong behavior. Step 10 replaces this with real code.
+  </Accordion>
+
+  <Accordion title="plugins/access.py — generated because vip_agent is protected">
+    ```python plugins/access.py
+    class AccessResolver:
+        def can_access(self, ctx: dict, node_id: str) -> bool:
+            raise NotImplementedError
+    ```
+
+    `generate` scaffolds this automatically the moment any node in your spec has `protected: true` — you didn't have to ask for it separately. Right now it blocks *every* protected node, since it always raises. Step 8 fills in the real check.
+  </Accordion>
+</AccordionGroup>
+
+`catalog_agent` and `returns_agent` have no files here at all — `catalog_agent`'s capability comes from an MCP server, which needs no local code, and `returns_agent` has no tool to generate a stub for.
+
+---
+
+## Step 8 — Fill in VIP access control {#step-8-fill-in-vip-access-control}
+
+Replace the generated `plugins/access.py` stub with a real check:
+
+```python plugins/access.py
+class AccessResolver:
+    def can_access(self, ctx: dict, node_id: str) -> bool:
+        if node_id == "vip_agent":
+            return ctx.headers.get("X-Customer-Tier") == "vip"
+        return True
+```
+
+Until a request carries that header, `vip_agent` is invisible to `main_router` entirely — not refused after the fact, just never offered as an option. That's a stronger guarantee than anything you could write into a prompt.
+
+---
+
+## Step 9 — Write the prompt files
+
+The YAML from Step 6 references five prompt files that still don't exist on disk. `generate` only scaffolds plugin *code* — it never writes prompt files for you, and `validate` fails if a referenced one is missing. So we write them now, before validating anything.
 
 ```markdown prompts/main_router/orchestrator.md
 You are the top-level router for Acme Store Support.
@@ -184,60 +267,9 @@ Notice `orders_agent` and `catalog_agent` are both told to defer to their tool's
 
 ---
 
-## Step 8 — Generate the plugin stub
-
-Only `orders_agent`'s tool needs real code — `catalog_agent` gets its data from an MCP server, which needs no local implementation, and `returns_agent` needs no tool at all.
-
-```bash
-docker run --rm \
-  -v $(pwd):/workspace \
-  -w /workspace \
-  ghcr.io/asaf-prog/extra:latest \
-  generate --config agents.yml
-```
-
-This creates:
-
-```text
-plugins/
-  __init__.py
-  plugins.toml
-  tools/
-    __init__.py
-    get_order_status.py
-```
-
-`plugins/tools/get_order_status.py`, freshly generated:
-
-```python plugins/tools/get_order_status.py
-def get_order_status(order_id: str) -> dict:
-    """Get the current status and tracking info for an order by order ID."""
-    raise NotImplementedError
-```
-
-`raise NotImplementedError` is a deliberate placeholder, not a bug — it won't stop `generate` or `validate` from succeeding. If the model calls this before you implement it, you get a loud, clear failure instead of silent wrong behavior. `plugins/plugins.toml` is the manifest `generate` wrote, mapping `get_order_status` to this file — **you never hand-edit this file**; it's regenerated as your tools change. That's a different thing from a Python dependency file, which comes up in the next step.
-
----
-
-## Step 9 — Protect the VIP agent {#step-9-protect-the-vip-agent}
-
-`vip_agent` is marked `protected: true` in Step 6. Any spec with a protected node requires `plugins/access.py`:
-
-```python plugins/access.py
-class AccessResolver:
-    def can_access(self, ctx, node_id: str) -> bool:
-        if node_id == "vip_agent":
-            return ctx.headers.get("X-Customer-Tier") == "vip"
-        return True
-```
-
-Until a request carries that header, `vip_agent` is invisible to `main_router` entirely — not refused after the fact, just never offered as an option. That's a stronger guarantee than anything you could write into a prompt.
-
----
-
 ## Step 10 — Implement the tool
 
-Real stores don't expose their order database as a public API, so we simulate one with an in-memory lookup — in production, swap this for your real database or order-service call:
+Real stores don't expose their order database as a public API, so we simulate one with an in-memory lookup — in production, swap this for your real database or order-service call. Remember the actual signature from Step 7: one `input` dict in, a string back out.
 
 ```python plugins/tools/get_order_status.py
 _ORDERS = {
@@ -245,12 +277,15 @@ _ORDERS = {
     "ord-1002": {"status": "shipped", "tracking": "1Z999AA10123456784"},
 }
 
-def get_order_status(order_id: str) -> dict:
+def get_order_status(input: dict) -> str:
     """Get the current status and tracking info for an order by order ID."""
+    order_id = input["order_id"]
     order = _ORDERS.get(order_id)
     if order is None:
-        return {"error": f"No order found with ID '{order_id}'."}
-    return {"order_id": order_id, **order}
+        return f"No order found with ID '{order_id}'."
+    if order["tracking"]:
+        return f"Order {order_id} is {order['status']}. Tracking: {order['tracking']}."
+    return f"Order {order_id} is {order['status']}."
 ```
 
 No new dependency needed here — this uses nothing beyond the standard library. If yours does (an HTTP client, a database driver), that goes in `requirements.txt` at the project root — a plain pip file, not TOML, and a different mechanism entirely from `plugins.toml`.
@@ -282,7 +317,7 @@ docker run --rm \
   run --config agents.yml --message "What's the status of order ord-1002?"
 ```
 
-The path: `main_router` → `store_router` → `orders_agent` → `get_order_status("ord-1002")` → a real, looked-up answer: shipped, tracking `1Z999AA10123456784`.
+The path: `main_router` → `store_router` → `orders_agent` → `get_order_status` → a real, looked-up answer: shipped, tracking `1Z999AA10123456784`.
 
 ```bash
 docker run --rm \
