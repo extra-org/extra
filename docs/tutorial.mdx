@@ -5,7 +5,7 @@ description: Build a real support system from an empty file, one YAML section at
 
 ## What we're building
 
-An online store — Acme Store — needs a support assistant. Three obvious jobs, three separate agents: someone to check order status, someone to handle returns, someone to answer product questions. Nobody would ask one person to do all three well, and an AI agent is no different — so each gets its own agent, with only the tools and data that job actually needs.
+An online store — Acme Store — needs a support assistant. Three obvious jobs, three separate agents: someone to check order status, someone to handle returns, someone to answer product questions. A real support team would never ask one person to do all three well — the order desk doesn't know the return policy by heart, and the product expert doesn't have access to shipment tracking. An AI agent is no different: give it too much to know at once, and it starts guessing at the parts it's weakest on. So each job gets its own agent, with only the tools and data that job actually needs.
 
 We'll also add one members-only agent, visible only to verified VIP customers.
 
@@ -80,17 +80,11 @@ mcps:
 
 ## Step 5 — Build the orchestrators
 
-Start with the one that sits closer to the actual work:
+We have three worker agents to build (Step 6) plus one VIP agent — but before any of them exist, something needs to decide which one a message goes to. That's what an orchestrator is: not a worker, just a router. It reads the message, reads each option's `description`, and picks one.
 
-```yaml agents.yml
-orchestrators:
-  store_router:
-    description: "Routes order status and return questions."
-    prompts:
-      orchestrator: "prompts/store_router/orchestrator.md"
-```
+Looking at our tree from the top: `main_router` has to choose between two things — "regular store support" or "the VIP desk". It does **not** need to know that `orders_agent`, `returns_agent`, or `catalog_agent` exist individually — those are one level down, someone else's problem. That's why `store_router` exists: it's the one that actually chooses between orders, returns, and catalog. Splitting it this way keeps every single routing decision small — nobody ever has to pick from four or five options at once.
 
-Now add the top-level router above it:
+So we declare both, top to bottom, matching the tree:
 
 ```yaml agents.yml
 orchestrators:
@@ -105,7 +99,7 @@ orchestrators:
       orchestrator: "prompts/store_router/orchestrator.md"
 ```
 
-`main_router` never needs to know that `orders_agent` or `returns_agent` exist — it only ever sees `store_router` and `vip_agent`, through their `description` fields. Each router's decision stays small and easy.
+Two orchestrators, two narrow decisions. Neither one is doing the store's actual work yet — that's what the agents in the next step are for.
 
 ---
 
