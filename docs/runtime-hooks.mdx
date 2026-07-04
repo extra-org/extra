@@ -1,18 +1,39 @@
 ---
 title: Runtime Hooks
-description: Trusted code that runs automatically at fixed lifecycle points — for auth, policy, and audit.
+description: Trusted Python code the engine runs automatically at fixed lifecycle points — for auth, validation, policy, and audit.
 ---
 
 ## What are hooks?
 
-Hooks are Python code that runs automatically at specific moments in the request lifecycle. They are **never exposed to the model** — it can't see them, name them, or call them. That's what separates a hook from a tool.
+Hooks are one of Extra's core extension mechanisms. They are **Python code that the engine runs automatically** at well-defined moments in the runtime lifecycle — when the engine starts, when a run begins or fails, and around every tool call and MCP request.
 
-They're the right place for:
+They exist for the behavior that has to happen **outside the LLM**: deterministic integration and side-effect logic that the framework — not the model — controls. Typical uses:
 
-- **Auth** — inject credentials before MCP requests
-- **Audit** — log tool calls and run outcomes
-- **Policy** — block or reshape a tool result before it reaches the model
+- **Environment validation** — fail fast at startup if a required credential or connection is missing
+- **MCP authentication** — inject auth headers into outgoing MCP requests
+- **Auditing** — record tool calls and run outcomes as safe metadata
+- **Policy** — reshape or cap a tool result before it reaches the model
 - **Context enrichment** — attach identity or metadata to a run
+- **Error handling** — record run failures for alerting or observability
+- **Enterprise integration** — bridge the engine to internal systems without changing the engine
+
+The dividing line is simple: **YAML declares the structure of the system. Hooks are code.** The YAML only *registers* a hook and says where it runs; the behavior lives in Python.
+
+---
+
+## What hooks are not
+
+<Warning>
+  Hooks are not a place for business logic the model should decide to run, and not a place for secrets in YAML.
+</Warning>
+
+- **Hooks are not prompts.** They contain no natural-language instructions.
+- **Hooks are not tools.** The model never sees a hook, cannot name it, and cannot call it. If you want the model to be able to invoke something, that is a [tool](/docs/mcp-and-tools), not a hook.
+- **Hooks are not agent instructions.** They do not steer the model; they run around it.
+- **Hooks are not YAML business logic.** YAML registers a hook — it does not configure its behavior. There is no per-hook `config:` block. If a hook needs a value, it reads it in Python.
+- **Hooks are not a home for secrets.** Never put tokens, keys, or credentials in YAML. Secrets live in environment variables; the hook reads them directly at runtime.
+
+Hooks are **deterministic runtime code controlled by the framework lifecycle** — they run when the engine reaches a lifecycle point, every time, regardless of what the model does.
 
 ---
 
@@ -22,75 +43,122 @@ They're the right place for:
 |---|---|---|
 | Called by | The model, when it decides to | The engine, automatically |
 | Visible to the model | Yes | **Never** |
-| Purpose | Do work the model asked for | Auth, audit, policy |
+| Purpose | Do work the model asked for | Auth, validation, audit, policy |
+| Declared in YAML as | Business capability | A lifecycle registration only |
 
 ---
 
-## Lifecycle points
+## The lifecycle
 
-Every row below is a moment the engine will call your hook, if you've declared one for it.
+Hooks run at fixed points as a request flows through the engine:
+
+```text
+Engine builds / starts
+  └─ on_engine_start        validate env, initialize clients
+
+For each request (run)
+  ├─ on_run_start           enrich the run context (may modify)
+  │
+  ├─ Agent calls a tool
+  │    ├─ before_tool_call        observe the pending call
+  │    ├─ (MCP tool only)
+  │    │    ├─ before_mcp_request   inject auth headers (may modify)
+  │    │    ├─ … HTTP request …
+  │    │    └─ after_mcp_response   observe status / latency
+  │    ├─ … tool executes …
+  │    ├─ transform_tool_result    reshape the result (may modify)   ┐ on success
+  │    ├─ after_tool_call          audit the completed call          ┘
+  │    └─ on_tool_error            observe a failed tool call          on failure
+  │
+  ├─ on_run_end             observe a successful run
+  └─ on_run_error           record a failed run (original error preserved)
+
+Engine shuts down
+  └─ on_engine_stop         cleanup, flush (best-effort)
+```
+
+Every point below is a moment the engine will call your hook, **if** you have registered one for it. Unregistered points cost nothing.
 
 ### Engine lifecycle
 
-Fire once per engine process, not per request.
+Fires once per engine process, not per request.
 
-| Hook point | Fires | Can modify | Typical use |
-|---|---|---|---|
-| `on_engine_start` | Once, before any request is served | No — observe only | Validate required secrets/connections exist at boot |
-| `on_engine_stop` | Once, during shutdown (best-effort) | No — observe only | Cleanup, flush buffers |
+| Hook point | Fires | Can modify | Receives | Typical use |
+|---|---|---|---|---|
+| `on_engine_start` | Once, before any request is served | No — observe only | `EngineContext` (system name, metadata) | Validate required env vars exist; initialize clients |
+| `on_engine_stop` | Once, during shutdown (best-effort) | No — observe only | `EngineContext` | Cleanup, flush buffers |
 
 ### Run lifecycle
 
-Fire once per request.
+Fires once per request.
 
-| Hook point | Fires | Can modify | Typical use |
-|---|---|---|---|
-| `on_run_start` | Before the graph executes | **Yes** — may return an updated run context | Attach identity/metadata to the run |
-| `on_run_end` | After a successful response is ready | No — observe only | Log run outcome |
-| `on_run_error` | When a request fails, for any reason | No — never masks the original error | Alert, log failures |
+| Hook point | Fires | Can modify | Receives | Typical use |
+|---|---|---|---|---|
+| `on_run_start` | Before the graph executes | **Yes** — may return an updated `RunContext` | `RunContext` (run/user/org ids, auth context) | Attach identity/metadata to the run |
+| `on_run_end` | After a successful response is ready | No — observe only | `RunEndContext` (safe summary; no answer text) | Log run outcome |
+| `on_run_error` | When a request fails, for any reason | No — never masks the original error | the raised exception | Alert, record failures |
 
 ### Tool lifecycle
 
-Fire around every local or MCP tool call.
+Fires around every local or MCP tool call.
 
-| Hook point | Fires | Can modify | Typical use |
-|---|---|---|---|
-| `before_tool_call` | Right before any tool runs | No — observe only | Audit, policy checks |
-| `after_tool_call` | After a tool call succeeds | No — observe only | Audit logging |
-| `transform_tool_result` | After a tool succeeds, before its result reaches the model | **Yes** — may return an updated result | Truncate, redact, or normalize a result |
-| `on_tool_error` | When a tool call raises an error | No — observe only | Alert, log failures |
+| Hook point | Fires | Can modify | Receives | Typical use |
+|---|---|---|---|---|
+| `before_tool_call` | Right before any tool runs | No — observe only | `ToolRequestContext` (no arguments) | Audit, policy checks |
+| `after_tool_call` | After a tool call succeeds | No — observe only | `ToolCallContext` (safe metadata) | Audit logging |
+| `transform_tool_result` | After a tool succeeds, before its result reaches the model | **Yes** — must return a `ToolResultContext` | `ToolResultContext` (includes result text) | Truncate, redact, or normalize a result |
+| `on_tool_error` | When a tool call raises an error | No — observe only | `ToolCallContext` (sanitized error) | Alert, log failures |
 
 ### MCP lifecycle
 
-Fire around every outgoing MCP HTTP request.
+Fires around every outgoing MCP HTTP request.
 
-| Hook point | Fires | Can modify | Typical use |
-|---|---|---|---|
-| `before_mcp_request` | Right before an MCP HTTP request goes out — every operation: connect, list tools, call tool | **Yes** — may return the request with updated headers | Inject auth headers ([most common use](#mcp-auth)) |
-| `after_mcp_response` | After every MCP HTTP response, success or error status | No — observe only | Log latency, status codes |
+| Hook point | Fires | Can modify | Receives | Typical use |
+|---|---|---|---|---|
+| `before_mcp_request` | Right before an MCP HTTP request goes out — every operation: connect, list tools, call tool | **Yes** — may return the request with updated headers | `McpRequestContext` (server id, url, empty headers to fill) | Inject auth headers ([most common use](#mcp-auth)) |
+| `after_mcp_response` | After every MCP HTTP response, success or error status | No — observe only | `McpResponseContext` (status code, latency — no body) | Log latency, status codes |
+
+<Note>
+  The context objects hooks receive carry **safe metadata only**. Tool arguments and full results are deliberately omitted from the observe-only points, because they can hold sensitive user data. `transform_tool_result` is the one point that sees a tool's result text — precisely so it can reshape it — and is treated as trusted code that must never log the result body.
+</Note>
 
 ---
 
 ## Declaring a hook
 
+A hook has two parts: a **registration** in YAML, and the **Python code** it points to.
+
+**`agents.yaml`** — register the hook under its lifecycle point. Each point takes a list of entries, and each entry names a `plugin` and the `method` to call on it:
+
 ```yaml
 hooks:
+  on_engine_start:
+    - plugin: research_hooks
+      method: validate_environment
+
   before_mcp_request:
-    - plugin: mcp_auth
-      method: before_mcp_request
-      config:
-        credential_env: INTERNAL_MCP_SECRET
+    - plugin: research_hooks
+      method: inject_context7_auth
 
   after_tool_call:
-    - plugin: audit
-      method: record_tool_call
+    - plugin: research_hooks
+      method: audit_tool_call
       failure_policy: warn
 ```
 
-Each lifecycle point above can take a list of hook entries — the fields for one entry:
+**`plugins/plugins.toml`** — map the plugin id to its Python class. This is the *only* place the import path lives:
+
+```toml
+[hooks.plugins]
+research_hooks = "plugins.hooks.research_hooks:ResearchHooksHook"
+```
+
+The YAML never contains an import path, a config block, or a secret — it only says *which* hook runs *where*. `agentctl generate` creates and maintains the `plugins.toml` entry for you.
+
+### Field reference
 
 <ParamField path="plugin" type="string">
-  Logical plugin id, resolved through `plugins/plugins.toml`. Used together with `method`. Mutually exclusive with `ref`.
+  Logical plugin id, resolved to a class through `plugins/plugins.toml`'s `[hooks.plugins]` table. Used together with `method`. Mutually exclusive with `ref`.
 </ParamField>
 
 <ParamField path="method" type="string">
@@ -98,75 +166,74 @@ Each lifecycle point above can take a list of hook entries — the fields for on
 </ParamField>
 
 <ParamField path="ref" type="string">
-  A direct import path to the hook function — an advanced alternative to `plugin` + `method`, for manual/legacy wiring. Mutually exclusive with `plugin` + `method`.
-</ParamField>
-
-<ParamField path="config" type="object" default="none">
-  Arbitrary settings passed to the hook on every call.
-
-  <Warning>
-    Never put secrets directly here. Store the secret in an environment variable and reference the variable's *name* — the hook code reads the real value from the environment at call time.
-  </Warning>
+  A direct `module.path:function` import to a hook function — an advanced alternative to `plugin` + `method` for manual wiring. Mutually exclusive with `plugin` + `method`.
 </ParamField>
 
 <ParamField path="failure_policy" type="string" default="fail">
-  What happens if the hook itself raises an error.
+  What happens if the hook itself raises.
 
   <Expandable title="possible values">
     <ResponseField name="fail" type="string">
-      **Default.** The operation is aborted and the request fails. Use this for anything security-critical, like auth — a broken auth hook should never fail open.
+      **Default (fail-closed).** The operation is aborted and the request fails. Use for anything security-critical, like auth — a broken auth hook must never fail open.
     </ResponseField>
     <ResponseField name="warn" type="string">
-      The error is logged and the request continues as if the hook had succeeded. Use this for best-effort work like audit logging, where a logging failure shouldn't block the user.
+      The error is logged and the operation continues as if the hook had succeeded. Use for best-effort work like audit logging, where a logging failure shouldn't block the user.
     </ResponseField>
   </Expandable>
 </ParamField>
+
+<Note>
+  There is intentionally no `config:` field. YAML registers a hook; it does not parameterize its behavior. A hook that needs values reads them from the environment (for secrets) or from the `RunContext` (for per-request identity) in Python.
+</Note>
+
+### The hook method signature
+
+A managed hook method receives a single `HookInvocation` event and reads its typed payload with `payload_as`:
+
+```python
+from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
+
+class ResearchHooksHook:
+    async def inject_context7_auth(self, event: HookInvocation) -> McpRequestContext:
+        request = event.payload_as(McpRequestContext)
+        ...
+        return request
+```
+
+`event.run_context` gives per-request identity; `event.payload_as(T)` returns the point-specific context. Long-lived state (clients, caches) can live on the instance; **per-request state must not** — read it from the event each call.
 
 ---
 
 ## MCP auth {#mcp-auth}
 
-The most common hook. Adds auth headers to every outgoing MCP request so private servers work — without putting tokens in prompts or YAML.
+The most common hook. YAML defines *which* MCP server exists; the hook injects authentication at **runtime**, so tokens never appear in YAML, prompts, or logs.
 
-**YAML:**
-```yaml
-hooks:
-  before_mcp_request:
-    - plugin: mcp_auth
-      method: before_mcp_request
-      config:
-        credential_env: INTERNAL_MCP_SECRET
-```
+- **YAML** defines the MCP server (see [MCP & Tools](/docs/mcp-and-tools#mcp-auth)).
+- **Hook code** injects the auth header before each request.
+- **Secrets** stay in environment variables; the hook reads them directly.
+- This scales to one header or many, bearer tokens, tenant-specific auth, HMAC signing, and full enterprise auth flows.
 
-**`plugins/plugins.toml`:**
-```toml
-[hooks.plugins]
-mcp_auth = "plugins.hooks.mcp_auth:McpAuthHook"
-```
-
-**`plugins/hooks/mcp_auth.py`:**
 ```python
 import os
 from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
 
 class McpAuthHook:
-    def __init__(self, config=None):
-        self.config = config
-
-    async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
+    async def inject_auth(self, event: HookInvocation) -> McpRequestContext:
         request = event.payload_as(McpRequestContext)
-        credential = os.environ[dict(event.config or {})["credential_env"]]
-        return request.with_headers({"Authorization": f"Bearer {credential}"})
+        if request.server_id != "internal_api":
+            return request  # only authenticate the private server
+        token = os.environ["INTERNAL_MCP_TOKEN"]
+        return request.with_headers({"Authorization": f"Bearer {token}"})
 ```
 
-The token is read from the environment at request time. It never appears in YAML, prompts, or logs.
+The token is read from the environment at request time. It never appears in YAML, prompts, or logs. Gate on `request.server_id` so public servers stay unauthenticated.
 
 ### Token exchange
 
-If you need to exchange the user's inbound token for an MCP-scoped one:
+To exchange the caller's inbound token for an MCP-scoped one:
 
 ```python
-async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
+async def inject_auth(self, event: HookInvocation) -> McpRequestContext:
     request = event.payload_as(McpRequestContext)
     inbound_token = event.run_context.auth_context.inbound_access_token
     mcp_token = await exchange_token(inbound_token, audience="mcp-service")
@@ -177,8 +244,9 @@ async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
 
 ```python
 import hashlib, hmac, os, time
+from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
 
-async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
+async def sign(self, event: HookInvocation) -> McpRequestContext:
     request = event.payload_as(McpRequestContext)
     secret = os.environ["HMAC_SECRET"].encode()
     ts = str(int(time.time()))
@@ -188,34 +256,42 @@ async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
 
 ---
 
-## Audit hook example
+## Auditing tool calls
 
 ```python
+import logging
+from agent_engine.runtime.hooks import HookInvocation, ToolCallContext
+
+logger = logging.getLogger("audit")
+
 class AuditHook:
     async def record_tool_call(self, event: HookInvocation) -> None:
         call = event.payload_as(ToolCallContext)
-        await audit_log.write({
-            "run_id": event.run_context.run_id,
-            "tool": call.tool_name,
-            "provider": call.provider,
-            "status": call.status,
-            "latency_ms": call.latency_ms,
-        })
+        logger.info(
+            "tool_call run_id=%s tool=%s provider=%s status=%s elapsed_ms=%s",
+            event.run_context.run_id if event.run_context else None,
+            call.tool_name,
+            call.provider,
+            call.status,
+            call.latency_ms,
+        )
 ```
 
-Set `failure_policy: warn` on audit hooks — a logging failure shouldn't abort the user's request.
+Register audit hooks with `failure_policy: warn` — a logging failure shouldn't abort the user's request. Log only safe metadata: identifiers, provider, status, timing — never prompts, arguments, results, or secrets.
 
 ---
 
-## Truncating tool results
+## Reshaping tool results
 
-Use `transform_tool_result` to shorten large MCP responses before they reach the model:
+Use `transform_tool_result` to cap or redact a result before it reaches the model. It must return a `ToolResultContext`:
 
 ```python
+from agent_engine.runtime.hooks import HookInvocation, ToolResultContext
+
 async def trim_result(self, event: HookInvocation) -> ToolResultContext:
     result = event.payload_as(ToolResultContext)
-    if isinstance(result.result, str) and len(result.result) > 2000:
-        return result.with_result(result.result[:2000] + "\n… [truncated]")
+    if len(result.result) > 8000:
+        return result.with_result(result.result[:8000] + "\n… [truncated]")
     return result
 ```
 
@@ -223,7 +299,7 @@ async def trim_result(self, event: HookInvocation) -> ToolResultContext:
 
 ## Passing identity into hooks
 
-The embedding application can pass per-request identity through the run context:
+The embedding application passes per-request identity through the run context:
 
 ```python
 from agent_engine.runtime.hooks import AuthContext, RunContext
@@ -233,13 +309,13 @@ ctx = RunContext(
     organization_id="org-7",
     auth_context=AuthContext(
         inbound_access_token=request.headers["Authorization"],
-        scopes=("support:read",)
-    )
+        scopes=("support:read",),
+    ),
 )
 result = await engine.run(message, context=ctx)
 ```
 
-Inside a hook, access it through `event.run_context`:
+Inside a hook, read it from the event:
 
 ```python
 user_id = event.run_context.user_id
@@ -248,6 +324,28 @@ token = event.run_context.auth_context.inbound_access_token
 
 ---
 
+## Worked example: the Enterprise Knowledge Assistant
+
+The [`enterprise-knowledge-assistant`](https://github.com/Asaf-prog/extra/tree/main/examples/enterprise-knowledge-assistant) example ships a single hook plugin, `ResearchHooksHook`, that demonstrates the most useful lifecycle points end to end:
+
+- **Environment validation** (`on_engine_start`) — fails the build if `ANTHROPIC_API_KEY` or `CONTEXT7_API_KEY` is missing.
+- **Authenticated MCP requests** (`before_mcp_request`) — injects the Context7 key into `context7` requests only; the public DeepWiki server stays unauthenticated.
+- **Tool-call auditing** (`after_tool_call`, `failure_policy: warn`) — logs safe metadata, never prompts, secrets, or results.
+- **Result reshaping** (`transform_tool_result`) — caps oversized DeepWiki responses before they reach the model.
+- **Safe error handling** (`on_run_error`) — records the failure's *type*, not its message.
+
+The code reads secrets from the environment and registers through `plugins.toml` — no secrets in YAML.
+
+- Hook code: [`plugins/hooks/research_hooks.py`](https://github.com/Asaf-prog/extra/blob/main/examples/enterprise-knowledge-assistant/plugins/hooks/research_hooks.py)
+- Registration: [`agents.yaml`](https://github.com/Asaf-prog/extra/blob/main/examples/enterprise-knowledge-assistant/agents.yaml) and [`plugins/plugins.toml`](https://github.com/Asaf-prog/extra/blob/main/examples/enterprise-knowledge-assistant/plugins/plugins.toml)
+
+---
+
 ## Security
 
-Hooks are trusted in-process code. The engine never logs auth headers, tokens, HMAC signatures, or hook config values. Your hook code must follow the same rule — never log secrets.
+Hooks are trusted in-process code. The engine never logs auth headers, tokens, HMAC signatures, or inbound access tokens. Your hook code must hold the same line:
+
+- Read secrets from environment variables, never from YAML.
+- Never log secrets, prompts, tool arguments, or raw tool results — log safe metadata only.
+- Prefer recording an error's *type* in `on_run_error`, not its message, which may contain user input.
+- Keep security-critical hooks (like auth) at the default `failure_policy: fail` so they never fail open.

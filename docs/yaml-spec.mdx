@@ -369,12 +369,10 @@ A hook is trusted code that runs automatically at a fixed point in the request l
 hooks:
   before_mcp_request:
     - plugin: mcp_auth
-      method: before_mcp_request
-      config:
-        credential_env: INTERNAL_MCP_SECRET
+      method: inject_auth
 ```
 
-This runs before every outgoing MCP request and attaches an `Authorization` header read from the environment — the token never touches a prompt, a log line, or the YAML file itself.
+The YAML only registers *which* hook runs *where* — `plugin` resolves to a class through `plugins/plugins.toml`, and `method` names the method to call. It carries no import path, no config block, and no secret. The hook code reads its token from the environment and attaches the `Authorization` header at request time, so the token never touches a prompt, a log line, or the YAML file itself.
 
 Full list of lifecycle points, audit hooks, and result-transform examples: [Runtime Hooks](/docs/runtime-hooks).
 
@@ -541,9 +539,7 @@ agents:
 hooks:
   before_mcp_request:
     - plugin: mcp_auth
-      method: before_mcp_request
-      config:
-        credential_env: ACME_MCP_SECRET
+      method: inject_auth
 
 plugins:
   import_roots: ["."]
