@@ -5,7 +5,7 @@ description: Build a real, multi-domain support system from an empty file, one Y
 
 ## What we're building
 
-**Nimbus Cloud** — a fictional cloud hosting company — needs a support assistant that covers two very different domains: account/billing issues, and platform/infrastructure issues. Getting this wrong is exactly where hallucination creeps in: an agent that half-knows billing *and* half-knows infrastructure will guess at both. So we split it properly.
+**Nimbus Cloud** — a fictional cloud hosting company — needs a support assistant for two different kinds of questions: billing, and infrastructure status. If one agent tried to handle both, it would only half-know each one — and end up guessing. So we give each its own agent instead.
 
 ```text
                     main_router
