@@ -308,11 +308,23 @@ Fully offline. It checks the YAML shape, that every tool/MCP id an agent referen
 
 ## Step 12 — Run it
 
+Rather than passing `-e ANTHROPIC_API_KEY=sk-...` on every command, put it in a `.env` file once:
+
+```text .env
+ANTHROPIC_API_KEY=sk-...
+```
+
+<Warning>
+  Add `.env` to `.gitignore` — never commit real keys to version control.
+</Warning>
+
+Then reference it with `--env-file` instead of `-e`:
+
 ```bash
 docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
+  --env-file .env \
   ghcr.io/asaf-prog/extra:latest \
   run --config agents.yml --message "What's the status of order ord-1002?"
 ```
@@ -323,7 +335,7 @@ The path: `main_router` → `store_router` → `orders_agent` → `get_order_sta
 docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
+  --env-file .env \
   ghcr.io/asaf-prog/extra:latest \
   run --config agents.yml --message "What's your return policy?"
 ```
@@ -334,7 +346,7 @@ This one routes to `returns_agent` — no tool call, just the prompt's own polic
 docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
+  --env-file .env \
   ghcr.io/asaf-prog/extra:latest \
   run --config agents.yml --message "Do you have this jacket in size medium?"
 ```
@@ -352,7 +364,7 @@ docker run -d \
   -p 8080:8080 \
   -v $(pwd):/workspace \
   -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
+  --env-file .env \
   ghcr.io/asaf-prog/extra:latest \
   serve --config agents.yml
 ```
