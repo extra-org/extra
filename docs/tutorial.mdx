@@ -343,6 +343,32 @@ This one routes to `catalog_agent`. Since `catalog_mcp` points at an illustrativ
 
 ---
 
+## Step 13 — Run it as a server
+
+`run` above executes one message and exits — good for testing, but not something else can talk to. `serve` starts the same spec as a long-lived HTTP API instead:
+
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  -e ANTHROPIC_API_KEY=sk-... \
+  ghcr.io/asaf-prog/extra:latest \
+  serve --config agents.yml
+```
+
+Now call it over HTTP instead of the CLI:
+
+```bash
+curl -X POST http://localhost:8080/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "What'\''s the status of order ord-1002?"}]}'
+```
+
+Same spec, same routing, same agents — just reachable over the network instead of one process per message. It's stateless: each call sends the full conversation and gets one response back, no session or history is kept between requests. For that, see the widget step below, which runs a different mode (`agent-manager`) on top of the same YAML.
+
+---
+
 ## What you just built
 
 - A two-level routing hierarchy where every orchestrator's decision stays narrow
