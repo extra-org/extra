@@ -1,0 +1,75 @@
+---
+title: Observability
+description: Structured logs by default, and Langfuse tracing with two environment variables.
+---
+
+## Two layers, zero YAML
+
+Observability is not something you declare in `agents.yml` — there's no `observability:` section. It's controlled entirely by environment variables, and one layer is always on:
+
+| Layer | On by default? | Enabled by |
+|-------|-----------------|------------|
+| Structured logging | **Yes**, always | Nothing — always on |
+| Langfuse tracing | No | Setting `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` |
+
+---
+
+## Structured logging
+
+Always active, regardless of any environment variable. Every run emits structured log lines at the engine's key stages: run started, routing decisions, tool calls started/succeeded/failed, run ended. Use the `--log-level` flag to control verbosity:
+
+```bash
+docker run --rm \
+  -v $(pwd):/workspace \
+  -w /workspace \
+  --env-file .env \
+  ghcr.io/asaf-prog/extra:latest \
+  --log-level DEBUG serve --config agents.yml
+```
+
+This is a fixed part of the runtime — there's nothing to turn on.
+
+---
+
+## Langfuse tracing
+
+[Langfuse](https://langfuse.com) is an open-source LLM observability platform — traces, prompt/token usage, latency, per-agent breakdowns. Extra self-enables it the moment two environment variables are present:
+
+```bash .env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+That's the entire integration. No YAML, no code, no flag. Both keys must be present, or Langfuse stays off — there's no partial state.
+
+<Note>
+  Using a self-hosted Langfuse instance instead of Langfuse Cloud? Add `LANGFUSE_HOST` alongside the two keys above — it's read by the underlying Langfuse SDK the same way.
+</Note>
+
+### Install the langfuse package
+
+The `langfuse` Python package is an **optional dependency** — it's not installed in the base image or the default `pip install` of the engine. Add it wherever your deployment installs dependencies:
+
+```text requirements.txt
+langfuse
+```
+
+The bundled Docker image installs `requirements.txt` automatically when running `serve` (see [Quickstart](/docs/quickstart)). For local development:
+
+```bash
+pip install "agent-engine[langfuse]"
+```
+
+### What happens if it's misconfigured
+
+If the two keys are set but the `langfuse` package isn't installed, or the client fails to initialize for any reason, Extra logs a warning and **the engine keeps running without tracing** — a broken or missing Langfuse setup never breaks your agents.
+
+<Note>
+  This is the opposite failure mode from [runtime hooks](/docs/runtime-hooks), which are fail-closed by default for anything security-critical. Observability failing open is deliberate — losing traces is acceptable; losing service to your customers is not.
+</Note>
+
+---
+
+## Adding another backend
+
+The engine's observability layer is a small internal registry of callback providers — logging and Langfuse are the two currently wired in. There's no plugin mechanism for adding a third-party backend from YAML today; that would require a code change to the engine itself, not a configuration change to your spec.

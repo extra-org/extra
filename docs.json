@@ -40,7 +40,8 @@
           "docs/human-in-the-loop",
           "docs/runtime-hooks",
           "docs/plugins",
-          "docs/execution-limits"
+          "docs/execution-limits",
+          "docs/observability"
         ]
       },
       {
