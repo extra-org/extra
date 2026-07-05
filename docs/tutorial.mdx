@@ -314,10 +314,6 @@ Rather than passing `-e ANTHROPIC_API_KEY=sk-...` on every command, put it in a 
 ANTHROPIC_API_KEY=sk-...
 ```
 
-<Warning>
-  Add `.env` to `.gitignore` — never commit real keys to version control.
-</Warning>
-
 Then reference it with `--env-file` instead of `-e`:
 
 ```bash
