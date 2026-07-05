@@ -17,12 +17,13 @@ name = "agent-engine"
 description = "A declarative platform for building AI agent systems (foundation phase)."
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
-license = { text = "TBD" }
+license = { text = "MIT" }
 authors = [{ name = "The Declarative Agent Platform contributors" }]
 keywords = ["ai", "agents", "llm", "yaml", "declarative", "orchestration", "mcp"]
 classifiers = [
     "Development Status :: 1 - Planning",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

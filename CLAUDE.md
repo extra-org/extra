@@ -2,6 +2,10 @@
 
 Declarative platform for building AI agent systems. See `docs/` for architecture details and `tasks/` for current work.
 
+w## Naming
+
+The product/brand name is **Extra** (matches the GitHub repo, docs site, and `docs.json`). `agent-engine` is only the PyPI/package name of the core engine; `agentctl` and `agent-manager` are the CLI/console scripts. Don't call the product "Agent Engine" in user-facing copy (README, docs landing page) — use "Extra".
+
 ## Skills
 
 Skills, roles, and workflows live in `.ai/` — the single source of truth. `.claude/skills/` is generated from there (`make generate-ai`). Do not edit generated files directly.
