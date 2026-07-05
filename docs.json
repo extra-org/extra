@@ -39,7 +39,8 @@
           "docs/mcp-and-tools",
           "docs/runtime-hooks",
           "docs/plugins",
-          "docs/execution-limits"
+          "docs/execution-limits",
+          "docs/observability"
         ]
       },
       {
