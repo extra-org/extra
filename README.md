@@ -1,5 +1,8 @@
 <p align="center">
-  <h1 align="center">Extra</h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+    <img src=".github/assets/logo-light.svg" alt="Extra" height="60">
+  </picture>
 </p>
 
 <p align="center">
