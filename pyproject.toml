@@ -14,7 +14,7 @@ package-mode = false
 
 [project]
 name = "agent-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "A declarative platform for building AI agent systems (foundation phase)."
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
