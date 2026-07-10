@@ -108,12 +108,12 @@ docker run --rm -v "$(pwd):/workspace" -w /workspace \
   ghcr.io/extra-org/extra:latest generate --config agents.yml
 
 # Serve your system
-docker run -p 8080:8080 -v "$(pwd):/workspace" -w /workspace \
+docker run -p 8090:8090 -v "$(pwd):/workspace" -w /workspace \
   -e ANTHROPIC_API_KEY=sk-... \
   ghcr.io/extra-org/extra:latest serve --config agents.yml
 ```
 
-Your agent API is live at `http://localhost:8080`. For the widget, local
+Your agent API is live at `http://localhost:8090`. For the widget, local
 (non-Docker) setup, and the full walkthrough, see the
 [Quickstart docs](https://extra-c586718a.mintlify.site/docs/quickstart).
 

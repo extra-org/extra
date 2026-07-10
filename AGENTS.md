@@ -25,7 +25,7 @@ guardrails (see [docs/EXECUTION_LIMITS.md](docs/EXECUTION_LIMITS.md)), prompt
 rendering, and the CLI (`validate`, `inspect`, `generate`, `run`, `serve`,
 `chat`) are implemented. Model access supports both Anthropic and Amazon
 Bedrock. Two HTTP API layers exist: a thin `agent_engine` API (`/invoke`,
-`/stream`), started by `agentctl serve` (default port `8080`) — stateless, no
+`/stream`), started by `agentctl serve` (default port `8090`) — stateless, no
 persistence, no web client — and `agent_manager` — a conversation lifecycle
 service built on top of it with SQLite-backed persistence, SSE streaming, and
 the official React web client, started by the separate `agent-manager`

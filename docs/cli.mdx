@@ -100,7 +100,7 @@ agentctl serve --config agents.yml --env .env
 
 Endpoints: `GET /health`, `POST /invoke`, `POST /stream`
 
-Default port: **8080**
+Default port: **8090**. Override it with `--port` or the `PORT` env var (e.g. `PORT=8080 agentctl serve --config agents.yml`).
 
 ---
 
@@ -114,8 +114,8 @@ agentctl chat --config agents.yml
 agentctl chat --config agents.yml --stream
 
 # Against a running agentctl serve
-agentctl chat --url http://localhost:8080
-agentctl chat --url http://localhost:8080 --stream
+agentctl chat --url http://localhost:8090
+agentctl chat --url http://localhost:8090 --stream
 ```
 
 Pass `--config` (local) or `--url` (remote), not both. Type `exit`, `quit`, or press Ctrl-C to stop.

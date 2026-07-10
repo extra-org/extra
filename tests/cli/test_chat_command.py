@@ -100,9 +100,9 @@ def test_chat_url_only_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
         seen["session_id"] = session_id
 
     monkeypatch.setattr("agentctl.chat.run_remote_chat", fake_remote)
-    res = CliRunner().invoke(cli, ["chat", "--url", "http://localhost:8080"])
+    res = CliRunner().invoke(cli, ["chat", "--url", "http://localhost:8090"])
     assert res.exit_code == 0, res.output
-    assert seen["url"] == "http://localhost:8080"
+    assert seen["url"] == "http://localhost:8090"
 
 
 def test_chat_both_config_and_url_fails() -> None:
@@ -278,7 +278,7 @@ async def test_remote_sends_to_invoke_endpoint() -> None:
     echo = CollectingEcho()
     async with _mock_client(handler) as client:
         await run_remote_chat(
-            "http://srv:8080",
+            "http://srv:8090",
             stream=False,
             read_line=scripted_reader(["question one"]),
             echo=echo,
