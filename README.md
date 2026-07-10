@@ -80,11 +80,15 @@ orchestrators:
 agents:
   orders_agent:
     description: "Handles order status and tracking."
+    prompts:
+      system: "prompts/orders_agent.md"
     tools: [get_order_status]
     mcps: [orders_api]
 
   returns_agent:
     description: "Handles returns and refunds."
+    prompts:
+      system: "prompts/returns_agent.md"
     tools: [create_return]
 
 graph:
