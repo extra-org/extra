@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/extra-org/extra/compare/agent-engine-v0.2.0...agent-engine-v0.2.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* build container in the same run as release-please, not on release event ([ae7181c](https://github.com/extra-org/extra/commit/ae7181cc240ffe0ba3f7444f89a76d7cfd8087a2))
+
 ## [0.2.0](https://github.com/extra-org/extra/compare/agent-engine-v0.1.0...agent-engine-v0.2.0) (2026-07-10)
 
 
