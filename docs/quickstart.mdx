@@ -56,7 +56,7 @@ The stateless engine — no database, no widget. Good for embedding into your ow
     docker run --rm \
       -v $(pwd):/workspace \
       -w /workspace \
-      ghcr.io/asaf-prog/extra:latest \
+      ghcr.io/extra-org/extra:latest \
       generate --config agents.yml
     ```
 
@@ -68,7 +68,7 @@ The stateless engine — no database, no widget. Good for embedding into your ow
     docker run --rm \
       -v $(pwd):/workspace \
       -w /workspace \
-      ghcr.io/asaf-prog/extra:latest \
+      ghcr.io/extra-org/extra:latest \
       validate agents.yml
     ```
 
@@ -82,7 +82,7 @@ The stateless engine — no database, no widget. Good for embedding into your ow
       -v $(pwd):/workspace \
       -w /workspace \
       -e ANTHROPIC_API_KEY=sk-... \
-      ghcr.io/asaf-prog/extra:latest \
+      ghcr.io/extra-org/extra:latest \
       serve --config agents.yml
     ```
 
@@ -114,7 +114,7 @@ Adds persistent conversations, multi-turn sessions, SSE streaming, and an embedd
       -v $(pwd):/workspace \
       -w /workspace \
       -e ANTHROPIC_API_KEY=sk-... \
-      ghcr.io/asaf-prog/extra:latest \
+      ghcr.io/extra-org/extra:latest \
       agent-manager --config agents.yml --port 8100
     ```
   </Step>
@@ -158,7 +158,7 @@ Adds persistent conversations, multi-turn sessions, SSE streaming, and an embedd
 ## Local development (no Docker)
 
 ```bash
-git clone https://github.com/Asaf-prog/extra.git
+git clone https://github.com/extra-org/extra.git
 cd extra
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"

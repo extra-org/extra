@@ -8,7 +8,7 @@
   "topbarLinks": [
     {
       "name": "GitHub",
-      "url": "https://github.com/Asaf-prog/extra"
+      "url": "https://github.com/extra-org/extra"
     }
   ],
   "topbarCtaButton": {
@@ -60,6 +60,6 @@
     ]
   },
   "footerSocials": {
-    "github": "https://github.com/Asaf-prog/extra"
+    "github": "https://github.com/extra-org/extra"
   }
 }

@@ -105,12 +105,12 @@ and serve it:
 ```bash
 # Generate tool/resolver stubs from your spec, then fill in your logic
 docker run --rm -v "$(pwd):/workspace" -w /workspace \
-  ghcr.io/asaf-prog/extra:latest generate --config agents.yml
+  ghcr.io/extra-org/extra:latest generate --config agents.yml
 
 # Serve your system
 docker run -p 8080:8080 -v "$(pwd):/workspace" -w /workspace \
   -e ANTHROPIC_API_KEY=sk-... \
-  ghcr.io/asaf-prog/extra:latest serve --config agents.yml
+  ghcr.io/extra-org/extra:latest serve --config agents.yml
 ```
 
 Your agent API is live at `http://localhost:8080`. For the widget, local
