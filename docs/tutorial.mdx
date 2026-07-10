@@ -159,7 +159,7 @@ Before writing a single prompt file or line of Python, run `generate`. It reads 
 docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
-  ghcr.io/asaf-prog/extra:latest \
+  ghcr.io/extra-org/extra:latest \
   generate --config agents.yml
 ```
 
@@ -298,7 +298,7 @@ No new dependency needed here — this uses nothing beyond the standard library.
 docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
-  ghcr.io/asaf-prog/extra:latest \
+  ghcr.io/extra-org/extra:latest \
   validate agents.yml
 ```
 
@@ -321,7 +321,7 @@ docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
   --env-file .env \
-  ghcr.io/asaf-prog/extra:latest \
+  ghcr.io/extra-org/extra:latest \
   run --config agents.yml --message "What's the status of order ord-1002?"
 ```
 
@@ -332,7 +332,7 @@ docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
   --env-file .env \
-  ghcr.io/asaf-prog/extra:latest \
+  ghcr.io/extra-org/extra:latest \
   run --config agents.yml --message "What's your return policy?"
 ```
 
@@ -343,7 +343,7 @@ docker run --rm \
   -v $(pwd):/workspace \
   -w /workspace \
   --env-file .env \
-  ghcr.io/asaf-prog/extra:latest \
+  ghcr.io/extra-org/extra:latest \
   run --config agents.yml --message "Do you have this jacket in size medium?"
 ```
 
@@ -361,7 +361,7 @@ docker run -d \
   -v $(pwd):/workspace \
   -w /workspace \
   --env-file .env \
-  ghcr.io/asaf-prog/extra:latest \
+  ghcr.io/extra-org/extra:latest \
   serve --config agents.yml
 ```
 

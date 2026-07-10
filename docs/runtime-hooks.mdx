@@ -326,7 +326,7 @@ token = event.run_context.auth_context.inbound_access_token
 
 ## Worked example: the Enterprise Knowledge Assistant
 
-The [`enterprise-knowledge-assistant`](https://github.com/Asaf-prog/extra/tree/main/examples/enterprise-knowledge-assistant) example ships a single hook plugin, `ResearchHooksHook`, that demonstrates the most useful lifecycle points end to end:
+The [`enterprise-knowledge-assistant`](https://github.com/extra-org/extra/tree/main/examples/enterprise-knowledge-assistant) example ships a single hook plugin, `ResearchHooksHook`, that demonstrates the most useful lifecycle points end to end:
 
 - **Environment validation** (`on_engine_start`) — fails the build if `ANTHROPIC_API_KEY` or `CONTEXT7_API_KEY` is missing.
 - **Authenticated MCP requests** (`before_mcp_request`) — injects the Context7 key into `context7` requests only; the public DeepWiki server stays unauthenticated.
@@ -336,8 +336,8 @@ The [`enterprise-knowledge-assistant`](https://github.com/Asaf-prog/extra/tree/m
 
 The code reads secrets from the environment and registers through `plugins.toml` — no secrets in YAML.
 
-- Hook code: [`plugins/hooks/research_hooks.py`](https://github.com/Asaf-prog/extra/blob/main/examples/enterprise-knowledge-assistant/plugins/hooks/research_hooks.py)
-- Registration: [`agents.yaml`](https://github.com/Asaf-prog/extra/blob/main/examples/enterprise-knowledge-assistant/agents.yaml) and [`plugins/plugins.toml`](https://github.com/Asaf-prog/extra/blob/main/examples/enterprise-knowledge-assistant/plugins/plugins.toml)
+- Hook code: [`plugins/hooks/research_hooks.py`](https://github.com/extra-org/extra/blob/main/examples/enterprise-knowledge-assistant/plugins/hooks/research_hooks.py)
+- Registration: [`agents.yaml`](https://github.com/extra-org/extra/blob/main/examples/enterprise-knowledge-assistant/agents.yaml) and [`plugins/plugins.toml`](https://github.com/extra-org/extra/blob/main/examples/enterprise-knowledge-assistant/plugins/plugins.toml)
 
 ---
 
