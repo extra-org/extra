@@ -117,6 +117,49 @@ Your agent API is live at `http://localhost:8080`. For the widget, local
 (non-Docker) setup, and the full walkthrough, see the
 [Quickstart docs](https://extra-c586718a.mintlify.site/docs/quickstart).
 
+### Claude Code setup skill
+
+If you use [Claude Code](https://claude.com/claude-code), you can install the
+official Extra setup skill to create or repair an `extra` project
+configuration interactively. The skill helps Claude Code set up `agents.yml`,
+prompts, MCPs, tools, resolvers, plugins, generation, Docker/local execution,
+and validation.
+
+List available skills:
+
+```bash
+npx skills add extra-org/extra-skills --list
+```
+
+Install globally for Claude Code:
+
+```bash
+npx skills add extra-org/extra-skills --skill '*' -a claude-code -g
+```
+
+Then open Claude Code inside your project:
+
+```bash
+claude
+```
+
+Run:
+
+```text
+/extra-setup
+```
+
+Examples:
+
+```text
+/extra-setup simple banking demo
+/extra-setup repair my agents.yml
+/extra-setup configure MCP tools and resolvers
+```
+
+The skill repository is available at
+[extra-org/extra-skills](https://github.com/extra-org/extra-skills).
+
 ## What you get out of the box
 
 - **Domain-focused agents** — one responsibility each, scoped to their own tools and data, so answers stay accurate.
