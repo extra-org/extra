@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/extra-org/extra/compare/agent-engine-v0.2.1...agent-engine-v0.2.2) (2026-07-10)
+
+
+### Bug Fixes
+
+* remove static version field conflicting with dynamic hatch versioning ([136feaf](https://github.com/extra-org/extra/commit/136feaf5a9fa51a7eb12dd27efa4da1f60d379a5))
+
 ## [0.2.1](https://github.com/extra-org/extra/compare/agent-engine-v0.2.0...agent-engine-v0.2.1) (2026-07-10)
 
 
