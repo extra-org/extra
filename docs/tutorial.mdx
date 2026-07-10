@@ -357,7 +357,7 @@ This one routes to `catalog_agent`. Since `catalog_mcp` points at an illustrativ
 
 ```bash
 docker run -d \
-  -p 8080:8080 \
+  -p 8090:8090 \
   -v $(pwd):/workspace \
   -w /workspace \
   --env-file .env \
@@ -368,7 +368,7 @@ docker run -d \
 Now call it over HTTP instead of the CLI:
 
 ```bash
-curl -X POST http://localhost:8080/invoke \
+curl -X POST http://localhost:8090/invoke \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "What'\''s the status of order ord-1002?"}]}'
 ```

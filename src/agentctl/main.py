@@ -187,7 +187,13 @@ async def _run_async(
 @cli.command()
 @click.option("--config", required=True, help="Path to agents.yml")
 @click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to")
-@click.option("--port", default=8080, show_default=True, help="Port to listen on")
+@click.option(
+    "--port",
+    envvar="PORT",
+    default=8090,
+    show_default=True,
+    help="Port to listen on. Overridable with the PORT env var.",
+)
 @click.option("--env", default=None, help="Path to .env file")
 def serve(config: str, host: str, port: int, env: str | None) -> None:
     """Serve the agent system as an HTTP API."""

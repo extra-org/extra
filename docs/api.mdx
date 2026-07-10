@@ -7,7 +7,7 @@ description: REST endpoints for the engine and the conversation layer.
 
 <CardGroup cols={2}>
   <Card title="Engine API" icon="bolt">
-    Stateless. Started by `agentctl serve`. Port 8080. Takes a messages array, returns a response. No session management.
+    Stateless. Started by `agentctl serve`. Port 8090. Takes a messages array, returns a response. No session management.
   </Card>
   <Card title="Conversation API" icon="database">
     Stateful. Started by `agent-manager`. Port 8100. Manages conversations, history, and SSE streaming. Also serves the widget.
@@ -18,7 +18,7 @@ description: REST endpoints for the engine and the conversation layer.
 
 ## Engine API
 
-Base URL: `http://localhost:8080`
+Base URL: `http://localhost:8090`
 
 ### `GET /health`
 
@@ -31,7 +31,7 @@ Base URL: `http://localhost:8080`
 Send a complete conversation and get a response.
 
 ```bash
-curl -X POST http://localhost:8080/invoke \
+curl -X POST http://localhost:8090/invoke \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [
@@ -55,7 +55,7 @@ Response:
 Headers you include are passed into `ctx` and available to resolvers, tools, and hooks:
 
 ```bash
-curl -X POST http://localhost:8080/invoke \
+curl -X POST http://localhost:8090/invoke \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -H "X-Customer-Id: cust-123" \
@@ -67,7 +67,7 @@ curl -X POST http://localhost:8080/invoke \
 Same as `/invoke` but streams tokens as Server-Sent Events.
 
 ```bash
-curl -X POST http://localhost:8080/stream \
+curl -X POST http://localhost:8090/stream \
   -H "Content-Type: application/json" \
   -d '{ "messages": [{ "role": "user", "content": "Hello" }] }'
 ```
