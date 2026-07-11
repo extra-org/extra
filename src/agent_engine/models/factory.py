@@ -19,7 +19,7 @@ from agent_engine.logging_config import log
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_PROVIDERS = ("anthropic", "bedrock", "gemini")
+_SUPPORTED_PROVIDERS = ("anthropic", "bedrock", "gemini", "openai")
 
 
 class ModelConfigurationError(RuntimeError):
@@ -70,6 +70,13 @@ def build_chat_model(
         )
     if normalized_provider == "gemini":
         return _build_gemini_model(
+            model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+    if normalized_provider == "openai":
+        return _build_openai_model(
             model_name,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -192,6 +199,51 @@ def _build_gemini_model(
         ) from exc
 
 
+def _build_openai_model(
+    name: str,
+    *,
+    temperature: float | None,
+    max_tokens: int | None,
+    top_p: float | None,
+) -> BaseChatModel:
+    api_key = _resolve_openai_api_key()
+    if not api_key:
+        raise ModelConfigurationError(
+            "OpenAI provider requires OPENAI_API_KEY. "
+            "Set it in your environment before running agentctl."
+        )
+
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise ModelConfigurationError(
+            "OpenAI model provider requires the 'langchain-openai' package. "
+            "Install the OpenAI extra/dependency before using provider: openai "
+            "(e.g. pip install 'agent-engine[openai]')."
+        ) from exc
+
+    # OpenAI's chat model uses the same `max_tokens` name as extra's config, so
+    # no remapping is needed. The API key is passed explicitly so OPENAI_API_KEY
+    # is honored regardless of how the installed SDK resolves credentials.
+    try:
+        return ChatOpenAI(
+            **_without_none(
+                {
+                    "model": name,
+                    "api_key": api_key,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": top_p,
+                }
+            )
+        )
+    except Exception as exc:
+        raise ModelConfigurationError(
+            "Could not initialize OpenAI chat model. Verify OPENAI_API_KEY is valid "
+            "and the model name is an OpenAI model your key can access."
+        ) from exc
+
+
 def _resolve_aws_region(region: str | None) -> str | None:
     if region and region.strip():
         return region.strip()
@@ -202,6 +254,11 @@ def _resolve_gemini_api_key() -> str | None:
     # GEMINI_API_KEY is the documented variable; GOOGLE_API_KEY is accepted as a
     # fallback because the underlying Google SDK reads it natively.
     key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    return key.strip() if key and key.strip() else None
+
+
+def _resolve_openai_api_key() -> str | None:
+    key = os.getenv("OPENAI_API_KEY")
     return key.strip() if key and key.strip() else None
 
 

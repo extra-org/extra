@@ -45,6 +45,20 @@ def _install_fake_langchain_google_genai(
     monkeypatch.setitem(sys.modules, "langchain_google_genai", module)
 
 
+class _FakeOpenAIModel:
+    instances: ClassVar[list[_FakeOpenAIModel]] = []
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self.instances.append(self)
+
+
+def _install_fake_langchain_openai(monkeypatch: pytest.MonkeyPatch, cls: type[Any]) -> None:
+    module = types.ModuleType("langchain_openai")
+    monkeypatch.setattr(module, "ChatOpenAI", cls, raising=False)
+    monkeypatch.setitem(sys.modules, "langchain_openai", module)
+
+
 def test_anthropic_provider_still_uses_langchain_init_chat_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -231,9 +245,82 @@ def test_gemini_does_not_log_api_key(
     assert "super-secret-gemini-key" not in caplog.text
 
 
+def test_openai_provider_maps_config_onto_chat_openai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeOpenAIModel.instances.clear()
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.setenv("OPENAI_API_KEY", "oa-test-key")
+
+    result = build_chat_model(
+        "openai",
+        "gpt-4.1-mini",
+        temperature=0.2,
+        max_tokens=1024,
+        top_p=0.9,
+    )
+
+    assert result is _FakeOpenAIModel.instances[0]
+    # OpenAI keeps the `max_tokens` name; region is not passed.
+    assert _FakeOpenAIModel.instances[0].kwargs == {
+        "model": "gpt-4.1-mini",
+        "api_key": "oa-test-key",
+        "temperature": 0.2,
+        "max_tokens": 1024,
+        "top_p": 0.9,
+    }
+
+
+def test_openai_missing_api_key_fails_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(ModelConfigurationError, match="requires OPENAI_API_KEY"):
+        build_chat_model("openai", "gpt-4.1-mini")
+
+
+def test_openai_missing_package_fails_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Do not install the fake module: the real package is not a test dependency,
+    # so the import must fail with an actionable install hint.
+    monkeypatch.setitem(sys.modules, "langchain_openai", None)
+    monkeypatch.setenv("OPENAI_API_KEY", "oa-test-key")
+
+    with pytest.raises(ModelConfigurationError, match="langchain-openai"):
+        build_chat_model("openai", "gpt-4.1-mini")
+
+
+def test_openai_construction_failure_does_not_leak_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RaisingOpenAIModel:
+        def __init__(self, **kwargs: Any) -> None:
+            raise RuntimeError("invalid api key")
+
+    _install_fake_langchain_openai(monkeypatch, RaisingOpenAIModel)
+    monkeypatch.setenv("OPENAI_API_KEY", "super-secret-openai-key")
+
+    with pytest.raises(ModelConfigurationError) as excinfo:
+        build_chat_model("openai", "gpt-4.1-mini")
+
+    assert "super-secret-openai-key" not in str(excinfo.value)
+
+
+def test_openai_does_not_log_api_key(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _FakeOpenAIModel.instances.clear()
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.setenv("OPENAI_API_KEY", "super-secret-openai-key")
+
+    with caplog.at_level(logging.INFO):
+        build_chat_model("openai", "gpt-4.1-mini", temperature=0.0)
+
+    assert "super-secret-openai-key" not in caplog.text
+
+
 def test_unsupported_provider_is_rejected_clearly() -> None:
-    with pytest.raises(ModelConfigurationError, match="Unsupported model provider 'openai'"):
-        build_chat_model("openai", "gpt-4o-mini")
+    with pytest.raises(ModelConfigurationError, match="Unsupported model provider 'cohere'"):
+        build_chat_model("cohere", "command-r")
 
 
 def test_model_factory_does_not_log_aws_secrets(

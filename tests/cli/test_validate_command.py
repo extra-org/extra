@@ -137,6 +137,26 @@ def test_validate_accepts_gemini_model_config(tmp_path: Path) -> None:
     assert result.ok, result.errors
 
 
+def test_validate_accepts_openai_model_config(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults:\n"
+        "  model:\n"
+        "    provider: openai\n"
+        "    name: gpt-4.1-mini\n"
+        "    temperature: 0.2\n"
+        "    max_tokens: 1024\n"
+        "    top_p: 0.9\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+
+    result = validate_spec(spec)
+
+    assert result.ok, result.errors
+
+
 def test_yaml_parser_preserves_bedrock_model_fields(tmp_path: Path) -> None:
     spec_path = _write(
         tmp_path,
@@ -168,7 +188,7 @@ def test_validate_rejects_unsupported_model_provider(tmp_path: Path) -> None:
     spec = _write(
         tmp_path,
         "system: {name: t}\n"
-        "defaults: {model: {provider: openai, name: gpt-4o-mini}}\n"
+        "defaults: {model: {provider: cohere, name: command-r}}\n"
         "agents: {a: {description: d}}\n"
         "graph: {a: }\n",
     )
