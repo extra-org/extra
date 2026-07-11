@@ -92,6 +92,8 @@ def _write_tool(base_dir: Path, tool_id: str = "echo") -> None:
 
 
 def _agent_spec(node_id: str, **kw: Any) -> AgentSpec:
+    # auto_mode=True: these tests cover execution limits, not HITL approval.
+    kw.setdefault("auto_mode", True)
     return AgentSpec(
         id=node_id,
         name=node_id,

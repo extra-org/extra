@@ -84,6 +84,7 @@ def _agent(node_id: str, *, tools: tuple[ToolSpec, ...] = ()) -> GraphNode:
             model=_MODEL,
             prompts=BasePromptSet(),
             tools=tools,
+            auto_mode=True,  # execution/hook tests, not HITL approval
         )
     )
 
