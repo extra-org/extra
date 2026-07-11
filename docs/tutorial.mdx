@@ -227,7 +227,13 @@ Until a request carries that header, `vip_agent` is invisible to `main_router` e
 
 ## Step 9 — Write the prompt files
 
-The YAML from Step 6 references five prompt files that still don't exist on disk. `generate` only scaffolds plugin *code* — it never writes prompt files for you, and `validate` fails if a referenced one is missing. So we write them now, before validating anything.
+The YAML from Step 6 references six prompt files that still don't exist on disk. `generate` only scaffolds plugin *code* — it never writes prompt files for you, and `validate` fails if a referenced one is missing. So we write them now, before validating anything.
+
+Each one lives in its own subdirectory, so create those first:
+
+```bash
+mkdir -p prompts/main_router prompts/store_router prompts/orders prompts/returns prompts/catalog prompts/vip
+```
 
 ```markdown prompts/main_router/orchestrator.md
 You are the top-level router for Acme Store Support.
