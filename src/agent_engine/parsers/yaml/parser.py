@@ -336,6 +336,14 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
     if not isinstance(name, str) or not name.strip():
         errors.append(ValidationError(f"{path}.name", "Required non-empty string"))
 
+    temperature = raw.get("temperature")
+    if temperature is not None and (
+        not isinstance(temperature, int | float)
+        or isinstance(temperature, bool)
+        or temperature < 0
+    ):
+        errors.append(ValidationError(f"{path}.temperature", "Must be a non-negative number"))
+        
     max_tokens = raw.get("max_tokens")
     if max_tokens is not None and (
         not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens <= 0
