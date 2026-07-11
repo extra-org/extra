@@ -121,13 +121,13 @@ Your agent API is live at `http://localhost:8090`. For the widget, local
 (non-Docker) setup, and the full walkthrough, see the
 [Quickstart docs](https://extra-c586718a.mintlify.site/docs/quickstart).
 
-### Claude Code setup skill
+### Agent setup skill
 
-If you use [Claude Code](https://claude.com/claude-code), you can install the
-official Extra setup skill to create or repair an `extra` project
-configuration interactively. The skill helps Claude Code set up `agents.yml`,
-prompts, MCPs, tools, resolvers, plugins, generation, Docker/local execution,
-and validation.
+If you use Claude Code, Cursor, or Codex, you can install the official Extra
+setup skill to create or repair an `extra` project configuration
+interactively. The same open Agent Skills-format skill works across supported
+agents; it helps set up `agents.yml`, prompts, MCPs, tools, resolvers, plugins,
+generation, Docker/local execution, and validation.
 
 List available skills:
 
@@ -135,19 +135,40 @@ List available skills:
 npx skills add extra-org/extra-skills --list
 ```
 
-Install globally for Claude Code:
+Install for Claude Code:
 
 ```bash
-npx skills add extra-org/extra-skills --skill '*' -a claude-code -g
+npx skills add extra-org/extra-skills --skill '*' -a claude-code
 ```
 
-Then open Claude Code inside your project:
+Install for Cursor:
+
+```bash
+npx skills add extra-org/extra-skills --skill '*' -a cursor
+```
+
+Install for Codex:
+
+```bash
+npx skills add extra-org/extra-skills --skill '*' -a codex
+```
+
+Install for all three:
+
+```bash
+npx skills add extra-org/extra-skills --skill '*' -a claude-code -a cursor -a codex
+```
+
+Add `-g` to install globally for the current user instead of into the current
+project.
+
+In Claude Code, open your project:
 
 ```bash
 claude
 ```
 
-Run:
+Then run:
 
 ```text
 /extra-setup
@@ -160,6 +181,16 @@ Examples:
 /extra-setup repair my agents.yml
 /extra-setup configure MCP tools and resolvers
 ```
+
+In Cursor or Codex, install the same `extra-setup` skill and ask the agent to
+use it:
+
+```text
+Use the extra-setup skill to create a simple banking demo for this project.
+```
+
+If your current Cursor or Codex version supports direct skill invocation, use
+that agent's documented invocation flow.
 
 The skill repository is available at
 [extra-org/extra-skills](https://github.com/extra-org/extra-skills).
