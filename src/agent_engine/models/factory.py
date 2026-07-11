@@ -19,7 +19,7 @@ from agent_engine.logging_config import log
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_PROVIDERS = ("anthropic", "bedrock")
+_SUPPORTED_PROVIDERS = ("anthropic", "bedrock", "gemini")
 
 
 class ModelConfigurationError(RuntimeError):
@@ -65,6 +65,13 @@ def build_chat_model(
             model_name,
             temperature=temperature,
             region=region,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+    if normalized_provider == "gemini":
+        return _build_gemini_model(
+            model_name,
+            temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
         )
@@ -139,10 +146,63 @@ def _build_bedrock_model(
         ) from exc
 
 
+def _build_gemini_model(
+    name: str,
+    *,
+    temperature: float | None,
+    max_tokens: int | None,
+    top_p: float | None,
+) -> BaseChatModel:
+    api_key = _resolve_gemini_api_key()
+    if not api_key:
+        raise ModelConfigurationError(
+            "Gemini provider requires GEMINI_API_KEY. "
+            "Set it in your environment before running agentctl."
+        )
+
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except ImportError as exc:
+        raise ModelConfigurationError(
+            "Gemini model provider requires the 'langchain-google-genai' package. "
+            "Install the Gemini extra/dependency before using provider: gemini "
+            "(e.g. pip install 'agent-engine[gemini]')."
+        ) from exc
+
+    # Gemini names the output-token limit `max_output_tokens`; map extra's
+    # provider-neutral `max_tokens` onto it. The API key is passed explicitly so
+    # the same GEMINI_API_KEY works regardless of which env var the installed
+    # SDK version reads by default.
+    try:
+        return ChatGoogleGenerativeAI(
+            **_without_none(
+                {
+                    "model": name,
+                    "google_api_key": api_key,
+                    "temperature": temperature,
+                    "max_output_tokens": max_tokens,
+                    "top_p": top_p,
+                }
+            )
+        )
+    except Exception as exc:
+        raise ModelConfigurationError(
+            "Could not initialize Gemini chat model. Verify GEMINI_API_KEY is valid "
+            "and the model name is a Gemini model your key can access."
+        ) from exc
+
+
 def _resolve_aws_region(region: str | None) -> str | None:
     if region and region.strip():
         return region.strip()
     return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
+
+
+def _resolve_gemini_api_key() -> str | None:
+    # GEMINI_API_KEY is the documented variable; GOOGLE_API_KEY is accepted as a
+    # fallback because the underlying Google SDK reads it natively.
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    return key.strip() if key and key.strip() else None
 
 
 def _without_none(values: dict[str, Any]) -> dict[str, Any]:

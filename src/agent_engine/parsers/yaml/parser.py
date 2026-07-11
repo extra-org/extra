@@ -32,7 +32,7 @@ from agent_engine.runtime.hooks.models import HOOK_POINTS
 
 _SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
 _SECRET_KEY_EXEMPTIONS = {"max_tokens"}
-_SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock")
+_SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock", "gemini")
 
 
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
@@ -343,7 +343,7 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
         or temperature < 0
     ):
         errors.append(ValidationError(f"{path}.temperature", "Must be a non-negative number"))
-        
+
     max_tokens = raw.get("max_tokens")
     if max_tokens is not None and (
         not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens <= 0

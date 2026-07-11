@@ -317,6 +317,20 @@ credential chain, such as `AWS_PROFILE`, `AWS_ACCESS_KEY_ID` /
 `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`, `~/.aws/credentials`, SSO, or an
 IAM role. Secrets must never be stored in YAML.
 
+Google Gemini:
+
+```yaml
+model:
+  provider: gemini
+  name: gemini-2.5-flash
+  temperature: 0.2
+```
+
+For Gemini, set `GEMINI_API_KEY` in your environment and install the provider
+extra with `pip install "agent-engine[gemini]"`. Any Gemini model your key can
+access may be used via `name`. `max_tokens` maps to Gemini's `max_output_tokens`.
+Secrets must never be stored in YAML.
+
 ---
 
 ## Graph Topology
