@@ -161,6 +161,30 @@ def test_validate_rejects_unsupported_model_provider(tmp_path: Path) -> None:
 
 # -- failing specs -----------------------------------------------------------
 
+def test_validate_rejects_negative_temperature(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults: {model: {provider: anthropic, name: claude-haiku-4-5, temperature: -0.5}}\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+    result = validate_spec(spec)
+    assert not result.ok
+    assert any("temperature" in e for e in result.errors)
+
+
+def test_validate_rejects_non_numeric_temperature(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults: {model: {provider: anthropic, name: claude-haiku-4-5, temperature: hot}}\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+    result = validate_spec(spec)
+    assert not result.ok
+    assert any("temperature" in e for e in result.errors)
 
 def test_validate_fails_on_invalid_tool_tags(tmp_path: Path) -> None:
     spec = _write(
