@@ -15,7 +15,7 @@
     "primary": {
       "type": "button",
       "label": "Get Started",
-      "href": "docs/quickstart"
+      "href": "/docs/quickstart"
     }
   },
   "navigation": {
