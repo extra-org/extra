@@ -8,14 +8,25 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
+from langgraph.errors import GraphInterrupt
+from langgraph.types import interrupt
 from pydantic import BaseModel
 
+from agent_engine.approvals.contract import ToolContract, unknown_contract
+from agent_engine.approvals.decision import ApprovalDecision, ToolCall
+from agent_engine.approvals.manager import (
+    ApprovalManager,
+    ToolExecutionManager,
+    execution_id_for,
+)
+from agent_engine.approvals.models import ApprovalDecisionKind, sanitize_arguments
 from agent_engine.core.spec import AgentSpec, OrchestratorSpec
 from agent_engine.engine.langgraph.filters import RouteFilter
 from agent_engine.engine.langgraph.helpers import (
@@ -41,6 +52,7 @@ from agent_engine.runtime.hooks import (
     current_run_context,
 )
 from agent_engine.runtime.state import GraphState
+from agent_engine.runtime.streaming import current_streams
 from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord
 
 logger = logging.getLogger(__name__)
@@ -95,6 +107,9 @@ class AgentNode:
         resolver_loader: ResolverLoader,
         hook_manager: HookManager,
         base_dir: Path,
+        execution_manager: ToolExecutionManager,
+        approval_manager: ApprovalManager,
+        tool_contracts: dict[tuple[str | None, str], ToolContract],
         mcp_server_by_tool: dict[str, str] | None = None,
     ) -> None:
         self._spec = spec
@@ -106,6 +121,9 @@ class AgentNode:
         self._resolver_loader = resolver_loader
         self._hook_manager = hook_manager
         self._base_dir = base_dir
+        self._execution_manager = execution_manager
+        self._approval_manager = approval_manager
+        self._tool_contracts = tool_contracts
 
     async def __call__(self, state: GraphState) -> dict[str, object]:
         ctx = self._resolve_context()
@@ -183,6 +201,45 @@ class AgentNode:
                 log_limit(exc)
                 return blocked_message(exc)
 
+        # Centralized Human-in-the-Loop gate. Every tool call — local or MCP —
+        # passes through the same policy before the provider is invoked. DENY is
+        # never executed; REQUIRE_APPROVAL suspends the graph (unless auto_mode).
+        args: dict[str, Any] = tc.get("args") or {}
+        gate = await self._gate_tool_call(name, tool, args, provider, server_id, tc)
+        if gate is not None:
+            return gate
+
+        # Idempotency: a stable key derived from the tool_call_id. If this exact
+        # call already executed (e.g. a graph re-entry after resume replays the
+        # node), return the recorded result instead of causing a second side
+        # effect. This is the primary duplicate-execution protection.
+        run_id = run_context.run_id if run_context and run_context.run_id else tc["id"]
+        exec_id = execution_id_for(tc["id"])
+        cached = await self._execution_manager.already_executed(exec_id)
+        if cached is not None and cached.result is not None:
+            log(
+                logger,
+                logging.INFO,
+                "duplicate tool execution prevented",
+                agent=self._spec.id,
+                tool=name,
+                tool_call_id=tc["id"],
+                execution_id=exec_id,
+            )
+            used_tools.append(
+                ToolUsageRecord(
+                    name=name,
+                    provider=provider,
+                    status="succeeded",
+                    agent_id=self._spec.id,
+                    server_id=server_id,
+                )
+            )
+            return cached.result
+        await self._execution_manager.begin_execution(
+            exec_id, tool_call_id=tc["id"], run_id=run_id, tool_name=name
+        )
+
         log(
             logger,
             logging.INFO,
@@ -237,6 +294,9 @@ class AgentNode:
                     error=error,
                 ),
             )
+            await self._execution_manager.finish_execution(
+                exec_id, status="failed", result=f"Tool error: {exc}"
+            )
             return f"Tool error: {exc}"
 
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -288,7 +348,161 @@ class AgentNode:
                 ),
             )
             result_text = transformed.result
+        await self._execution_manager.finish_execution(
+            exec_id, status="succeeded", result=result_text
+        )
         return result_text
+
+    def _tool_schema(self, tool: BaseTool) -> dict[str, Any]:
+        """Best-effort input-schema dict for the policy classifier.
+
+        Uses the tool's declared argument schema (LangChain ``BaseTool.args``) so
+        parameter names become an extra risk signal. Never raises — an
+        unintrospectable tool simply contributes no schema tokens.
+        """
+        try:
+            return {"properties": dict(tool.args)}
+        except Exception:  # pragma: no cover - defensive; tool schema is optional
+            return {}
+
+    async def _gate_tool_call(
+        self,
+        name: str,
+        tool: BaseTool,
+        args: dict[str, Any],
+        provider: ToolProviderName,
+        server_id: str | None,
+        tc: dict[str, Any],
+    ) -> str | None:
+        """Evaluate the approval policy and act on the decision.
+
+        Returns ``None`` when the caller should execute the tool (EXECUTE, or an
+        approved REQUIRE_APPROVAL). Returns a synthetic tool-result string when
+        the call must not execute (DENY, or a rejected approval) — that string is
+        fed back to the model as the tool's result.
+        """
+        call = ToolCall(
+            tool_name=name,
+            agent_id=self._spec.id,
+            provider=provider,
+            server_id=server_id,
+            description=tool.description or "",
+            input_schema=self._tool_schema(tool),
+            arguments=args,
+        )
+        contract = self._tool_contracts.get((server_id if provider == "mcp" else None, name))
+        if contract is None:
+            contract = unknown_contract(
+                "missing",
+                reason="missing tool contract; failing closed",
+                trusted=False,
+            )
+        verdict = self._execution_manager.decide(
+            call, auto_mode=self._spec.auto_mode, contract=contract
+        )
+        if verdict.decision == ApprovalDecision.EXECUTE:
+            return None
+        if verdict.decision == ApprovalDecision.DENY:
+            log(
+                logger,
+                logging.WARNING,
+                "tool denied",
+                agent=self._spec.id,
+                tool=name,
+                provider=provider,
+                server=server_id,
+                category=verdict.assessment.category.value,
+            )
+            return (
+                f"[denied] The action '{name}' is not permitted by policy "
+                f"({verdict.assessment.reason}). It was not executed."
+            )
+        decision = await self._require_approval(name, provider, server_id, verdict, args, tc)
+        if decision == ApprovalDecisionKind.APPROVE:
+            return None
+        return (
+            f"[rejected] status=rejected toolCallId={tc['id']} "
+            "reason=user rejected the action. The tool was not executed."
+        )
+
+    async def _require_approval(
+        self,
+        name: str,
+        provider: ToolProviderName,
+        server_id: str | None,
+        verdict: Any,
+        args: dict[str, Any],
+        tc: dict[str, Any],
+    ) -> ApprovalDecisionKind:
+        """Persist a pending approval, interrupt the graph, and return the human's
+        decision once the run resumes.
+
+        No tool side effect happens before the interrupt (prepare → interrupt →
+        execute). On resume the node re-runs and ``interrupt()`` returns the
+        decision instead of suspending again; ``create_pending`` is idempotent by
+        ``tool_call_id`` so no duplicate approval is created.
+        """
+        run_context = current_run_context.get()
+        run_id = run_context.run_id if run_context and run_context.run_id else tc["id"]
+        authorized_user_id = run_context.user_id if run_context else None
+        auth_ref = run_context.conversation_id if run_context else None
+        approval_id = f"appr_{uuid.uuid4().hex[:16]}"
+
+        record = await self._approval_manager.create_pending(
+            run_id=run_id,
+            thread_id=run_id,
+            approval_id=approval_id,
+            agent_id=self._spec.id,
+            tool_name=name,
+            tool_call_id=tc["id"],
+            provider=provider,
+            assessment=verdict.assessment,
+            arguments=args,
+            server_id=server_id,
+            auth_ref=auth_ref,
+            authorized_user_id=authorized_user_id,
+        )
+
+        payload = {
+            "type": "tool_approval",
+            "approval_id": record.approval_id,
+            "run_id": run_id,
+            "agent_id": self._spec.id,
+            "tool_name": name,
+            "provider": provider,
+            "server_id": server_id,
+            "category": verdict.assessment.category.value,
+            "reason": verdict.assessment.reason,
+            "arguments": sanitize_arguments(args),
+        }
+        log(
+            logger,
+            logging.INFO,
+            "run interrupted",
+            run_id=run_id,
+            approval_id=record.approval_id,
+            tool=name,
+            tool_call_id=tc["id"],
+        )
+        resume = interrupt(payload)
+        return _parse_decision(resume)
+
+
+def _parse_decision(resume: Any) -> ApprovalDecisionKind:
+    """Interpret a resume value as an approval decision (fail-safe to REJECT).
+
+    Accepts an :class:`ApprovalDecisionKind`, a plain string ("approve"/"reject"),
+    or a mapping with a ``decision`` key. Anything unrecognized is treated as a
+    rejection so an ambiguous resume never triggers a side effect.
+    """
+    if isinstance(resume, ApprovalDecisionKind):
+        return resume
+    value: Any = resume
+    if isinstance(resume, dict):
+        value = resume.get("decision")
+    if isinstance(value, str) and value.lower() in ("approve", "approved", "approve_and_edit"):
+        return ApprovalDecisionKind.APPROVE
+    return ApprovalDecisionKind.REJECT
 
 
 class OrchestratorNode:
@@ -351,19 +565,28 @@ class OrchestratorNode:
         async def invoke(message: str) -> str:
             snapshot = list(visited_acc)
             # Children never stream their answer to the user — only the root
-            # orchestrator's final synthesis does. `route_stream` is propagated so
-            # the live route still reflects the full call-chain.
+            # orchestrator's final synthesis does. The stream sinks are ambient
+            # (current_streams); clear the answer sink for the child while keeping
+            # route/token, so the live route still reflects the full chain.
             sub_state: dict[str, Any] = {
                 "message": message,
                 "visited": snapshot,
                 "used_tools": [],
-                "route_stream": parent_state.get("route_stream"),
                 "run_context": parent_state.get("run_context", {}),
             }
+            child_sinks = replace(current_streams.get(), answer=None)
+            sink_token = current_streams.set(child_sinks)
             try:
                 result = await entry.callable(cast(GraphState, sub_state))
+            except GraphInterrupt:
+                # An approval interrupt raised inside a nested child must bubble up
+                # to the LangGraph runtime so the checkpoint is taken — it is
+                # control flow, not a child failure. Never swallow it.
+                raise
             except Exception as exc:
                 return f"Agent error: {exc}"
+            finally:
+                current_streams.reset(sink_token)
 
             child_visited = cast("list[str]", result.get("visited", []))
             child_tools = cast("list[ToolUsageRecord]", result.get("used_tools", []))

@@ -14,11 +14,36 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 
+from agent_engine.approvals.contract import (
+    LOCAL_SERVER_IDENTITY,
+    MCPServerIdentity,
+    MCPToolDefinition,
+    ToolContract,
+)
+from agent_engine.approvals.contract_registry import ToolContractRegistry
+from agent_engine.approvals.contract_service import ToolContractService
+from agent_engine.approvals.manager import ApprovalManager, ToolExecutionManager
+from agent_engine.approvals.models import (
+    ApprovalDecisionKind,
+    ApprovalRecord,
+    RunRecord,
+    RunStatus,
+)
+from agent_engine.approvals.repository import (
+    InMemoryApprovalRepository,
+    InMemoryRunRepository,
+    InMemoryToolExecutionRepository,
+)
 from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec, SystemSpec
 from agent_engine.core.spec import ModelConfig as NodeModelConfig
 from agent_engine.engine.engine import Engine
+from agent_engine.engine.langgraph.checkpointing import (
+    CheckpointerHandle,
+    CheckpointProviderFactory,
+)
 from agent_engine.engine.langgraph.filters import AccessFilter, RouteFilter
 from agent_engine.engine.langgraph.helpers import (
     collect_mcp_specs,
@@ -28,7 +53,7 @@ from agent_engine.engine.langgraph.helpers import (
     walk,
 )
 from agent_engine.engine.langgraph.nodes import AgentNode, ChildEntry, OrchestratorNode
-from agent_engine.engine.types import RunResult
+from agent_engine.engine.types import PendingApproval, RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.loaders.tool_loader import ToolLoader
@@ -44,7 +69,7 @@ from agent_engine.runtime.hooks import (
     current_run_context,
 )
 from agent_engine.runtime.state import GraphState
-from agent_engine.runtime.streaming import RunStreamEvent
+from agent_engine.runtime.streaming import RunStreamEvent, StreamSinks, current_streams
 
 logger = logging.getLogger(__name__)
 
@@ -63,19 +88,10 @@ def _new_state(
     message: str,
     *,
     run_context: dict[str, Any] | None = None,
-    answer_stream: Callable[[str], None] | None = None,
-    route_stream: Callable[[tuple[str, ...]], None] | None = None,
-    token_stream: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     state: dict[str, Any] = {"message": message, "used_tools": []}
     if run_context is not None:
         state["run_context"] = run_context
-    if answer_stream is not None:
-        state["answer_stream"] = answer_stream
-    if route_stream is not None:
-        state["route_stream"] = route_stream
-    if token_stream is not None:
-        state["token_stream"] = token_stream
     return state
 
 
@@ -120,6 +136,32 @@ def _trace_metadata(ctx: RunContext) -> dict[str, Any]:
     return metadata
 
 
+def _pending_approval(approval: ApprovalRecord) -> PendingApproval:
+    """Map a persisted approval record to the sanitized API/response shape."""
+    return PendingApproval(
+        run_id=approval.run_id,
+        approval_id=approval.approval_id,
+        agent_id=approval.agent_id,
+        tool_name=approval.tool_name,
+        reason=approval.reason,
+        category=approval.category.value,
+        provider=approval.provider,
+        server_id=approval.server_id,
+        arguments=dict(approval.arguments),
+    )
+
+
+def _coerce_decision(decision: ApprovalDecisionKind | str) -> ApprovalDecisionKind:
+    from agent_engine.approvals.errors import InvalidDecision
+
+    if isinstance(decision, ApprovalDecisionKind):
+        return decision
+    try:
+        return ApprovalDecisionKind(str(decision).lower())
+    except ValueError as exc:
+        raise InvalidDecision(str(decision)) from exc
+
+
 def _run_end_context(system_name: str, ctx: RunContext, result: RunResult) -> RunEndContext:
     """Safe summary of a completed run for on_run_end hooks (no answer text)."""
     return RunEndContext(
@@ -160,6 +202,11 @@ class LangGraphEngine(Engine):
         *,
         model_factory: ModelFactory = build_chat_model,
         callbacks: list[BaseCallbackHandler] | None = None,
+        checkpoint_connection_string: str | None = None,
+        execution_manager: ToolExecutionManager | None = None,
+        approval_manager: ApprovalManager | None = None,
+        tool_contract_registry: ToolContractRegistry | None = None,
+        tool_contract_service: ToolContractService | None = None,
     ) -> None:
         self._base_dir = base_dir
         self._model_factory = model_factory
@@ -170,11 +217,29 @@ class LangGraphEngine(Engine):
         self._filters: list[RouteFilter] = []
         self._mcp_clients: dict[str, Any] = {}
         self._mcp_tools: dict[str, list[BaseTool]] = {}
+        self._tool_contracts: dict[tuple[str | None, str], ToolContract] = {}
         self._tool_loader: ToolLoader | None = None
         self._resolver_loader: ResolverLoader | None = None
         self._hook_manager: HookManager | None = None
         self._mcp_server_by_tool: dict[str, str] = {}
         self._policy = ExecutionPolicy()
+
+        # Human-in-the-Loop wiring. Checkpointer + approval/execution managers are
+        # selected once here (Dependency Inversion) and injected into every node,
+        # so both local and MCP tools share one centralized approval path and the
+        # graph/resume logic is identical for in-memory and persistent backends.
+        self._checkpoint_connection_string = checkpoint_connection_string
+        self._checkpointer: CheckpointerHandle | None = None
+        self._execution_manager = execution_manager or ToolExecutionManager(
+            execution_repository=InMemoryToolExecutionRepository()
+        )
+        self._approval_manager = approval_manager or ApprovalManager(
+            run_repository=InMemoryRunRepository(),
+            approval_repository=InMemoryApprovalRepository(),
+        )
+        self._tool_contract_service = tool_contract_service or ToolContractService(
+            registry=tool_contract_registry
+        )
 
     async def build(self, spec: SystemSpec) -> None:
         self._system_name = spec.meta.name
@@ -189,6 +254,8 @@ class LangGraphEngine(Engine):
         self._mcp_tools = await self._connect_mcps(spec)
         self._tool_loader = ToolLoader(self._base_dir)
         self._resolver_loader = ResolverLoader(self._base_dir)
+        await self._classify_local_tools(spec)
+        self._checkpointer = CheckpointProviderFactory().create(self._checkpoint_connection_string)
         self._app = self._compile_graph(spec)
         self._log_startup_summary(spec)
 
@@ -244,11 +311,9 @@ class LangGraphEngine(Engine):
             input_tokens += inp
             output_tokens += out
 
-        config = RunnableConfig(
-            run_name=self._system_name,
-            callbacks=self._callbacks,
-            metadata=_trace_metadata(ctx),
-        )
+        stream_token = current_streams.set(StreamSinks(token=accumulate_tokens))
+        config = self._thread_config(ctx)
+        await self._register_run(ctx)
         log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
         try:
             result = await app.ainvoke(
@@ -257,11 +322,13 @@ class LangGraphEngine(Engine):
                     _new_state(
                         message,
                         run_context=_state_run_context(ctx) if has_caller_context else None,
-                        token_stream=accumulate_tokens,
                     ),
                 ),
                 config,
             )
+            pending = await self._pending_result(ctx, result)
+            if pending is not None:
+                return pending
             run_result = RunResult(
                 system_name=self._system_name,
                 visited=result.get("visited", []),
@@ -270,6 +337,7 @@ class LangGraphEngine(Engine):
                 input_tokens=input_tokens or None,
                 output_tokens=output_tokens or None,
             )
+            await self._complete_run(ctx.run_id)
             await hook_manager.run_run_end(
                 ctx, _run_end_context(self._system_name, ctx, run_result)
             )
@@ -292,6 +360,159 @@ class LangGraphEngine(Engine):
                 system=self._system_name,
                 error=type(exc).__name__,
             )
+            await self._fail_run(ctx.run_id)
+            await hook_manager.run_run_error(ctx, exc)
+            raise
+        finally:
+            current_run_context.reset(token)
+            current_execution.reset(exec_token)
+            current_streams.reset(stream_token)
+
+    # ------------------------------------------------------------------ #
+    # Human-in-the-Loop: run/approval lifecycle                          #
+    # ------------------------------------------------------------------ #
+
+    def _thread_config(self, ctx: RunContext) -> RunnableConfig:
+        """Build the run config, binding the LangGraph checkpoint thread_id.
+
+        ``thread_id`` is the business ``run_id`` so a suspended run is resumed by
+        the same identifier on any pod backed by a shared checkpointer.
+        """
+        return RunnableConfig(
+            run_name=self._system_name,
+            callbacks=self._callbacks,
+            metadata=_trace_metadata(ctx),
+            configurable={"thread_id": ctx.run_id},
+        )
+
+    async def _register_run(self, ctx: RunContext) -> None:
+        assert ctx.run_id is not None
+        if await self._approval_manager.get_run_or_none(ctx.run_id) is None:
+            await self._approval_manager.register_run(
+                RunRecord(
+                    run_id=ctx.run_id,
+                    thread_id=ctx.run_id,
+                    system_name=self._system_name,
+                    status=RunStatus.RUNNING,
+                )
+            )
+
+    async def _complete_run(self, run_id: str | None) -> None:
+        if run_id is None:
+            return
+        run = await self._approval_manager.get_run_or_none(run_id)
+        if run is not None and run.status in (RunStatus.RUNNING, RunStatus.RESUMING):
+            await self._approval_manager.mark_run(run_id, RunStatus.COMPLETED)
+
+    async def _fail_run(self, run_id: str | None) -> None:
+        if run_id is None:
+            return
+        run = await self._approval_manager.get_run_or_none(run_id)
+        if run is not None and run.status not in (RunStatus.COMPLETED, RunStatus.FAILED):
+            await self._approval_manager.mark_run(run_id, RunStatus.FAILED)
+
+    async def _pending_result(self, ctx: RunContext, result: Any) -> RunResult | None:
+        """If the graph suspended at an approval interrupt, return a pending
+        RunResult built from the persisted approval; otherwise return None."""
+        interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
+        if not interrupts:
+            return None
+        assert ctx.run_id is not None
+        approval = await self._approval_manager.get_pending(ctx.run_id)
+        if approval is None:
+            return None
+        log(
+            logger,
+            logging.INFO,
+            "checkpoint persisted",
+            run_id=ctx.run_id,
+            thread_id=ctx.run_id,
+            approval_id=approval.approval_id,
+            backend=self._checkpointer.backend if self._checkpointer else "",
+        )
+        return RunResult(
+            system_name=self._system_name,
+            visited=result.get("visited", []),
+            answer="",
+            used_tools=tuple(result.get("used_tools", [])),
+            status="pending_approval",
+            pending_approval=_pending_approval(approval),
+        )
+
+    async def get_run_status(self, run_id: str) -> str:
+        """Return the current status of a run (raises RunNotFound if unknown)."""
+        run = await self._approval_manager.get_run(run_id)
+        return run.status.value
+
+    async def get_pending_approval(self, run_id: str) -> PendingApproval | None:
+        """Return the run's outstanding approval, or None if there is none."""
+        approval = await self._approval_manager.get_pending(run_id)
+        return _pending_approval(approval) if approval is not None else None
+
+    async def resume(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecisionKind | str,
+        *,
+        caller_user_id: str | None = None,
+    ) -> RunResult:
+        """Approve or reject a pending tool call and resume the same run.
+
+        Atomically claims the approval (exactly one caller wins across pods),
+        resumes the existing LangGraph thread from its checkpoint — so the agent
+        is not re-selected and completed steps are not intentionally redone — and
+        either executes or rejects the original tool call.
+        """
+        app, hook_manager = self._require_built("resuming")
+        kind = _coerce_decision(decision)
+        approval = await self._approval_manager.claim(
+            run_id=run_id, approval_id=approval_id, caller_user_id=caller_user_id
+        )
+        approved = kind == ApprovalDecisionKind.APPROVE
+        ctx = RunContext(run_id=run_id, conversation_id=approval.auth_ref)
+        token = current_run_context.set(ctx)
+        exec_token = current_execution.set(ExecutionLimiter(self._policy))
+        log(
+            logger,
+            logging.INFO,
+            "resume started",
+            run_id=run_id,
+            approval_id=approval_id,
+            decision=kind.value,
+        )
+        try:
+            result = await app.ainvoke(
+                Command(resume={"decision": kind.value}),
+                self._thread_config(ctx),
+            )
+            await self._approval_manager.finalize(approval_id, approved=approved)
+            pending = await self._pending_result(ctx, result)
+            if pending is not None:
+                # The resumed run hit a *further* approval; stay pending.
+                return pending
+            await self._complete_run(run_id)
+            run_result = RunResult(
+                system_name=self._system_name,
+                visited=result.get("visited", []),
+                answer=result.get("answer", ""),
+                used_tools=tuple(result.get("used_tools", [])),
+                status="completed",
+            )
+            await hook_manager.run_run_end(
+                ctx, _run_end_context(self._system_name, ctx, run_result)
+            )
+            log(
+                logger,
+                logging.INFO,
+                "run completed",
+                run_id=run_id,
+                approval_id=approval_id,
+                decision=kind.value,
+            )
+            return run_result
+        except Exception as exc:
+            await self._fail_run(run_id)
             await hook_manager.run_run_error(ctx, exc)
             raise
         finally:
@@ -317,21 +538,38 @@ class LangGraphEngine(Engine):
         state = _new_state(
             message,
             run_context=_state_run_context(ctx) if has_caller_context else None,
-            answer_stream=lambda c: queue.put_nowait(
-                RunStreamEvent(type="answer_delta", content=c)
-            ),
-            route_stream=lambda r: queue.put_nowait(RunStreamEvent(type="route", route=r)),
-            token_stream=accumulate_tokens,
+        )
+        sinks = StreamSinks(
+            answer=lambda c: queue.put_nowait(RunStreamEvent(type="answer_delta", content=c)),
+            route=lambda r: queue.put_nowait(RunStreamEvent(type="route", route=r)),
+            token=accumulate_tokens,
         )
 
+        await self._register_run(ctx)
+
         async def run_graph() -> None:
-            config = RunnableConfig(
-                run_name=self._system_name,
-                callbacks=self._callbacks,
-                metadata=_trace_metadata(ctx),
-            )
+            config = self._thread_config(ctx)
             try:
                 result = await app.ainvoke(cast(Any, state), config)
+                pending = await self._pending_result(ctx, result)
+                if pending is not None and pending.pending_approval is not None:
+                    pa = pending.pending_approval
+                    queue.put_nowait(
+                        RunStreamEvent(
+                            type="pending_approval",
+                            route=tuple(pending.visited),
+                            system_name=self._system_name,
+                            used_tools=pending.used_tools,
+                            run_id=pa.run_id,
+                            approval_id=pa.approval_id,
+                            agent_id=pa.agent_id,
+                            tool_name=pa.tool_name,
+                            reason=pa.reason,
+                            category=pa.category,
+                        )
+                    )
+                    return
+                await self._complete_run(ctx.run_id)
                 visited = tuple(result.get("visited", []))
                 used_tools = tuple(result.get("used_tools", []))
                 queue.put_nowait(
@@ -372,6 +610,7 @@ class LangGraphEngine(Engine):
                     system=self._system_name,
                     error=type(exc).__name__,
                 )
+                await self._fail_run(ctx.run_id)
                 await hook_manager.run_run_error(ctx, exc)
                 queue.put_nowait(exc)
             finally:
@@ -380,6 +619,8 @@ class LangGraphEngine(Engine):
         log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
         token = current_run_context.set(ctx)
         exec_token = current_execution.set(ExecutionLimiter(self._policy))
+        # Set before creating the task so the child task inherits the sinks.
+        stream_token = current_streams.set(sinks)
         try:
             task = asyncio.create_task(run_graph())
             while True:
@@ -393,6 +634,7 @@ class LangGraphEngine(Engine):
         finally:
             current_run_context.reset(token)
             current_execution.reset(exec_token)
+            current_streams.reset(stream_token)
 
     def _setup_filters(self, spec: SystemSpec) -> list[RouteFilter]:
         filters: list[RouteFilter] = []
@@ -442,6 +684,12 @@ class LangGraphEngine(Engine):
             try:
                 log(logger, logging.INFO, "mcp discovery started", server=server_id)
                 mcp_tools[server_id] = await client.get_tools()
+                identity = MCPServerIdentity(server_id=server_id, url=mcp_spec.url, trusted=False)
+                for tool in mcp_tools[server_id]:
+                    contract = await self._tool_contract_service.get_or_create(
+                        identity, _tool_definition(tool)
+                    )
+                    self._tool_contracts[(server_id, tool.name)] = contract
                 log(
                     logger,
                     logging.INFO,
@@ -460,11 +708,32 @@ class LangGraphEngine(Engine):
                 mcp_tools[server_id] = []
         return mcp_tools
 
+    async def _classify_local_tools(self, spec: SystemSpec) -> None:
+        assert self._tool_loader is not None
+        seen: set[str] = set()
+        for node in walk(spec.graph):
+            if not isinstance(node.node, AgentSpec):
+                continue
+            for tool_spec in node.node.tools:
+                if tool_spec.id in seen:
+                    continue
+                seen.add(tool_spec.id)
+                fn = self._tool_loader.load(tool_spec.id)
+                tool = StructuredTool.from_function(fn, description=tool_spec.description)
+                contract = await self._tool_contract_service.get_or_create(
+                    LOCAL_SERVER_IDENTITY,
+                    _tool_definition(tool, description=tool_spec.description),
+                )
+                self._tool_contracts[(None, tool.name)] = contract
+
     def _compile_graph(self, spec: SystemSpec) -> CompiledStateGraph:
         builder = StateGraph(GraphState)
         self._wire_node(builder, spec.graph, parent_path=None)
         builder.add_edge(START, node_id(spec.graph, parent_path=None))
-        return builder.compile()
+        # A checkpointer is always present (in-memory by default), so approval
+        # interrupts and resume use one identical code path regardless of backend.
+        assert self._checkpointer is not None
+        return builder.compile(checkpointer=self._checkpointer.saver)
 
     def _wire_node(
         self,
@@ -534,6 +803,9 @@ class LangGraphEngine(Engine):
             resolver_loader=self._resolver_loader,
             hook_manager=self._hook_manager,
             base_dir=self._base_dir,
+            execution_manager=self._execution_manager,
+            approval_manager=self._approval_manager,
+            tool_contracts=self._tool_contracts,
         )
 
     def _build_model(self, model: NodeModelConfig) -> BaseChatModel:
@@ -561,3 +833,31 @@ class LangGraphEngine(Engine):
                 mcp_names.add(st.name)
                 server_by_tool[st.name] = mcp.id
         return tools, mcp_names, server_by_tool
+
+
+def _tool_definition(tool: BaseTool, *, description: str | None = None) -> MCPToolDefinition:
+    return MCPToolDefinition(
+        name=tool.name,
+        description=description if description is not None else (tool.description or ""),
+        input_schema=_tool_schema(tool),
+        annotations=_tool_annotations(tool),
+    )
+
+
+def _tool_schema(tool: BaseTool) -> dict[str, Any]:
+    try:
+        return {"properties": dict(tool.args)}
+    except Exception:
+        return {}
+
+
+def _tool_annotations(tool: BaseTool) -> dict[str, Any]:
+    metadata = getattr(tool, "metadata", None)
+    if isinstance(metadata, dict):
+        annotations = metadata.get("annotations", metadata)
+        if isinstance(annotations, dict):
+            return dict(annotations)
+    annotations = getattr(tool, "annotations", None)
+    if isinstance(annotations, dict):
+        return dict(annotations)
+    return {}
