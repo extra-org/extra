@@ -376,6 +376,11 @@
           "description": "If true, this node is access-restricted: before routing, the engine calls plugins/access.py AccessResolver.can_access(ctx, node_id); only if it returns true is the node kept as a routing candidate (otherwise it is hidden from the router entirely). Requires the fixed access plugin to exist when any protected node exists. If false or omitted, the node is never checked and is always reachable.",
           "default": false
         },
+        "auto_mode": {
+          "type": "boolean",
+          "description": "If true, this agent runs without Human-in-the-Loop interrupts: tool calls that would otherwise require human approval (REQUIRE_APPROVAL) execute automatically. It never bypasses a DENY decision from the approval policy. If false or omitted, risky tool calls pause the run for approval.",
+          "default": false
+        },
         "prompts": {
           "type": "object",
           "description": "Prompt files for this node. All fields are optional for agents.",

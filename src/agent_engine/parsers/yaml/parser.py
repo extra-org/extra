@@ -573,6 +573,7 @@ class YAMLParser(Parser):
                     for ref in raw.get("tools", [])
                 ),
                 mcps=tuple(_build_mcp_spec(ref, mcps[ref]) for ref in raw.get("mcps", [])),
+                auto_mode=bool(raw.get("auto_mode", False)),
             )
 
         return specs
