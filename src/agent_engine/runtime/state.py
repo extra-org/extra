@@ -6,14 +6,18 @@ partial update; LangGraph merges it into the running state.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any, TypedDict
 
 from agent_engine.runtime.tool_models import ToolUsageRecord
 
 
 class GraphState(TypedDict, total=False):
-    """Mutable state carried through one run of the compiled LangGraph."""
+    """Mutable state carried through one run of the compiled LangGraph.
+
+    Kept fully serializable so it can be checkpointed: request-scoped callbacks
+    (answer/route/token streaming) live on the ``current_streams`` contextvar,
+    not here (see ``agent_engine.runtime.streaming``).
+    """
 
     message: str
     """The user's incoming message."""
@@ -34,12 +38,3 @@ class GraphState(TypedDict, total=False):
     user/session/auth/metadata values here, and runtime components such as
     protected-node access filtering may consult them.
     """
-
-    answer_stream: Callable[[str], None]
-    """Optional callback for final assistant answer chunks."""
-
-    route_stream: Callable[[tuple[str, ...]], None]
-    """Optional callback for the final route once the selected agent is known."""
-
-    token_stream: Callable[[int, int], None]
-    """Optional callback invoked after every LLM call with (input_tokens, output_tokens)."""

@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec
 from agent_engine.runtime.execution import ExecutionLimitExceeded, current_execution, log_limit
 from agent_engine.runtime.state import GraphState
+from agent_engine.runtime.streaming import current_streams
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,9 @@ def load_file(base_dir: Path, rel_path: str | None) -> str:
 
 
 async def invoke_model(model: Any, messages: list[Any], state: GraphState) -> Any:
-    answer_stream = state.get("answer_stream")
-    if not callable(answer_stream):
+    sinks = current_streams.get()
+    answer_stream = sinks.answer
+    if answer_stream is None:
         response = await model.ainvoke(messages)
     else:
         streamed = None
@@ -45,11 +47,10 @@ async def invoke_model(model: Any, messages: list[Any], state: GraphState) -> An
             if text:
                 answer_stream(text)
         response = streamed or AIMessage(content="")
-    token_stream = state.get("token_stream")
-    if callable(token_stream):
+    if sinks.token is not None:
         usage = getattr(response, "usage_metadata", None)
         if usage:
-            token_stream(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
+            sinks.token(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
     return response
 
 
@@ -89,8 +90,8 @@ async def run_tool_loop(
 
 
 def emit_route(state: GraphState, route: tuple[str, ...]) -> None:
-    fn = state.get("route_stream")
-    if callable(fn):
+    fn = current_streams.get().route
+    if fn is not None:
         fn(route)
 
 
