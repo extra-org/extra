@@ -5,15 +5,18 @@
   "colors": {
     "primary": "#6366f1"
   },
-  "topbarLinks": [
-    {
-      "name": "GitHub",
-      "url": "https://github.com/extra-org/extra"
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/extra-org/extra"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "docs/quickstart"
     }
-  ],
-  "topbarCtaButton": {
-    "name": "Get Started",
-    "url": "docs/quickstart"
   },
   "navigation": {
     "groups": [
@@ -60,7 +63,9 @@
       }
     ]
   },
-  "footerSocials": {
-    "github": "https://github.com/extra-org/extra"
+  "footer": {
+    "socials": {
+      "github": "https://github.com/extra-org/extra"
+    }
   }
 }
