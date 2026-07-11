@@ -82,9 +82,18 @@ model:
   region: us-east-1
   temperature: 0.0
 ```
+
+```yaml Google Gemini
+model:
+  provider: gemini
+  name: gemini-2.5-flash
+  temperature: 0.2
+```
 </CodeGroup>
 
 For Bedrock, `region` can be omitted if `AWS_REGION` or `AWS_DEFAULT_REGION` is set. Credentials follow the standard AWS chain — profile, environment variables, or an IAM role.
+
+For Gemini, set `GEMINI_API_KEY` in your environment (`export GEMINI_API_KEY="..."`) and install the provider extra with `pip install "agent-engine[gemini]"`. Choose any Gemini model your key can access via `name`. Secrets must never be stored in YAML.
 
 <Warning>
   A node-level `model` is a **full replacement**, not a merge with `defaults.model`. If you override the model on an agent, specify every field — `provider`, `name`, and any others you need. Partial overrides won't inherit missing fields from `defaults`.

@@ -71,6 +71,7 @@ dev = [
 anthropic = ["langchain-anthropic>=0.3"]
 openai = ["langchain-openai>=0.3"]
 bedrock = ["langchain-aws>=0.2"]
+gemini = ["langchain-google-genai>=2.0"]
 langfuse = ["langfuse>=2.0"]
 # PostgreSQL backend for agent_manager: pip install ".[postgres]" + set
 # DATABASE_URL=postgresql+asyncpg://...

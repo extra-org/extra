@@ -29,6 +29,22 @@ def _install_fake_langchain_aws(monkeypatch: pytest.MonkeyPatch, cls: type[Any])
     monkeypatch.setitem(sys.modules, "langchain_aws", module)
 
 
+class _FakeGeminiModel:
+    instances: ClassVar[list[_FakeGeminiModel]] = []
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self.instances.append(self)
+
+
+def _install_fake_langchain_google_genai(
+    monkeypatch: pytest.MonkeyPatch, cls: type[Any]
+) -> None:
+    module = types.ModuleType("langchain_google_genai")
+    monkeypatch.setattr(module, "ChatGoogleGenerativeAI", cls, raising=False)
+    monkeypatch.setitem(sys.modules, "langchain_google_genai", module)
+
+
 def test_anthropic_provider_still_uses_langchain_init_chat_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -127,6 +143,92 @@ def test_bedrock_construction_failure_mentions_aws_credentials(
             "anthropic.claude-3-5-haiku-20241022-v1:0",
             region="us-east-1",
         )
+
+
+def test_gemini_provider_maps_config_onto_chat_google_generative_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeGeminiModel.instances.clear()
+    _install_fake_langchain_google_genai(monkeypatch, _FakeGeminiModel)
+    monkeypatch.setenv("GEMINI_API_KEY", "gm-test-key")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    result = build_chat_model(
+        "gemini",
+        "gemini-2.5-flash",
+        temperature=0.2,
+        max_tokens=1024,
+        top_p=0.9,
+    )
+
+    assert result is _FakeGeminiModel.instances[0]
+    # `max_tokens` maps onto Gemini's `max_output_tokens`; region is not passed.
+    assert _FakeGeminiModel.instances[0].kwargs == {
+        "model": "gemini-2.5-flash",
+        "google_api_key": "gm-test-key",
+        "temperature": 0.2,
+        "max_output_tokens": 1024,
+        "top_p": 0.9,
+    }
+
+
+def test_gemini_missing_api_key_fails_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_langchain_google_genai(monkeypatch, _FakeGeminiModel)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    with pytest.raises(ModelConfigurationError, match="requires GEMINI_API_KEY"):
+        build_chat_model("gemini", "gemini-2.5-flash")
+
+
+def test_gemini_accepts_google_api_key_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeGeminiModel.instances.clear()
+    _install_fake_langchain_google_genai(monkeypatch, _FakeGeminiModel)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-fallback-key")
+
+    build_chat_model("gemini", "gemini-2.5-flash")
+
+    assert _FakeGeminiModel.instances[0].kwargs["google_api_key"] == "google-fallback-key"
+
+
+def test_gemini_missing_package_fails_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Do not install the fake module: the real package is not a test dependency,
+    # so the import must fail with an actionable install hint.
+    monkeypatch.setitem(sys.modules, "langchain_google_genai", None)
+    monkeypatch.setenv("GEMINI_API_KEY", "gm-test-key")
+
+    with pytest.raises(ModelConfigurationError, match="langchain-google-genai"):
+        build_chat_model("gemini", "gemini-2.5-flash")
+
+
+def test_gemini_construction_failure_does_not_leak_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RaisingGeminiModel:
+        def __init__(self, **kwargs: Any) -> None:
+            raise RuntimeError("invalid api key")
+
+    _install_fake_langchain_google_genai(monkeypatch, RaisingGeminiModel)
+    monkeypatch.setenv("GEMINI_API_KEY", "super-secret-gemini-key")
+
+    with pytest.raises(ModelConfigurationError) as excinfo:
+        build_chat_model("gemini", "gemini-2.5-flash")
+
+    assert "super-secret-gemini-key" not in str(excinfo.value)
+
+
+def test_gemini_does_not_log_api_key(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _FakeGeminiModel.instances.clear()
+    _install_fake_langchain_google_genai(monkeypatch, _FakeGeminiModel)
+    monkeypatch.setenv("GEMINI_API_KEY", "super-secret-gemini-key")
+
+    with caplog.at_level(logging.INFO):
+        build_chat_model("gemini", "gemini-2.5-flash", temperature=0.0)
+
+    assert "super-secret-gemini-key" not in caplog.text
 
 
 def test_unsupported_provider_is_rejected_clearly() -> None:
