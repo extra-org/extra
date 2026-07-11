@@ -85,6 +85,8 @@ def _write_tool(base_dir: Path, tool_id: str, *, fail: bool = False) -> None:
 
 
 def _agent(node_id: str, **kw: Any) -> GraphNode:
+    # auto_mode=True: these tests cover tool-lifecycle hooks, not HITL approval.
+    kw.setdefault("auto_mode", True)
     return GraphNode(
         node=AgentSpec(
             id=node_id,

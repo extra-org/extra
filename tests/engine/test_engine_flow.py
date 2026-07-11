@@ -108,7 +108,12 @@ def agent(
     *,
     tools: tuple[ToolSpec, ...] = (),
     protected: bool = False,
+    auto_mode: bool = True,
 ) -> GraphNode:
+    # These flow tests exercise routing/tool execution, not Human-in-the-Loop, so
+    # they default to auto_mode=True (no approval interrupts) — the behavior an
+    # agent had before HITL existed. Approval behavior is covered in
+    # tests/approvals/.
     spec = AgentSpec(
         id=node_id,
         name=node_id,
@@ -117,6 +122,7 @@ def agent(
         protected=protected,
         prompts=BasePromptSet(),
         tools=tools,
+        auto_mode=auto_mode,
     )
     return GraphNode(node=spec)
 
