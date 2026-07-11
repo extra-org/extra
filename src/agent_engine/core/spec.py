@@ -91,6 +91,10 @@ class AgentSpec(NodeSpec):
     prompts: BasePromptSet = field(default_factory=BasePromptSet)
     tools: tuple[ToolSpec, ...] = field(default_factory=tuple)
     mcps: tuple[MCPSpec, ...] = field(default_factory=tuple)
+    auto_mode: bool = False
+    """When true, the agent runs without Human-in-the-Loop interrupts: tool calls
+    that would otherwise REQUIRE_APPROVAL execute automatically. It never bypasses
+    a DENY decision. Optional; defaults to false, preserving existing behavior."""
 
     def get_prompts(self) -> BasePromptSet:
         return self.prompts
