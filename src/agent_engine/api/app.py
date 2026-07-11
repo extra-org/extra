@@ -8,16 +8,27 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from agent_engine.approvals.errors import (
+    ApprovalAlreadyProcessed,
+    ApprovalError,
+    ApprovalNotFound,
+    ApprovalRunMismatch,
+    InvalidDecision,
+    RunNotFound,
+    UnauthorizedApprover,
+)
+from agent_engine.approvals.models import ApprovalDecisionKind
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.engine.types import PendingApproval
 from agent_engine.logging_config import configure_logging, log, request_id_var
 from agent_engine.parsers.yaml.parser import YAMLParser
 from agent_engine.runtime.hooks import RunContext
@@ -50,16 +61,44 @@ def _preview(text: str, limit: int = 120) -> str:
     return collapsed[:limit] + ("…" if len(collapsed) > limit else "")
 
 
-def _run_context(x_session_id: str | None) -> RunContext | None:
-    """Build a RunContext carrying the caller's session id, or None if absent.
+def _run_context(x_session_id: str | None, *, run_id: str) -> RunContext:
+    """Build a RunContext carrying a run id and the caller's session id.
 
-    The id flows into tracing metadata (the Langfuse session). It is untrusted,
-    so sanitize to safe characters and cap length before trusting it.
+    The run id is the resumable identifier returned to the client (also the
+    LangGraph checkpoint thread id). The session id flows into tracing metadata
+    (the Langfuse session); it is untrusted, so sanitize and cap it.
     """
-    if not x_session_id:
+    session_id = _RID_OK.sub("", x_session_id)[:64] if x_session_id else ""
+    return RunContext(run_id=run_id, conversation_id=session_id or None)
+
+
+def _pending_model(pa: PendingApproval | None) -> PendingApprovalModel | None:
+    if pa is None:
         return None
-    session_id = _RID_OK.sub("", x_session_id)[:64]
-    return RunContext(conversation_id=session_id) if session_id else None
+    return PendingApprovalModel(
+        run_id=pa.run_id,
+        approval_id=pa.approval_id,
+        agent_id=pa.agent_id,
+        tool_name=pa.tool_name,
+        reason=pa.reason,
+        category=pa.category,
+        provider=pa.provider,
+        server_id=pa.server_id,
+        arguments=pa.arguments,
+    )
+
+
+def _map_approval_error(exc: ApprovalError) -> HTTPException:
+    """Map approval-lifecycle errors to stable HTTP responses (no internals)."""
+    status = {
+        RunNotFound: 404,
+        ApprovalNotFound: 404,
+        ApprovalRunMismatch: 404,
+        UnauthorizedApprover: 403,
+        ApprovalAlreadyProcessed: 409,
+        InvalidDecision: 400,
+    }.get(type(exc), 409)
+    return HTTPException(status_code=status, detail=str(exc))
 
 
 class InvokeRequest(BaseModel):
@@ -75,11 +114,41 @@ class ToolRecord(BaseModel):
     error: str | None = None
 
 
+class PendingApprovalModel(BaseModel):
+    """Sanitized pending-approval payload returned to the client/UI."""
+
+    run_id: str
+    approval_id: str
+    agent_id: str
+    tool_name: str
+    reason: str
+    category: str
+    provider: str
+    server_id: str | None = None
+    arguments: dict[str, Any] = {}
+
+
 class InvokeResponse(BaseModel):
     system_name: str
     answer: str
     visited: list[str]
     used_tools: list[ToolRecord]
+    run_id: str
+    status: str = "completed"
+    pending_approval: PendingApprovalModel | None = None
+
+
+class ApprovalDecisionRequest(BaseModel):
+    """Approve/reject a pending tool call. ``user_id`` must match the run's
+    authorized approver when one was recorded."""
+
+    user_id: str | None = None
+
+
+class RunStatusResponse(BaseModel):
+    run_id: str
+    status: str
+    pending_approval: PendingApprovalModel | None = None
 
 
 def create_app(config_path: str) -> FastAPI:
@@ -123,6 +192,7 @@ def create_app(config_path: str) -> FastAPI:
         assert _engine is not None
         rid = _begin_request(x_request_id)
         response.headers["X-Request-ID"] = rid
+        run_id = uuid4().hex
         started = time.perf_counter()
         log(
             logger,
@@ -133,7 +203,9 @@ def create_app(config_path: str) -> FastAPI:
             message=_preview(body.message),
         )
         try:
-            result = await _engine.run(body.message, context=_run_context(x_session_id))
+            result = await _engine.run(
+                body.message, context=_run_context(x_session_id, run_id=run_id)
+            )
         except Exception as exc:
             log(logger, logging.ERROR, "request end", status="error", error=str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -141,7 +213,7 @@ def create_app(config_path: str) -> FastAPI:
             logger,
             logging.INFO,
             "request end",
-            status="ok",
+            status=result.status,
             duration_ms=int((time.perf_counter() - started) * 1000),
             route=" → ".join(result.visited),
             tools=len(result.used_tools),
@@ -152,6 +224,9 @@ def create_app(config_path: str) -> FastAPI:
             answer=result.answer,
             visited=result.visited,
             used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
+            run_id=run_id,
+            status=result.status,
+            pending_approval=_pending_model(result.pending_approval),
         )
 
     @app.post("/stream")
@@ -162,7 +237,7 @@ def create_app(config_path: str) -> FastAPI:
     ) -> StreamingResponse:
         assert _engine is not None
         rid = _begin_request(x_request_id)
-        context = _run_context(x_session_id)
+        context = _run_context(x_session_id, run_id=uuid4().hex)
         started = time.perf_counter()
         log(
             logger,
@@ -194,5 +269,55 @@ def create_app(config_path: str) -> FastAPI:
             media_type="text/event-stream",
             headers={"X-Request-ID": rid},
         )
+
+    def _hitl_engine() -> LangGraphEngine:
+        assert _engine is not None
+        # The stateless engine app always runs LangGraphEngine; the HITL methods
+        # live there, not on the abstract Engine base.
+        return cast(LangGraphEngine, _engine)
+
+    @app.get("/runs/{run_id}", response_model=RunStatusResponse)
+    async def run_status(run_id: str) -> RunStatusResponse:
+        engine = _hitl_engine()
+        try:
+            status = await engine.get_run_status(run_id)
+            pending = await engine.get_pending_approval(run_id)
+        except ApprovalError as exc:
+            raise _map_approval_error(exc) from exc
+        return RunStatusResponse(
+            run_id=run_id, status=status, pending_approval=_pending_model(pending)
+        )
+
+    async def _decide(
+        run_id: str, approval_id: str, decision: ApprovalDecisionKind, user_id: str | None
+    ) -> InvokeResponse:
+        engine = _hitl_engine()
+        try:
+            result = await engine.resume(run_id, approval_id, decision, caller_user_id=user_id)
+        except ApprovalError as exc:
+            raise _map_approval_error(exc) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return InvokeResponse(
+            system_name=result.system_name,
+            answer=result.answer,
+            visited=result.visited,
+            used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
+            run_id=run_id,
+            status=result.status,
+            pending_approval=_pending_model(result.pending_approval),
+        )
+
+    @app.post("/runs/{run_id}/approvals/{approval_id}/approve", response_model=InvokeResponse)
+    async def approve(
+        run_id: str, approval_id: str, body: ApprovalDecisionRequest
+    ) -> InvokeResponse:
+        return await _decide(run_id, approval_id, ApprovalDecisionKind.APPROVE, body.user_id)
+
+    @app.post("/runs/{run_id}/approvals/{approval_id}/reject", response_model=InvokeResponse)
+    async def reject(
+        run_id: str, approval_id: str, body: ApprovalDecisionRequest
+    ) -> InvokeResponse:
+        return await _decide(run_id, approval_id, ApprovalDecisionKind.REJECT, body.user_id)
 
     return app
