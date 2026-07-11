@@ -32,7 +32,7 @@ from agent_engine.runtime.hooks.models import HOOK_POINTS
 
 _SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
 _SECRET_KEY_EXEMPTIONS = {"max_tokens"}
-_SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock", "gemini")
+_SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock", "gemini", "openai")
 
 
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:

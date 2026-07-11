@@ -331,6 +331,19 @@ extra with `pip install "agent-engine[gemini]"`. Any Gemini model your key can
 access may be used via `name`. `max_tokens` maps to Gemini's `max_output_tokens`.
 Secrets must never be stored in YAML.
 
+OpenAI:
+
+```yaml
+model:
+  provider: openai
+  name: gpt-4.1-mini
+  temperature: 0.2
+```
+
+For OpenAI, set `OPENAI_API_KEY` in your environment and install the provider
+extra with `pip install "agent-engine[openai]"`. Any OpenAI model your key can
+access may be used via `name`. Secrets must never be stored in YAML.
+
 ---
 
 ## Graph Topology

@@ -230,9 +230,10 @@
           "enum": [
             "anthropic",
             "bedrock",
-            "gemini"
+            "gemini",
+            "openai"
           ],
-          "description": "Model provider identifier. Supported providers: anthropic, bedrock, gemini."
+          "description": "Model provider identifier. Supported providers: anthropic, bedrock, gemini, openai."
         },
         "name": {
           "type": "string",
