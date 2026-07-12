@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.3.0](https://github.com/extra-org/extra/compare/agent-engine-v0.2.2...agent-engine-v0.3.0) (2026-07-12)
+
+
+### Features
+
+* add support in gemini client ([1592c92](https://github.com/extra-org/extra/commit/1592c92abd5b18368b4a8f95fef3728729be5a60))
+* add support in openai client ([66a3f90](https://github.com/extra-org/extra/commit/66a3f906aec8da86c1cb9245e1c097706f06bca0))
+
+
+### Bug Fixes
+
+* AccessFilter fails open (run crash) when the access resolver raises ([02cfdd1](https://github.com/extra-org/extra/commit/02cfdd15c4d9f85e87901fad27295769ded6fc49))
+* fail closed when the access resolver raises ([5846ef4](https://github.com/extra-org/extra/commit/5846ef4ca8a1eb6ca658843b9a482f0763eb4c38))
+* navbar.primary.href needs a leading slash ([e5c019b](https://github.com/extra-org/extra/commit/e5c019b533da220540bc6689b5675695c4bd5d2a))
+* pin numpy&lt;2.2 in dev extras so mypy passes on fresh installs ([e4ce294](https://github.com/extra-org/extra/commit/e4ce2949b7989805bdb4d751fad280b2c95e07dc))
+* pin numpy&lt;2.2 in dev extras so mypy passes on fresh installs ([a139d31](https://github.com/extra-org/extra/commit/a139d31cec2c30b082541ccadc165ad8b97ccf24))
+* secret scan rejects benign prose ("password reset") while missing real keys (sk-...) ([8fd8445](https://github.com/extra-org/extra/commit/8fd8445d2e129d42e49f9bcfd9fc471f45cd9483))
+* stop secret scan from rejecting prose that mentions secret words ([7c2c3b9](https://github.com/extra-org/extra/commit/7c2c3b96320186eaff56782fc94b06a3b40b3a97))
+* use current Mintlify docs.json schema for navbar/footer GitHub link ([93a0c10](https://github.com/extra-org/extra/commit/93a0c106aef6a98895bc92c0367220b6b6f2e397))
+* validate agent temperature configuration ([6f5ec15](https://github.com/extra-org/extra/commit/6f5ec15dacbde317a4cc087375833c59263842f2))
+* validate agent temperature configuration ([4fd6618](https://github.com/extra-org/extra/commit/4fd66186b6ccbb4b92206d0a6ae895e80f4c6b06))
+
+
+### Documentation
+
+* add agent prompts to README example ([781d2bc](https://github.com/extra-org/extra/commit/781d2bcebc832399b8e0acf92efb45fd72a0ad1b))
+* add mkdir command for prompt subdirectories in tutorial Step 9 ([02df686](https://github.com/extra-org/extra/commit/02df6869aaed922d5dfc24c0117ee105021359b7))
+* API reference examples don't match the implemented contract ([9f68c75](https://github.com/extra-org/extra/commit/9f68c756d690805da304a9c4bbf2395e207b481d))
+* claude code setup skill ([8921568](https://github.com/extra-org/extra/commit/8921568c32b110bd061ddceaccf443e1350ac34b))
+* make the HTTP API reference match the implemented contract ([d3640e1](https://github.com/extra-org/extra/commit/d3640e1c6c3a53696109a520d3e010c11d3556db))
+* remove stray character in CLAUDE.md heading ([69c7e6d](https://github.com/extra-org/extra/commit/69c7e6d2251cc224a9b0316fc0dedff2b6f6b38c))
+* remove stray character in CLAUDE.md heading ([5da01bb](https://github.com/extra-org/extra/commit/5da01bbb20bf4fc1dfdbf4d05110a9c4697e65d5))
+* update repo and image references to extra-org ([d0be7d1](https://github.com/extra-org/extra/commit/d0be7d1f87400569cc8c6f98aa889dcb597d1005))
+
 ## [0.2.2](https://github.com/extra-org/extra/compare/agent-engine-v0.2.1...agent-engine-v0.2.2) (2026-07-10)
 
 
