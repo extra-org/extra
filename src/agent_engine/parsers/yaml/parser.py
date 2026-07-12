@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,22 @@ from agent_engine.runtime.hooks.models import HOOK_POINTS
 
 _SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
 _SECRET_KEY_EXEMPTIONS = {"max_tokens"}
+
+# For *values*, a marker word alone is not evidence — ordinary prose like
+# "Handles password reset requests" must pass. Flag a string value only when it
+# looks like an actual credential: an inline assignment of a marker to a
+# token-like value, or a well-known credential shape.
+_SECRET_VALUE_ASSIGNMENT = re.compile(
+    r"(?i)(?:api[_-]?key|apikey|secret|token|password|private[_-]?key)"
+    r"\s*[=:]\s*['\"]?[^\s'\"]{6,}"
+)
+_CREDENTIAL_SHAPES = re.compile(
+    r"sk-[A-Za-z0-9_-]{10,}"  # OpenAI/Anthropic-style API keys
+    r"|AKIA[0-9A-Z]{16}"  # AWS access key id
+    r"|ghp_[A-Za-z0-9]{20,}"  # GitHub personal access token
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"  # Slack tokens
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"  # PEM private keys
+)
 _SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock", "gemini", "openai")
 
 
@@ -477,7 +494,7 @@ class YAMLParser(Parser):
         elif isinstance(data, list):
             for i, item in enumerate(data):
                 self._validate_no_secrets(item, errors, f"{path}[{i}]")
-        elif isinstance(data, str) and _looks_secret(data):
+        elif isinstance(data, str) and _looks_secret_value(data):
             errors.append(ValidationError(path, "Hardcoded secret-like value is not allowed"))
 
     def _build(self, data: dict[str, Any]) -> SystemSpec:
@@ -606,8 +623,16 @@ class YAMLParser(Parser):
 
 
 def _looks_secret(value: str) -> bool:
+    """Key check: a key *named* like a secret is suspicious on its own."""
     normalized = value.lower().replace("-", "_")
     return any(marker in normalized for marker in _SECRET_MARKERS)
+
+
+def _looks_secret_value(value: str) -> bool:
+    """Value check: flag only strings that plausibly contain a credential."""
+    return bool(
+        _SECRET_VALUE_ASSIGNMENT.search(value) or _CREDENTIAL_SHAPES.search(value)
+    )
 
 
 def _dedupe_stable(items: Iterable[str]) -> tuple[str, ...]:
