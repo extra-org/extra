@@ -65,6 +65,12 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "mypy>=1.10",
+    # numpy is only a transitive dependency (via langchain-aws), but numpy >= 2.2
+    # ships stubs that use PEP 695 `type` statements, which mypy rejects under
+    # python_version = "3.11" and aborts the whole run (`make typecheck` fails on
+    # a fresh install). Pin below 2.2 for dev environments until the mypy target
+    # moves to 3.12+.
+    "numpy<2.2",
 ]
 # Provider integrations are optional — install the one your YAML's
 # `model.provider` references. `init_chat_model` imports it lazily.
