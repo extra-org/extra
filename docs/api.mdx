@@ -7,7 +7,7 @@ description: REST endpoints for the engine and the conversation layer.
 
 <CardGroup cols={2}>
   <Card title="Engine API" icon="bolt">
-    Stateless. Started by `agentctl serve`. Port 8090. Takes a messages array, returns a response. No session management.
+    Stateless. Started by `agentctl serve`. Port 8090. Takes a message, returns a response. No session management.
   </Card>
   <Card title="Conversation API" icon="database">
     Stateful. Started by `agent-manager`. Port 8100. Manages conversations, history, and SSE streaming. Also serves the widget.
@@ -23,62 +23,60 @@ Base URL: `http://localhost:8090`
 ### `GET /health`
 
 ```json
-{ "status": "ok" }
+{ "status": "ok", "system": "Enterprise Knowledge Assistant" }
 ```
 
 ### `POST /invoke`
 
-Send a complete conversation and get a response.
+Send a message and get a response.
 
 ```bash
 curl -X POST http://localhost:8090/invoke \
   -H "Content-Type: application/json" \
-  -d '{
-    "messages": [
-      { "role": "user", "content": "Where is my order #12345?" }
-    ]
-  }'
+  -d '{ "message": "Where is my order #12345?" }'
 ```
 
 Response:
 
 ```json
 {
+  "system_name": "Enterprise Knowledge Assistant",
   "answer": "Your order #12345 shipped yesterday and is arriving Thursday.",
   "visited": ["router", "router/orders_agent"],
   "used_tools": [
-    { "tool": "get_order_status", "provider": "local", "status": "succeeded" }
+    { "name": "get_order_status", "provider": "local", "status": "succeeded", "agent_id": "orders_agent" }
   ]
 }
 ```
 
-Headers you include are passed into `ctx` and available to resolvers, tools, and hooks:
+Two request headers are recognized:
 
-```bash
-curl -X POST http://localhost:8090/invoke \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -H "X-Customer-Id: cust-123" \
-  -d '{ "messages": [...] }'
-```
+- `X-Request-ID` — adopted (after sanitization) as the request id for log
+  correlation and echoed back in the `X-Request-ID` response header. Minted
+  automatically when absent.
+- `X-Session-ID` — carried into the run as the conversation id for tracing
+  metadata (e.g. the Langfuse session).
 
 ### `POST /stream`
 
-Same as `/invoke` but streams tokens as Server-Sent Events.
+Same as `/invoke` but streams Server-Sent Events.
 
 ```bash
 curl -X POST http://localhost:8090/stream \
   -H "Content-Type: application/json" \
-  -d '{ "messages": [{ "role": "user", "content": "Hello" }] }'
+  -d '{ "message": "Hello" }'
 ```
 
-Events:
+Events (fields with `null` values are omitted from each payload):
 
 ```
-data: {"type": "answer_delta", "delta": "Your "}
-data: {"type": "answer_delta", "delta": "order "}
-data: {"type": "final", "answer": "Your order is on the way.", "visited": [...]}
+data: {"type": "answer_delta", "content": "Your ", "used_tools": []}
+data: {"type": "answer_delta", "content": "order ", "used_tools": []}
+data: {"type": "route", "route": ["router", "router/orders_agent"], "used_tools": []}
+data: {"type": "final", "content": "Your order is on the way.", "route": ["router", "router/orders_agent"], "system_name": "Enterprise Knowledge Assistant", "used_tools": [], "input_tokens": 812, "output_tokens": 96}
 ```
+
+On failure a `{"type": "error", "detail": "..."}` event is emitted.
 
 ---
 
@@ -90,7 +88,8 @@ Manages multi-turn conversations with history persisted in SQLite (or Postgres v
 
 ### `POST /conversations`
 
-Create a new conversation.
+Create a new conversation. The body is optional; `session_id` and `user_id`
+may be supplied.
 
 ```bash
 curl -X POST http://localhost:8100/conversations \
@@ -101,7 +100,7 @@ curl -X POST http://localhost:8100/conversations \
 Response:
 
 ```json
-{ "id": "conv-abc123", "created_at": "2026-07-02T10:00:00Z" }
+{ "conversation_id": "0d5a…", "session_id": "0d5a…" }
 ```
 
 ### `POST /conversations/{id}/messages`
@@ -109,57 +108,74 @@ Response:
 Send a message. Prior history is assembled automatically.
 
 ```bash
-curl -X POST http://localhost:8100/conversations/conv-abc123/messages \
+curl -X POST http://localhost:8100/conversations/0d5a…/messages \
   -H "Content-Type: application/json" \
-  -d '{ "content": "Where is my order?" }'
+  -d '{ "message": "Where is my order?" }'
 ```
 
 Response:
 
 ```json
 {
-  "id": "msg-xyz",
-  "role": "assistant",
-  "content": "Your order shipped yesterday.",
+  "answer": "Your order shipped yesterday.",
   "visited": ["router", "router/orders_agent"],
-  "used_tools": [...]
+  "used_tools": [
+    { "name": "get_order_status", "provider": "local", "status": "succeeded", "agent_id": "orders_agent" }
+  ]
 }
 ```
 
+Errors: `404` unknown conversation, `429` conversation token budget exceeded.
+
 ### `POST /conversations/{id}/messages/stream`
 
-Same as above but streams via SSE. Preferred by the widget.
+Same as above but streams via SSE. Preferred by the widget. Each event carries
+an `event:` name matching its `type`; `null` fields are omitted.
 
 ```bash
-curl -X POST http://localhost:8100/conversations/conv-abc123/messages/stream \
+curl -X POST http://localhost:8100/conversations/0d5a…/messages/stream \
   -H "Content-Type: application/json" \
-  -d '{ "content": "Where is my order?" }'
+  -d '{ "message": "Where is my order?" }'
 ```
 
 Events:
 
 ```
-data: {"type": "answer_delta", "delta": "Your order "}
-data: {"type": "route", "visited": ["router", "router/orders_agent"]}
-data: {"type": "tool_started", "tool": "get_order_status"}
-data: {"type": "tool_succeeded", "tool": "get_order_status", "latency_ms": 42}
-data: {"type": "final", "answer": "Your order shipped yesterday.", "visited": [...]}
+event: answer_delta
+data: {"type": "answer_delta", "content": "Your order "}
+
+event: route
+data: {"type": "route", "route": ["router", "router/orders_agent"]}
+
+event: final
+data: {"type": "final", "content": "Your order shipped yesterday.", "route": ["router", "router/orders_agent"], "system_name": "…"}
+
+event: done
+data: [DONE]
 ```
+
+On failure an `event: error` with `{"type": "error", "error": "..."}` is
+emitted before `done`.
+
+<Note>
+The event schema also declares `tool_started` / `tool_succeeded` /
+`tool_failed` types for per-tool progress; the engine does not emit them yet.
+</Note>
 
 ### `GET /conversations/{id}/messages`
 
 Retrieve message history for a conversation.
 
 ```bash
-curl http://localhost:8100/conversations/conv-abc123/messages
+curl http://localhost:8100/conversations/0d5a…/messages
 ```
 
 Response:
 
 ```json
 [
-  { "role": "user", "content": "Where is my order?" },
-  { "role": "assistant", "content": "Your order shipped yesterday." }
+  { "role": "user", "content": "Where is my order?", "created_at": "2026-07-02T10:00:00Z" },
+  { "role": "assistant", "content": "Your order shipped yesterday.", "created_at": "2026-07-02T10:00:03Z" }
 ]
 ```
 
@@ -167,17 +183,15 @@ Response:
 
 ## Passing context to plugins
 
-Any HTTP header you include is available in `ctx` inside resolvers, tools, and hooks:
+The HTTP layer currently forwards a deliberately small amount of caller
+context into the run:
 
-```python
-# In a resolver
-def customer_name(self, ctx) -> str:
-    return ctx.headers.get("X-Customer-Name", "Customer")
+- `X-Session-ID` (Engine API) becomes the run's conversation id, visible to
+  tracing.
+- `user_id` (Conversation API request bodies) is attached to the run context
+  and persisted with the conversation.
 
-# In a hook
-async def before_mcp_request(self, event):
-    token = event.run_context.auth_context.inbound_access_token
-    ...
-```
-
-The `Authorization` header is automatically parsed into `run_context.auth_context.inbound_access_token`.
+Populating `run_context.auth_context` (scopes, roles, inbound access token)
+from request headers is part of the security/context gate that is not wired
+up yet — see the roadmap. Hooks such as `on_run_start` can inject a modified
+`RunContext` in the meantime.
