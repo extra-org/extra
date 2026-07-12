@@ -12,13 +12,13 @@
 </p>
 
 <p align="center">
-  <a href="https://extra-c586718a.mintlify.site/docs/introduction"><img alt="Docs" src="https://img.shields.io/badge/docs-available-blue"></a>
+  <a href="https://docs.extra-ai.co/introduction"><img alt="Docs" src="https://img.shields.io/badge/docs-available-blue"></a>
   <img alt="Version" src="https://img.shields.io/badge/version-beta-orange">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
 <p align="center">
-  <a href="https://extra-c586718a.mintlify.site/docs/introduction">Documentation</a> ·
+  <a href="https://docs.extra-ai.co/introduction">Documentation</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#learn-more">Learn more</a> ·
@@ -119,7 +119,7 @@ docker run -p 8090:8090 -v "$(pwd):/workspace" -w /workspace \
 
 Your agent API is live at `http://localhost:8090`. For the widget, local
 (non-Docker) setup, and the full walkthrough, see the
-[Quickstart docs](https://extra-c586718a.mintlify.site/docs/quickstart).
+[Quickstart docs](https://docs.extra-ai.co/quickstart).
 
 ### Agent setup skill
 
@@ -204,9 +204,9 @@ The skill repository is available at
 
 ## Learn more
 
-- **[Full example](https://extra-c586718a.mintlify.site/docs/tutorial)** — build a complete multi-agent system step by step.
-- **[YAML reference](https://extra-c586718a.mintlify.site/docs/yaml-spec)** — every field you can declare.
-- **[Architecture](https://extra-c586718a.mintlify.site/docs/architecture)** — how routing and execution work under the hood.
+- **[Full example](https://docs.extra-ai.co/tutorial)** — build a complete multi-agent system step by step.
+- **[YAML reference](https://docs.extra-ai.co/yaml-spec)** — every field you can declare.
+- **[Architecture](https://docs.extra-ai.co/architecture)** — how routing and execution work under the hood.
 
 ## Contributing
 
