@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
+
+logger = logging.getLogger(__name__)
 
 
 class Filterable(Protocol):
@@ -43,7 +46,25 @@ class AccessFilter(RouteFilter):
         self._resolver = _load_access_resolver(base_dir)
 
     def filter(self, ctx: dict[str, Any], candidates: list[T]) -> list[T]:
-        return [c for c in candidates if not c.protected or self._resolver.can_access(ctx, c.id)]
+        return [c for c in candidates if not c.protected or self._can_access(ctx, c.id)]
+
+    def _can_access(self, ctx: dict[str, Any], node_id: str) -> bool:
+        """Ask the resolver, failing closed: a raising resolver hides the node.
+
+        The documented contract (docs/SIDECAR_CONTEXT_AUTH.md) is that a
+        protected node is hidden when ``can_access`` returns false *or raises*.
+        Letting the exception propagate would fail the whole run — or worse,
+        an unimplemented resolver stub would crash instead of denying access.
+        """
+        try:
+            return bool(self._resolver.can_access(ctx, node_id))
+        except Exception:
+            logger.warning(
+                "access resolver raised for protected node '%s'; hiding it (fail closed)",
+                node_id,
+                exc_info=True,
+            )
+            return False
 
 
 def _load_access_resolver(base_dir: Path) -> Any:

@@ -277,6 +277,44 @@ async def test_protected_child_denied_when_run_context_missing_custom_data(
     assert result.visited == ["root", "root/public"]
 
 
+def write_raising_access(base_dir: Path, *, exc: str) -> None:
+    plugins = base_dir / "plugins"
+    plugins.mkdir(parents=True, exist_ok=True)
+    (plugins / "access.py").write_text(
+        "class AccessResolver:\n"
+        "    def can_access(self, ctx: dict, node_id: str) -> bool:\n"
+        f"        raise {exc}\n",
+        encoding="utf-8",
+    )
+
+
+async def test_protected_child_hidden_when_resolver_raises(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    # Contract (docs/SIDECAR_CONTEXT_AUTH.md): if can_access returns false OR
+    # RAISES, the node is hidden — the run must not fail open or crash.
+    write_raising_access(tmp_path, exc="RuntimeError('policy backend down')")
+    spec = system(orchestrator("root", [agent("public"), agent("admin", protected=True)]))
+
+    result = await run_message(spec, tmp_path, model_factory, "go to admin please")
+
+    assert "root/admin" not in result.visited
+    assert result.visited == ["root", "root/public"]
+
+
+async def test_unimplemented_resolver_stub_denies_instead_of_crashing(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    # A generated-but-unimplemented plugins/access.py raises NotImplementedError;
+    # protected nodes must be denied, not take the whole run down.
+    write_raising_access(tmp_path, exc="NotImplementedError")
+    spec = system(orchestrator("root", [agent("public"), agent("admin", protected=True)]))
+
+    result = await run_message(spec, tmp_path, model_factory, "admin task")
+
+    assert result.visited == ["root", "root/public"]
+
+
 async def test_stream_passes_run_context_to_access_filter(
     tmp_path: Path, model_factory: Any
 ) -> None:
