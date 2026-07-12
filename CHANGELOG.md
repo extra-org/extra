@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/extra-org/extra/compare/agent-engine-v0.3.0...agent-engine-v0.3.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* Docker entrypoint can't launch agent-manager (documented widget quickstart is broken) ([ae2a8d6](https://github.com/extra-org/extra/commit/ae2a8d605877cbd8ad5389365f78224a41b2ffbc))
+
 ## [0.3.0](https://github.com/extra-org/extra/compare/agent-engine-v0.2.2...agent-engine-v0.3.0) (2026-07-12)
 
 
