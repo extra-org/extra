@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from agent_engine.approvals.decision import RiskCategory
 from agent_engine.approvals.errors import InvalidStateTransition
 from agent_engine.runtime.tool_models import ToolProviderName
 
@@ -37,15 +36,6 @@ class ApprovalStatus(StrEnum):
     RESUMING = "resuming"
     APPROVED = "approved"
     REJECTED = "rejected"
-
-
-class ApprovalDecisionKind(StrEnum):
-    """The human's decision. ``EDIT_AND_APPROVE`` is reserved so it can be added
-    later (with edited arguments) without reshaping the model."""
-
-    APPROVE = "approve"
-    REJECT = "reject"
-    EDIT_AND_APPROVE = "edit_and_approve"
 
 
 # Allowed forward transitions. Anything not listed is rejected. Note there is no
@@ -80,43 +70,6 @@ def ensure_approval_transition(current: ApprovalStatus, target: ApprovalStatus) 
         raise InvalidStateTransition("approval", current.value, target.value)
 
 
-# Argument keys that must never be persisted or returned to a UI. Matched
-# case-insensitively as a substring of the key.
-_SENSITIVE_ARG_MARKERS = (
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "authorization",
-    "api_key",
-    "apikey",
-    "access_key",
-    "private_key",
-    "credential",
-    "session",
-    "cookie",
-    "bearer",
-)
-_REDACTED = "***redacted***"
-
-
-def sanitize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Return a shallow copy with obviously-sensitive values redacted.
-
-    Used before persisting an approval or exposing arguments to the UI. It is a
-    defense-in-depth safeguard, not a substitute for keeping credentials out of
-    tool arguments entirely.
-    """
-    clean: dict[str, Any] = {}
-    for key, value in arguments.items():
-        lowered = str(key).lower()
-        if any(marker in lowered for marker in _SENSITIVE_ARG_MARKERS):
-            clean[key] = _REDACTED
-        else:
-            clean[key] = value
-    return clean
-
-
 @dataclass
 class RunRecord:
     """Business-level state of one run and its LangGraph thread binding."""
@@ -140,7 +93,7 @@ class ApprovalRecord:
 
     Credentials are never stored here: only a reference to the authorization
     context (``auth_ref``) is kept, and valid credentials are resolved again at
-    resume time.
+    resume time. ``arguments`` must already be masked by the caller.
     """
 
     approval_id: str
@@ -150,9 +103,8 @@ class ApprovalRecord:
     tool_name: str
     tool_call_id: str
     provider: ToolProviderName
-    category: RiskCategory
-    reason: str
-    arguments: dict[str, Any]  # already sanitized by the caller
+    description: str
+    arguments: dict[str, Any]  # already masked by the caller
     status: ApprovalStatus = ApprovalStatus.PENDING
     server_id: str | None = None
     auth_ref: str | None = None

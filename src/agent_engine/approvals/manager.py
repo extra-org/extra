@@ -1,22 +1,24 @@
-"""Centralized tool-execution and approval-lifecycle managers.
+"""Pending-approval lifecycle and tool-execution idempotency.
 
-``ToolExecutionManager`` is the single place where the EXECUTE / REQUIRE_APPROVAL
-/ DENY decision is made and where ``auto_mode`` and idempotency are applied. Every
-tool provider — local or MCP — is routed through it, so there is one consistent
-policy path and no provider can bypass the approval layer.
+``ToolExecutionManager`` is the idempotency ledger: it detects and short-circuits
+a duplicate execution of the same tool call so a graph re-entry after resume does
+not cause a second side effect.
 
-``ApprovalManager`` owns the approval records and the distributed-safe claim used
-to resume a run exactly once.
+``ApprovalManager`` owns the pending-approval records and the distributed-safe
+claim used to resume a run exactly once.
+
+Neither performs risk classification. Whether a call requires approval is decided
+by :class:`agent_engine.approvals.coordinator.ApprovalCoordinator`; these
+managers only persist and resume the resulting workflow.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
+from collections.abc import Mapping
+from typing import Any
 
-from agent_engine.approvals.contract import ToolContract, unknown_contract
-from agent_engine.approvals.decision import ApprovalDecision, RiskAssessment, ToolCall
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
     ApprovalRunMismatch,
@@ -30,14 +32,13 @@ from agent_engine.approvals.models import (
     RunRecord,
     RunStatus,
     ToolExecutionRecord,
-    sanitize_arguments,
 )
-from agent_engine.approvals.policy import DefaultToolApprovalPolicy, ToolApprovalPolicy
 from agent_engine.approvals.repository import (
     ApprovalRepository,
     RunRepository,
     ToolExecutionRepository,
 )
+from agent_engine.approvals.sanitization import mask_arguments
 from agent_engine.logging_config import log
 
 logger = logging.getLogger(__name__)
@@ -54,65 +55,16 @@ def execution_id_for(tool_call_id: str, *, salt: str = "") -> str:
     return f"exec_{digest[:24]}"
 
 
-@dataclass(frozen=True)
-class ExecutionVerdict:
-    """Final decision for a tool call after policy + ``auto_mode`` are combined."""
-
-    decision: ApprovalDecision
-    assessment: RiskAssessment
-    auto_mode_applied: bool
-
-
 class ToolExecutionManager:
-    """Applies the approval policy, ``auto_mode``, and idempotency to tool calls.
+    """Idempotency ledger for tool executions.
 
-    Holds no per-run mutable state; safe to share read-only across concurrent
-    runs. The policy is injected (Dependency Inversion) so it can be swapped
-    without touching this class.
+    Holds no per-run mutable state; safe to share across concurrent runs. The
+    repository is injected (Dependency Inversion) and defaults to ``None`` for
+    callers that do not need deduplication.
     """
 
-    def __init__(
-        self,
-        *,
-        policy: ToolApprovalPolicy | None = None,
-        execution_repository: ToolExecutionRepository | None = None,
-    ) -> None:
-        self._policy = policy or DefaultToolApprovalPolicy()
+    def __init__(self, *, execution_repository: ToolExecutionRepository | None = None) -> None:
         self._executions = execution_repository
-
-    def decide(
-        self, call: ToolCall, *, auto_mode: bool, contract: ToolContract | None = None
-    ) -> ExecutionVerdict:
-        """Return the final decision for ``call``.
-
-        ``auto_mode`` may downgrade REQUIRE_APPROVAL to EXECUTE, but never touches
-        DENY — a denied action is denied regardless of ``auto_mode``.
-        """
-        if contract is None:
-            contract = unknown_contract(
-                "missing",
-                reason="missing tool contract; failing closed",
-                trusted=False,
-            )
-        assessment = self._policy.evaluate(call, contract)
-        decision = assessment.decision
-        applied = False
-        if auto_mode and decision == ApprovalDecision.REQUIRE_APPROVAL:
-            decision = ApprovalDecision.EXECUTE
-            applied = True
-        log(
-            logger,
-            logging.INFO,
-            "tool call evaluated",
-            agent=call.agent_id,
-            tool=call.tool_name,
-            provider=call.provider,
-            server=call.server_id,
-            category=assessment.category.value,
-            decision=decision.value,
-            auto_mode=auto_mode,
-        )
-        return ExecutionVerdict(decision=decision, assessment=assessment, auto_mode_applied=applied)
 
     async def already_executed(self, execution_id: str) -> ToolExecutionRecord | None:
         """Return a completed prior attempt for this key, if any (idempotency)."""
@@ -182,8 +134,8 @@ class ApprovalManager:
         tool_name: str,
         tool_call_id: str,
         provider: str,
-        assessment: RiskAssessment,
-        arguments: dict[str, object],
+        description: str,
+        arguments: Mapping[str, Any],
         server_id: str | None = None,
         auth_ref: str | None = None,
         authorized_user_id: str | None = None,
@@ -195,7 +147,7 @@ class ApprovalManager:
         returned and the run status is left untouched — so resume never creates a
         duplicate approval or an illegal transition.
 
-        Arguments are sanitized before storage; secrets and auth tokens are never
+        Arguments are masked before storage; secrets and auth tokens are never
         written — only ``auth_ref`` (a reference resolved again at resume time).
         """
         existing = await self._approvals.get_by_tool_call(run_id, tool_call_id)
@@ -209,9 +161,8 @@ class ApprovalManager:
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             provider=provider,  # type: ignore[arg-type]
-            category=assessment.category,
-            reason=assessment.reason,
-            arguments=sanitize_arguments(dict(arguments)),
+            description=description,
+            arguments=mask_arguments(dict(arguments)),
             server_id=server_id,
             auth_ref=auth_ref,
             authorized_user_id=authorized_user_id,
@@ -236,7 +187,6 @@ class ApprovalManager:
             tool=tool_name,
             tool_call_id=tool_call_id,
             provider=provider,
-            category=assessment.category.value,
         )
         return record
 

@@ -1,80 +1,70 @@
-"""Core value objects for the Human-in-the-Loop tool-approval layer.
+"""The typed human decision and the single parsing boundary for it.
 
-These are pure domain types with no runtime, LangGraph, or MCP imports. They are
-the vocabulary shared by the policy engine, the execution manager, and the
-approval repositories, so every tool provider is evaluated the same way.
+Everywhere inside the engine an approval decision is an :class:`ApprovalDecision`
+enum value. Free-text values from a UI/API/CLI ("approve", "allow for this
+session", "reject", …) are converted to that enum in exactly one place —
+:func:`parse_decision` — so no other code compares raw strings.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any
 
-from agent_engine.runtime.tool_models import ToolProviderName
+from agent_engine.approvals.errors import InvalidDecision
 
 
 class ApprovalDecision(StrEnum):
-    """The three outcomes the engine may produce for a requested tool call.
+    """A human's decision about one pending tool invocation.
 
-    * ``EXECUTE`` — run the tool now (no human interaction).
-    * ``REQUIRE_APPROVAL`` — pause the graph and wait for a human decision.
-    * ``DENY`` — never run the tool; ``auto_mode`` must not bypass this.
+    * ``ALLOW_ONCE`` — run this invocation only; ask again next time.
+    * ``ALLOW_FOR_SESSION`` — run it and stop asking for this tool this session.
+    * ``DENY`` — do not run it; store nothing.
     """
 
-    EXECUTE = "execute"
-    REQUIRE_APPROVAL = "require_approval"
+    ALLOW_ONCE = "allow_once"
+    ALLOW_FOR_SESSION = "allow_for_session"
     DENY = "deny"
 
 
-class RiskCategory(StrEnum):
-    """Coarse behavioral classification of a tool call.
+# User-facing aliases accepted at the boundary, normalized (lowercased, collapsed
+# whitespace) before lookup. Kept intentionally small and explicit.
+_ALIASES: dict[str, ApprovalDecision] = {
+    "allow_once": ApprovalDecision.ALLOW_ONCE,
+    "allow once": ApprovalDecision.ALLOW_ONCE,
+    "allowed once": ApprovalDecision.ALLOW_ONCE,
+    "allow": ApprovalDecision.ALLOW_ONCE,
+    "approve": ApprovalDecision.ALLOW_ONCE,
+    "approved": ApprovalDecision.ALLOW_ONCE,
+    "allow_for_session": ApprovalDecision.ALLOW_FOR_SESSION,
+    "allow for session": ApprovalDecision.ALLOW_FOR_SESSION,
+    "allow for this session": ApprovalDecision.ALLOW_FOR_SESSION,
+    "allowed for this session": ApprovalDecision.ALLOW_FOR_SESSION,
+    "deny": ApprovalDecision.DENY,
+    "denied": ApprovalDecision.DENY,
+    "reject": ApprovalDecision.DENY,
+    "rejected": ApprovalDecision.DENY,
+}
 
-    Deliberately provider-agnostic: an MCP tool and a local tool that both
-    "delete" something land in the same category. ``UNKNOWN`` is the conservative
-    fallback for anything the classifier cannot confidently place.
+
+def parse_decision(value: Any, *, default: ApprovalDecision | None = None) -> ApprovalDecision:
+    """Convert an external decision value into an :class:`ApprovalDecision`.
+
+    Accepts an :class:`ApprovalDecision`, a recognized string alias, or a mapping
+    carrying a ``decision`` key (the resume payload shape). Unrecognized input
+    returns ``default`` when one is given (fail-closed to ``DENY`` inside the
+    runtime), otherwise raises :class:`InvalidDecision` (used at the API boundary
+    to reject a bad request).
     """
-
-    READ = "read"
-    DRAFT = "draft"
-    SEND = "send"
-    WRITE = "write"
-    DELETE = "delete"
-    FINANCIAL = "financial"
-    ACCESS_CONTROL = "access_control"
-    CODE_EXECUTION = "code_execution"
-    CONDITIONAL = "conditional"
-    FORBIDDEN = "forbidden"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    """A concrete, about-to-run tool invocation handed to the policy engine.
-
-    Carries the concrete invocation metadata. Runtime approval is based on a
-    cached discovery-time ``ToolContract``; ``arguments`` are only used by
-    contracts that declare an explicit conditional discriminator path.
-    """
-
-    tool_name: str
-    agent_id: str
-    provider: ToolProviderName = "local"
-    server_id: str | None = None
-    description: str = ""
-    input_schema: dict[str, Any] = field(default_factory=dict)
-    arguments: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class RiskAssessment:
-    """The pure-risk verdict for a :class:`ToolCall`.
-
-    ``decision`` here is the *policy* decision before ``auto_mode`` is applied —
-    ``auto_mode`` handling is the execution manager's responsibility, not the
-    policy's, so the policy stays a deterministic pure function of the call.
-    """
-
-    decision: ApprovalDecision
-    category: RiskCategory
-    reason: str
+    if isinstance(value, ApprovalDecision):
+        return value
+    raw: Any = value.get("decision") if isinstance(value, Mapping) else value
+    if isinstance(raw, str):
+        normalized = " ".join(raw.strip().lower().split())
+        decision = _ALIASES.get(normalized)
+        if decision is not None:
+            return decision
+    if default is not None:
+        return default
+    raise InvalidDecision(str(raw))

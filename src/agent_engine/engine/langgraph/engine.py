@@ -16,30 +16,24 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
-from agent_engine.approvals.contract import (
-    LOCAL_SERVER_IDENTITY,
-    MCPServerIdentity,
-    MCPToolDefinition,
-    ToolContract,
-)
-from agent_engine.approvals.contract_registry import ToolContractRegistry
-from agent_engine.approvals.contract_service import ToolContractService
+from agent_engine.approvals.coordinator import ApprovalCoordinator
+from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.manager import ApprovalManager, ToolExecutionManager
-from agent_engine.approvals.models import (
-    ApprovalDecisionKind,
-    ApprovalRecord,
-    RunRecord,
-    RunStatus,
-)
+from agent_engine.approvals.models import ApprovalRecord, RunRecord, RunStatus
 from agent_engine.approvals.repository import (
     InMemoryApprovalRepository,
     InMemoryRunRepository,
     InMemoryToolExecutionRepository,
 )
+from agent_engine.approvals.session_store import (
+    InMemorySessionApprovalStore,
+    SessionApprovalStore,
+)
 from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec, SystemSpec
 from agent_engine.core.spec import ModelConfig as NodeModelConfig
 from agent_engine.engine.engine import Engine
+from agent_engine.engine.langgraph.approval_provider import InterruptApprovalProvider
 from agent_engine.engine.langgraph.checkpointing import (
     CheckpointerHandle,
     CheckpointProviderFactory,
@@ -143,23 +137,11 @@ def _pending_approval(approval: ApprovalRecord) -> PendingApproval:
         approval_id=approval.approval_id,
         agent_id=approval.agent_id,
         tool_name=approval.tool_name,
-        reason=approval.reason,
-        category=approval.category.value,
+        description=approval.description,
         provider=approval.provider,
         server_id=approval.server_id,
         arguments=dict(approval.arguments),
     )
-
-
-def _coerce_decision(decision: ApprovalDecisionKind | str) -> ApprovalDecisionKind:
-    from agent_engine.approvals.errors import InvalidDecision
-
-    if isinstance(decision, ApprovalDecisionKind):
-        return decision
-    try:
-        return ApprovalDecisionKind(str(decision).lower())
-    except ValueError as exc:
-        raise InvalidDecision(str(decision)) from exc
 
 
 def _run_end_context(system_name: str, ctx: RunContext, result: RunResult) -> RunEndContext:
@@ -205,8 +187,7 @@ class LangGraphEngine(Engine):
         checkpoint_connection_string: str | None = None,
         execution_manager: ToolExecutionManager | None = None,
         approval_manager: ApprovalManager | None = None,
-        tool_contract_registry: ToolContractRegistry | None = None,
-        tool_contract_service: ToolContractService | None = None,
+        session_approval_store: SessionApprovalStore | None = None,
     ) -> None:
         self._base_dir = base_dir
         self._model_factory = model_factory
@@ -217,17 +198,19 @@ class LangGraphEngine(Engine):
         self._filters: list[RouteFilter] = []
         self._mcp_clients: dict[str, Any] = {}
         self._mcp_tools: dict[str, list[BaseTool]] = {}
-        self._tool_contracts: dict[tuple[str | None, str], ToolContract] = {}
         self._tool_loader: ToolLoader | None = None
         self._resolver_loader: ResolverLoader | None = None
         self._hook_manager: HookManager | None = None
         self._mcp_server_by_tool: dict[str, str] = {}
         self._policy = ExecutionPolicy()
 
-        # Human-in-the-Loop wiring. Checkpointer + approval/execution managers are
-        # selected once here (Dependency Inversion) and injected into every node,
-        # so both local and MCP tools share one centralized approval path and the
-        # graph/resume logic is identical for in-memory and persistent backends.
+        # Human-in-the-Loop wiring. Checkpointer, approval/execution managers, and
+        # the deterministic approval coordinator are selected once here (Dependency
+        # Inversion) and injected into every node, so both local and MCP tools
+        # share one centralized approval path and the graph/resume logic is
+        # identical for in-memory and persistent backends. There is no LLM-based
+        # risk classification: every tool requires approval unless the agent is in
+        # auto mode or the tool was already approved for the session.
         self._checkpoint_connection_string = checkpoint_connection_string
         self._checkpointer: CheckpointerHandle | None = None
         self._execution_manager = execution_manager or ToolExecutionManager(
@@ -237,8 +220,12 @@ class LangGraphEngine(Engine):
             run_repository=InMemoryRunRepository(),
             approval_repository=InMemoryApprovalRepository(),
         )
-        self._tool_contract_service = tool_contract_service or ToolContractService(
-            registry=tool_contract_registry
+        # The session store is engine-scoped so "allow for this session" persists
+        # across the runs of one conversation (session_id == conversation_id).
+        self._session_store = session_approval_store or InMemorySessionApprovalStore()
+        self._approval_coordinator = ApprovalCoordinator(
+            InterruptApprovalProvider(self._approval_manager),
+            session_store=self._session_store,
         )
 
     async def build(self, spec: SystemSpec) -> None:
@@ -254,7 +241,6 @@ class LangGraphEngine(Engine):
         self._mcp_tools = await self._connect_mcps(spec)
         self._tool_loader = ToolLoader(self._base_dir)
         self._resolver_loader = ResolverLoader(self._base_dir)
-        await self._classify_local_tools(spec)
         self._checkpointer = CheckpointProviderFactory().create(self._checkpoint_connection_string)
         self._app = self._compile_graph(spec)
         self._log_startup_summary(spec)
@@ -453,23 +439,25 @@ class LangGraphEngine(Engine):
         self,
         run_id: str,
         approval_id: str,
-        decision: ApprovalDecisionKind | str,
+        decision: ApprovalDecision | str,
         *,
         caller_user_id: str | None = None,
     ) -> RunResult:
-        """Approve or reject a pending tool call and resume the same run.
+        """Apply a human decision to a pending tool call and resume the same run.
 
         Atomically claims the approval (exactly one caller wins across pods),
         resumes the existing LangGraph thread from its checkpoint — so the agent
         is not re-selected and completed steps are not intentionally redone — and
-        either executes or rejects the original tool call.
+        either executes or denies the original tool call. ``ALLOW_FOR_SESSION``
+        additionally records a session permission so the tool is not re-prompted
+        for the rest of the conversation.
         """
         app, hook_manager = self._require_built("resuming")
-        kind = _coerce_decision(decision)
+        kind = parse_decision(decision)
         approval = await self._approval_manager.claim(
             run_id=run_id, approval_id=approval_id, caller_user_id=caller_user_id
         )
-        approved = kind == ApprovalDecisionKind.APPROVE
+        approved = kind != ApprovalDecision.DENY
         ctx = RunContext(run_id=run_id, conversation_id=approval.auth_ref)
         token = current_run_context.set(ctx)
         exec_token = current_execution.set(ExecutionLimiter(self._policy))
@@ -564,8 +552,7 @@ class LangGraphEngine(Engine):
                             approval_id=pa.approval_id,
                             agent_id=pa.agent_id,
                             tool_name=pa.tool_name,
-                            reason=pa.reason,
-                            category=pa.category,
+                            description=pa.description,
                         )
                     )
                     return
@@ -684,12 +671,6 @@ class LangGraphEngine(Engine):
             try:
                 log(logger, logging.INFO, "mcp discovery started", server=server_id)
                 mcp_tools[server_id] = await client.get_tools()
-                identity = MCPServerIdentity(server_id=server_id, url=mcp_spec.url, trusted=False)
-                for tool in mcp_tools[server_id]:
-                    contract = await self._tool_contract_service.get_or_create(
-                        identity, _tool_definition(tool)
-                    )
-                    self._tool_contracts[(server_id, tool.name)] = contract
                 log(
                     logger,
                     logging.INFO,
@@ -707,24 +688,6 @@ class LangGraphEngine(Engine):
                 )
                 mcp_tools[server_id] = []
         return mcp_tools
-
-    async def _classify_local_tools(self, spec: SystemSpec) -> None:
-        assert self._tool_loader is not None
-        seen: set[str] = set()
-        for node in walk(spec.graph):
-            if not isinstance(node.node, AgentSpec):
-                continue
-            for tool_spec in node.node.tools:
-                if tool_spec.id in seen:
-                    continue
-                seen.add(tool_spec.id)
-                fn = self._tool_loader.load(tool_spec.id)
-                tool = StructuredTool.from_function(fn, description=tool_spec.description)
-                contract = await self._tool_contract_service.get_or_create(
-                    LOCAL_SERVER_IDENTITY,
-                    _tool_definition(tool, description=tool_spec.description),
-                )
-                self._tool_contracts[(None, tool.name)] = contract
 
     def _compile_graph(self, spec: SystemSpec) -> CompiledStateGraph:
         builder = StateGraph(GraphState)
@@ -804,8 +767,7 @@ class LangGraphEngine(Engine):
             hook_manager=self._hook_manager,
             base_dir=self._base_dir,
             execution_manager=self._execution_manager,
-            approval_manager=self._approval_manager,
-            tool_contracts=self._tool_contracts,
+            approval_coordinator=self._approval_coordinator,
         )
 
     def _build_model(self, model: NodeModelConfig) -> BaseChatModel:
@@ -833,31 +795,3 @@ class LangGraphEngine(Engine):
                 mcp_names.add(st.name)
                 server_by_tool[st.name] = mcp.id
         return tools, mcp_names, server_by_tool
-
-
-def _tool_definition(tool: BaseTool, *, description: str | None = None) -> MCPToolDefinition:
-    return MCPToolDefinition(
-        name=tool.name,
-        description=description if description is not None else (tool.description or ""),
-        input_schema=_tool_schema(tool),
-        annotations=_tool_annotations(tool),
-    )
-
-
-def _tool_schema(tool: BaseTool) -> dict[str, Any]:
-    try:
-        return {"properties": dict(tool.args)}
-    except Exception:
-        return {}
-
-
-def _tool_annotations(tool: BaseTool) -> dict[str, Any]:
-    metadata = getattr(tool, "metadata", None)
-    if isinstance(metadata, dict):
-        annotations = metadata.get("annotations", metadata)
-        if isinstance(annotations, dict):
-            return dict(annotations)
-    annotations = getattr(tool, "annotations", None)
-    if isinstance(annotations, dict):
-        return dict(annotations)
-    return {}
