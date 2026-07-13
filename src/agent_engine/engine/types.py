@@ -17,8 +17,7 @@ class PendingApproval:
     approval_id: str
     agent_id: str
     tool_name: str
-    reason: str
-    category: str
+    description: str
     provider: str = "local"
     server_id: str | None = None
     arguments: dict[str, Any] = field(default_factory=dict)
