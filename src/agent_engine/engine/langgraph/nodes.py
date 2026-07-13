@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -16,17 +15,11 @@ from typing import Any, cast
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.errors import GraphInterrupt
-from langgraph.types import interrupt
 from pydantic import BaseModel
 
-from agent_engine.approvals.contract import ToolContract, unknown_contract
-from agent_engine.approvals.decision import ApprovalDecision, ToolCall
-from agent_engine.approvals.manager import (
-    ApprovalManager,
-    ToolExecutionManager,
-    execution_id_for,
-)
-from agent_engine.approvals.models import ApprovalDecisionKind, sanitize_arguments
+from agent_engine.approvals.coordinator import ApprovalCoordinator
+from agent_engine.approvals.invocation import ToolInvocation
+from agent_engine.approvals.manager import ToolExecutionManager, execution_id_for
 from agent_engine.core.spec import AgentSpec, OrchestratorSpec
 from agent_engine.engine.langgraph.filters import RouteFilter
 from agent_engine.engine.langgraph.helpers import (
@@ -51,6 +44,7 @@ from agent_engine.runtime.hooks import (
     ToolResultContext,
     current_run_context,
 )
+from agent_engine.runtime.hooks.models import ToolStatus
 from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import current_streams
 from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord
@@ -90,6 +84,51 @@ class ChildEntry:
     callable: AgentNode | OrchestratorNode
 
 
+@dataclass(frozen=True)
+class ExecuteTool:
+    """Approval-gate result: the gate is open — the caller may run the tool."""
+
+
+@dataclass(frozen=True)
+class DenyTool:
+    """Approval-gate result: the gate is closed — do not run the tool.
+
+    ``message`` is the structured, model-facing result to return in place of
+    execution (a normal denial, not a system error).
+    """
+
+    message: str
+
+
+# A tagged result instead of ``str | None``: the caller branches on the type,
+# never on a magic ``None`` that secretly means "proceed".
+ToolGate = ExecuteTool | DenyTool
+
+
+@dataclass(frozen=True)
+class _ToolCall:
+    """One resolved, about-to-run tool call: the tool plus its stable identity.
+
+    Bundling these fields once removes the repeated ``agent/tool/provider/server``
+    argument lists that the limit, gate, logging, hook, and execution steps would
+    each otherwise rebuild from the raw ``tc`` dict.
+    """
+
+    tool: BaseTool
+    name: str
+    args: dict[str, Any]
+    provider: ToolProviderName
+    server_id: str | None
+    tool_call_id: str
+    run_id: str
+    exec_id: str
+
+
+def _elapsed_ms(start: float) -> int:
+    """Whole milliseconds elapsed since a ``time.perf_counter()`` reading."""
+    return int((time.perf_counter() - start) * 1000)
+
+
 class AgentNode:
     """Callable that implements one agent turn inside a LangGraph node.
 
@@ -108,8 +147,7 @@ class AgentNode:
         hook_manager: HookManager,
         base_dir: Path,
         execution_manager: ToolExecutionManager,
-        approval_manager: ApprovalManager,
-        tool_contracts: dict[tuple[str | None, str], ToolContract],
+        approval_coordinator: ApprovalCoordinator,
         mcp_server_by_tool: dict[str, str] | None = None,
     ) -> None:
         self._spec = spec
@@ -122,8 +160,7 @@ class AgentNode:
         self._hook_manager = hook_manager
         self._base_dir = base_dir
         self._execution_manager = execution_manager
-        self._approval_manager = approval_manager
-        self._tool_contracts = tool_contracts
+        self._approval_coordinator = approval_coordinator
 
     async def __call__(self, state: GraphState) -> dict[str, object]:
         ctx = self._resolve_context()
@@ -173,336 +210,264 @@ class AgentNode:
         return {"visited": visited, "answer": answer, "used_tools": used_tools}
 
     async def _invoke_tool(self, tc: dict[str, Any], used_tools: list[ToolUsageRecord]) -> str:
-        """Call one tool with full lifecycle hooks, for both local and MCP tools.
+        """Resolve, gate, and execute one tool call for both local and MCP tools.
 
-        Order: ``before_tool_call`` (observe-only/gate) → tool call →
-        ``after_tool_call`` on success, ``on_tool_error`` on failure. Tool errors
-        are returned as a string (not raised) so the model can read the failure
-        and recover; the failure is still surfaced to ``on_tool_error`` hooks. A
-        hook raising under the default fail-closed policy propagates and fails the
-        run (use ``failure_policy: warn`` for best-effort audit hooks).
+        The pipeline short-circuits at the first step that stops the call, each
+        returning a model-facing string:
+
+        1. resolve the tool (unknown name → error);
+        2. enforce execution limits (blocked → controlled message);
+        3. the Human-in-the-Loop gate (denied → ``[denied]``; when approval is
+           required and not yet granted the graph suspends and this method does
+           not return normally);
+        4. idempotency (a replayed call returns its recorded result);
+        5. execute with the ``before/after/on_error`` lifecycle hooks.
         """
-        name: str = tc["name"]
-        tool = self._tool_map.get(name)
+        tool = self._tool_map.get(tc["name"])
         if tool is None:
-            return f"Unknown tool: {name}"
+            return f"Unknown tool: {tc['name']}"
+        call = self._describe_call(tool, tc)
 
-        provider: ToolProviderName = "mcp" if name in self._mcp_tool_names else "local"
-        server_id = self._mcp_server_by_tool.get(name)
+        blocked = self._enforce_limits(call)
+        if blocked is not None:
+            return blocked
+
+        gate = await self._gate_tool_call(call)
+        if isinstance(gate, DenyTool):
+            return gate.message
+        # gate is ExecuteTool — the gate is open; fall through to run the tool.
+
+        cached = await self._cached_result(call, used_tools)
+        if cached is not None:
+            return cached
+
+        return await self._execute(call, used_tools)
+
+    def _describe_call(self, tool: BaseTool, tc: dict[str, Any]) -> _ToolCall:
+        """Freeze the tool's runtime identity: provider, ids, and idempotency key."""
+        name: str = tc["name"]
         run_context = current_run_context.get()
-
-        # Execution limits (total / per-agent tool calls, duplicate detection).
-        # A blocked call is NOT executed; the model receives a controlled message.
-        limiter = current_execution.get()
-        if limiter is not None:
-            try:
-                limiter.register_tool_call(self._spec.id, name, tc.get("args"))
-            except ExecutionLimitExceeded as exc:
-                log_limit(exc)
-                return blocked_message(exc)
-
-        # Centralized Human-in-the-Loop gate. Every tool call — local or MCP —
-        # passes through the same policy before the provider is invoked. DENY is
-        # never executed; REQUIRE_APPROVAL suspends the graph (unless auto_mode).
-        args: dict[str, Any] = tc.get("args") or {}
-        gate = await self._gate_tool_call(name, tool, args, provider, server_id, tc)
-        if gate is not None:
-            return gate
-
-        # Idempotency: a stable key derived from the tool_call_id. If this exact
-        # call already executed (e.g. a graph re-entry after resume replays the
-        # node), return the recorded result instead of causing a second side
-        # effect. This is the primary duplicate-execution protection.
         run_id = run_context.run_id if run_context and run_context.run_id else tc["id"]
-        exec_id = execution_id_for(tc["id"])
-        cached = await self._execution_manager.already_executed(exec_id)
-        if cached is not None and cached.result is not None:
-            log(
-                logger,
-                logging.INFO,
-                "duplicate tool execution prevented",
-                agent=self._spec.id,
-                tool=name,
-                tool_call_id=tc["id"],
-                execution_id=exec_id,
-            )
-            used_tools.append(
-                ToolUsageRecord(
-                    name=name,
-                    provider=provider,
-                    status="succeeded",
-                    agent_id=self._spec.id,
-                    server_id=server_id,
-                )
-            )
-            return cached.result
-        await self._execution_manager.begin_execution(
-            exec_id, tool_call_id=tc["id"], run_id=run_id, tool_name=name
+        return _ToolCall(
+            tool=tool,
+            name=name,
+            args=tc.get("args") or {},
+            provider="mcp" if name in self._mcp_tool_names else "local",
+            server_id=self._mcp_server_by_tool.get(name),
+            tool_call_id=tc["id"],
+            run_id=run_id,
+            exec_id=execution_id_for(tc["id"]),
         )
 
+    def _enforce_limits(self, call: _ToolCall) -> str | None:
+        """Register the call against execution limits (total/per-agent counts,
+        duplicate detection). Returns a controlled message when a limit blocks the
+        call — which is then never executed — or ``None`` when it may proceed.
+        """
+        limiter = current_execution.get()
+        if limiter is None:
+            return None
+        try:
+            limiter.register_tool_call(self._spec.id, call.name, call.args)
+        except ExecutionLimitExceeded as exc:
+            log_limit(exc)
+            return blocked_message(exc)
+        return None
+
+    async def _cached_result(
+        self, call: _ToolCall, used_tools: list[ToolUsageRecord]
+    ) -> str | None:
+        """Return a prior successful result for this exact call, if any.
+
+        Guards against a second side effect when a graph re-entry after resume
+        replays the node with the same ``tool_call_id`` (the primary
+        duplicate-execution protection).
+        """
+        cached = await self._execution_manager.already_executed(call.exec_id)
+        if cached is None or cached.result is None:
+            return None
         log(
             logger,
             logging.INFO,
-            "tool call started",
+            "duplicate tool execution prevented",
             agent=self._spec.id,
-            tool=name,
-            provider=provider,
-            server=server_id,
+            tool=call.name,
+            tool_call_id=call.tool_call_id,
+            execution_id=call.exec_id,
         )
+        used_tools.append(self._usage(call, "succeeded"))
+        return cached.result
+
+    async def _execute(self, call: _ToolCall, used_tools: list[ToolUsageRecord]) -> str:
+        """Run the provider exactly once, wrapped in the idempotency ledger and the
+        ``before_tool_call`` hook, dispatching to the success or error recorder.
+        """
+        await self._execution_manager.begin_execution(
+            call.exec_id,
+            tool_call_id=call.tool_call_id,
+            run_id=call.run_id,
+            tool_name=call.name,
+        )
+        self._log_call(logging.INFO, "tool call started", call)
         await self._hook_manager.run_before_tool_call(
-            run_context,
+            current_run_context.get(),
             ToolRequestContext(
-                agent_id=self._spec.id, tool_name=name, provider=provider, server_id=server_id
+                agent_id=self._spec.id,
+                tool_name=call.name,
+                provider=call.provider,
+                server_id=call.server_id,
             ),
         )
 
         start = time.perf_counter()
         try:
-            result = await tool.ainvoke(tc["args"])
+            result = await call.tool.ainvoke(call.args)
         except Exception as exc:
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            error = str(exc)[:200]
-            used_tools.append(
-                ToolUsageRecord(
-                    name=name,
-                    provider=provider,
-                    status="failed",
-                    agent_id=self._spec.id,
-                    server_id=server_id,
-                    error=error,
-                )
-            )
-            log(
-                logger,
-                logging.WARNING,
-                "tool call failed",
-                agent=self._spec.id,
-                tool=name,
-                provider=provider,
-                server=server_id,
-                ms=latency_ms,
-            )
-            await self._hook_manager.run_on_tool_error(
-                run_context,
-                ToolCallContext(
-                    agent_id=self._spec.id,
-                    tool_name=name,
-                    provider=provider,
-                    server_id=server_id,
-                    status="failed",
-                    latency_ms=latency_ms,
-                    error=error,
-                ),
-            )
-            await self._execution_manager.finish_execution(
-                exec_id, status="failed", result=f"Tool error: {exc}"
-            )
-            return f"Tool error: {exc}"
+            return await self._record_error(call, used_tools, exc, _elapsed_ms(start))
+        return await self._record_success(call, used_tools, result, _elapsed_ms(start))
 
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        used_tools.append(
-            ToolUsageRecord(
-                name=name,
-                provider=provider,
-                status="succeeded",
-                agent_id=self._spec.id,
-                server_id=server_id,
-            )
-        )
-        log(
-            logger,
-            logging.INFO,
-            "tool call ended",
-            agent=self._spec.id,
-            tool=name,
-            provider=provider,
-            server=server_id,
-            ms=latency_ms,
-        )
-        await self._hook_manager.run_after_tool_call(
-            run_context,
-            ToolCallContext(
-                agent_id=self._spec.id,
-                tool_name=name,
-                provider=provider,
-                server_id=server_id,
-                status="succeeded",
-                latency_ms=latency_ms,
-            ),
-        )
+    async def _record_error(
+        self,
+        call: _ToolCall,
+        used_tools: list[ToolUsageRecord],
+        exc: Exception,
+        latency_ms: int,
+    ) -> str:
+        """Record a failed call, fire ``on_tool_error``, and return the error text.
 
-        result_text = str(result)
-        # transform_tool_result hooks may reshape the result (e.g. truncate
-        # oversized MCP output) before it is appended to the conversation. Gated
-        # so ToolResultContext is only allocated when a hook exists.
-        if self._hook_manager.has("transform_tool_result"):
-            transformed = await self._hook_manager.run_transform_tool_result(
-                run_context,
-                ToolResultContext(
-                    agent_id=self._spec.id,
-                    tool_name=name,
-                    provider=provider,
-                    result=result_text,
-                    server_id=server_id,
-                    latency_ms=latency_ms,
-                ),
-            )
-            result_text = transformed.result
+        The failure is returned (not raised) so the model can read it and recover.
+        """
+        error = str(exc)[:200]
+        used_tools.append(self._usage(call, "failed", error=error))
+        self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms)
+        await self._hook_manager.run_on_tool_error(
+            current_run_context.get(),
+            self._call_context(call, "failed", latency_ms, error=error),
+        )
         await self._execution_manager.finish_execution(
-            exec_id, status="succeeded", result=result_text
+            call.exec_id, status="failed", result=f"Tool error: {exc}"
+        )
+        return f"Tool error: {exc}"
+
+    async def _record_success(
+        self,
+        call: _ToolCall,
+        used_tools: list[ToolUsageRecord],
+        result: object,
+        latency_ms: int,
+    ) -> str:
+        """Record a successful call, fire ``after_tool_call`` and result-transform
+        hooks, persist the result to the idempotency ledger, and return it.
+        """
+        used_tools.append(self._usage(call, "succeeded"))
+        self._log_call(logging.INFO, "tool call ended", call, ms=latency_ms)
+        await self._hook_manager.run_after_tool_call(
+            current_run_context.get(),
+            self._call_context(call, "succeeded", latency_ms),
+        )
+        result_text = await self._transform_result(call, str(result), latency_ms)
+        await self._execution_manager.finish_execution(
+            call.exec_id, status="succeeded", result=result_text
         )
         return result_text
 
-    def _tool_schema(self, tool: BaseTool) -> dict[str, Any]:
-        """Best-effort input-schema dict for the policy classifier.
-
-        Uses the tool's declared argument schema (LangChain ``BaseTool.args``) so
-        parameter names become an extra risk signal. Never raises — an
-        unintrospectable tool simply contributes no schema tokens.
+    async def _transform_result(self, call: _ToolCall, result_text: str, latency_ms: int) -> str:
+        """Let ``transform_tool_result`` hooks reshape the result (e.g. truncate
+        oversized MCP output). The context is only built when such a hook exists.
         """
-        try:
-            return {"properties": dict(tool.args)}
-        except Exception:  # pragma: no cover - defensive; tool schema is optional
-            return {}
+        if not self._hook_manager.has("transform_tool_result"):
+            return result_text
+        transformed = await self._hook_manager.run_transform_tool_result(
+            current_run_context.get(),
+            ToolResultContext(
+                agent_id=self._spec.id,
+                tool_name=call.name,
+                provider=call.provider,
+                result=result_text,
+                server_id=call.server_id,
+                latency_ms=latency_ms,
+            ),
+        )
+        return transformed.result
 
-    async def _gate_tool_call(
-        self,
-        name: str,
-        tool: BaseTool,
-        args: dict[str, Any],
-        provider: ToolProviderName,
-        server_id: str | None,
-        tc: dict[str, Any],
-    ) -> str | None:
-        """Evaluate the approval policy and act on the decision.
-
-        Returns ``None`` when the caller should execute the tool (EXECUTE, or an
-        approved REQUIRE_APPROVAL). Returns a synthetic tool-result string when
-        the call must not execute (DENY, or a rejected approval) — that string is
-        fed back to the model as the tool's result.
-        """
-        call = ToolCall(
-            tool_name=name,
+    def _usage(
+        self, call: _ToolCall, status: ToolStatus, *, error: str | None = None
+    ) -> ToolUsageRecord:
+        """Build the per-call trace record with this node's identity filled in."""
+        return ToolUsageRecord(
+            name=call.name,
+            provider=call.provider,
+            status=status,
             agent_id=self._spec.id,
-            provider=provider,
-            server_id=server_id,
-            description=tool.description or "",
-            input_schema=self._tool_schema(tool),
-            arguments=args,
-        )
-        contract = self._tool_contracts.get((server_id if provider == "mcp" else None, name))
-        if contract is None:
-            contract = unknown_contract(
-                "missing",
-                reason="missing tool contract; failing closed",
-                trusted=False,
-            )
-        verdict = self._execution_manager.decide(
-            call, auto_mode=self._spec.auto_mode, contract=contract
-        )
-        if verdict.decision == ApprovalDecision.EXECUTE:
-            return None
-        if verdict.decision == ApprovalDecision.DENY:
-            log(
-                logger,
-                logging.WARNING,
-                "tool denied",
-                agent=self._spec.id,
-                tool=name,
-                provider=provider,
-                server=server_id,
-                category=verdict.assessment.category.value,
-            )
-            return (
-                f"[denied] The action '{name}' is not permitted by policy "
-                f"({verdict.assessment.reason}). It was not executed."
-            )
-        decision = await self._require_approval(name, provider, server_id, verdict, args, tc)
-        if decision == ApprovalDecisionKind.APPROVE:
-            return None
-        return (
-            f"[rejected] status=rejected toolCallId={tc['id']} "
-            "reason=user rejected the action. The tool was not executed."
+            server_id=call.server_id,
+            error=error,
         )
 
-    async def _require_approval(
+    def _call_context(
         self,
-        name: str,
-        provider: ToolProviderName,
-        server_id: str | None,
-        verdict: Any,
-        args: dict[str, Any],
-        tc: dict[str, Any],
-    ) -> ApprovalDecisionKind:
-        """Persist a pending approval, interrupt the graph, and return the human's
-        decision once the run resumes.
-
-        No tool side effect happens before the interrupt (prepare → interrupt →
-        execute). On resume the node re-runs and ``interrupt()`` returns the
-        decision instead of suspending again; ``create_pending`` is idempotent by
-        ``tool_call_id`` so no duplicate approval is created.
-        """
-        run_context = current_run_context.get()
-        run_id = run_context.run_id if run_context and run_context.run_id else tc["id"]
-        authorized_user_id = run_context.user_id if run_context else None
-        auth_ref = run_context.conversation_id if run_context else None
-        approval_id = f"appr_{uuid.uuid4().hex[:16]}"
-
-        record = await self._approval_manager.create_pending(
-            run_id=run_id,
-            thread_id=run_id,
-            approval_id=approval_id,
+        call: _ToolCall,
+        status: ToolStatus,
+        latency_ms: int,
+        *,
+        error: str | None = None,
+    ) -> ToolCallContext:
+        """Build the hook context for a completed call (success or failure)."""
+        return ToolCallContext(
             agent_id=self._spec.id,
-            tool_name=name,
-            tool_call_id=tc["id"],
-            provider=provider,
-            assessment=verdict.assessment,
-            arguments=args,
-            server_id=server_id,
-            auth_ref=auth_ref,
-            authorized_user_id=authorized_user_id,
+            tool_name=call.name,
+            provider=call.provider,
+            server_id=call.server_id,
+            status=status,
+            latency_ms=latency_ms,
+            error=error,
         )
 
-        payload = {
-            "type": "tool_approval",
-            "approval_id": record.approval_id,
-            "run_id": run_id,
-            "agent_id": self._spec.id,
-            "tool_name": name,
-            "provider": provider,
-            "server_id": server_id,
-            "category": verdict.assessment.category.value,
-            "reason": verdict.assessment.reason,
-            "arguments": sanitize_arguments(args),
-        }
+    def _log_call(self, level: int, event: str, call: _ToolCall, **fields: Any) -> None:
+        """Structured log line carrying the call's identity (never its arguments)."""
         log(
             logger,
-            logging.INFO,
-            "run interrupted",
-            run_id=run_id,
-            approval_id=record.approval_id,
-            tool=name,
-            tool_call_id=tc["id"],
+            level,
+            event,
+            agent=self._spec.id,
+            tool=call.name,
+            provider=call.provider,
+            server=call.server_id,
+            **fields,
         )
-        resume = interrupt(payload)
-        return _parse_decision(resume)
 
+    async def _gate_tool_call(self, call: _ToolCall) -> ToolGate:
+        """Run the call through the approval coordinator.
 
-def _parse_decision(resume: Any) -> ApprovalDecisionKind:
-    """Interpret a resume value as an approval decision (fail-safe to REJECT).
-
-    Accepts an :class:`ApprovalDecisionKind`, a plain string ("approve"/"reject"),
-    or a mapping with a ``decision`` key. Anything unrecognized is treated as a
-    rejection so an ambiguous resume never triggers a side effect.
-    """
-    if isinstance(resume, ApprovalDecisionKind):
-        return resume
-    value: Any = resume
-    if isinstance(resume, dict):
-        value = resume.get("decision")
-    if isinstance(value, str) and value.lower() in ("approve", "approved", "approve_and_edit"):
-        return ApprovalDecisionKind.APPROVE
-    return ApprovalDecisionKind.REJECT
+        Returns :class:`ExecuteTool` when the tool may run (auto mode, an existing
+        session permission, or a human ``ALLOW_ONCE`` / ``ALLOW_FOR_SESSION``), or
+        :class:`DenyTool` carrying a model-facing message when the user denied the
+        call — a normal denial, not a system failure. When approval is required and
+        not yet granted the coordinator suspends the run via the interrupt provider
+        (``resolve`` does not return here), so no side effect happens before consent.
+        """
+        run_context = current_run_context.get()
+        session_id = run_context.conversation_id if run_context else None
+        invocation = ToolInvocation(
+            tool_call_id=call.tool_call_id,
+            agent_id=self._spec.id,
+            tool_name=call.name,
+            session_id=session_id,
+            provider=call.provider,
+            server_id=call.server_id,
+            arguments=call.args,
+        )
+        outcome = await self._approval_coordinator.resolve(
+            invocation, auto_mode=self._spec.auto_mode
+        )
+        if outcome.execute:
+            return ExecuteTool()
+        self._log_call(logging.WARNING, "tool denied", call, tool_call_id=call.tool_call_id)
+        return DenyTool(
+            message=(
+                f"[denied] status=denied toolCallId={call.tool_call_id} tool={call.name} "
+                "reason=the user denied the action. The tool was not executed."
+            )
+        )
 
 
 class OrchestratorNode:
