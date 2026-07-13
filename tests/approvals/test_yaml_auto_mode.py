@@ -1,4 +1,4 @@
-"""YAML parsing/validation of the optional agent-level ``auto_mode`` flag."""
+"""YAML parsing of the optional agent-level ``auto`` flag (alias ``auto_mode``)."""
 
 from __future__ import annotations
 
@@ -34,13 +34,17 @@ def _parse(tmp_path: Path, auto: str) -> AgentSpec:
     return agent
 
 
-def test_auto_mode_true_parsed(tmp_path: Path) -> None:
+def test_auto_true_parsed(tmp_path: Path) -> None:
+    assert _parse(tmp_path, "    auto: true").auto_mode is True
+
+
+def test_auto_false_parsed(tmp_path: Path) -> None:
+    assert _parse(tmp_path, "    auto: false").auto_mode is False
+
+
+def test_auto_mode_alias_still_parsed(tmp_path: Path) -> None:
     assert _parse(tmp_path, "    auto_mode: true").auto_mode is True
 
 
-def test_auto_mode_false_parsed(tmp_path: Path) -> None:
-    assert _parse(tmp_path, "    auto_mode: false").auto_mode is False
-
-
-def test_auto_mode_missing_defaults_false(tmp_path: Path) -> None:
+def test_auto_missing_defaults_false(tmp_path: Path) -> None:
     assert _parse(tmp_path, "").auto_mode is False
