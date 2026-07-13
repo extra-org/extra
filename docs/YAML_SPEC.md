@@ -162,9 +162,9 @@ agents:
 Every id referenced in `graph`, `resolvers`, `tools`, or `mcps` must be declared
 in the corresponding top-level section.
 
-### `auto_mode` (optional, agent-level)
+### `auto` (optional, agent-level)
 
-`auto_mode` is an optional boolean on an **agent** (default `false`). It controls
+`auto` is an optional boolean on an **agent** (default `false`). It controls
 Human-in-the-Loop (HITL) behavior for that agent's tool calls:
 
 ```yaml
@@ -172,20 +172,23 @@ agents:
   invoices_agent:
     description: "Handles invoices and sends confirmations."
     tools: [send_invoice_email]
-    auto_mode: true      # execute risky tools without asking for approval
+    auto: true      # execute this agent's tools without asking for approval
 ```
 
-- `auto_mode: false` (or omitted) — every tool call is evaluated by the engine's
-  approval policy. Read-only/safe calls execute; risky calls
-  (`REQUIRE_APPROVAL`) pause the run for a human decision; forbidden calls
-  (`DENY`) never run.
-- `auto_mode: true` — the agent runs without approval interrupts: calls that
-  would otherwise require approval execute automatically. **`auto_mode` never
-  bypasses a `DENY`** — a forbidden action is still blocked.
+- `auto: false` (or omitted) — **every** tool call requires explicit human
+  approval before it runs, unless the same tool was already approved for the
+  current session (see [HUMAN_IN_THE_LOOP.md](HUMAN_IN_THE_LOOP.md)). There is no
+  risk classification: approval is the default for all tools.
+- `auto: true` — the agent runs without approval interrupts: its tool calls
+  execute immediately and the approval provider is never invoked. This is
+  evaluated per agent, so it never enables automatic execution for another agent
+  in the same run.
+
+> `auto_mode` is accepted as a backward-compatible alias for `auto`.
 
 There is no per-tool approval configuration in YAML; the only HITL knob is this
 agent-level flag. See [HUMAN_IN_THE_LOOP.md](HUMAN_IN_THE_LOOP.md) for the full
-policy, checkpointing, and resume model.
+approval, session, checkpointing, and resume model.
 
 MCP declarations are URL-based:
 
