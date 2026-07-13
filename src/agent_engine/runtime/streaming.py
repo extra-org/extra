@@ -58,5 +58,4 @@ class RunStreamEvent:
     run_id: str | None = None
     approval_id: str | None = None
     agent_id: str | None = None
-    reason: str | None = None
-    category: str | None = None
+    description: str | None = None
