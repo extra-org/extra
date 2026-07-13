@@ -3,7 +3,11 @@
 Uses a deterministic fake chat model (no LLM/network) that calls one named tool
 then answers. Tools are generated as plugin files that append to a counter file,
 so "did the provider actually run?" is observable — proving nothing executes
-before approval, exactly once after approval, and never after rejection.
+before approval, exactly once after approval, and never after a denial.
+
+The approval decision is purely deterministic: with ``auto`` off every tool call
+is interrupted for approval regardless of its name; with ``auto`` on every tool
+call executes without asking. There is no risk classification.
 """
 
 from __future__ import annotations
@@ -108,7 +112,7 @@ async def _engine(tmp_path: Path) -> LangGraphEngine:
 # --------------------------------------------------------------------------- #
 
 
-async def test_risky_tool_interrupts_and_does_not_execute(tmp_path: Path) -> None:
+async def test_tool_requires_approval_and_does_not_execute(tmp_path: Path) -> None:
     counter = tmp_path / "calls.log"
     _write_counting_tool(tmp_path, "send_email", counter)
     async with await _engine(tmp_path) as engine:
@@ -119,12 +123,12 @@ async def test_risky_tool_interrupts_and_does_not_execute(tmp_path: Path) -> Non
     assert result.pending_approval is not None
     assert result.pending_approval.tool_name == "send_email"
     assert result.pending_approval.agent_id == "writer"
-    assert result.pending_approval.reason
+    assert result.pending_approval.description  # human-readable, "not executed yet"
     # The provider must NOT have been invoked before approval.
     assert _executions(counter) == 0
 
 
-async def test_approve_resumes_same_run_and_executes_once(tmp_path: Path) -> None:
+async def test_allow_once_resumes_same_run_and_executes_once(tmp_path: Path) -> None:
     counter = tmp_path / "calls.log"
     _write_counting_tool(tmp_path, "send_email", counter)
     async with await _engine(tmp_path) as engine:
@@ -133,7 +137,7 @@ async def test_approve_resumes_same_run_and_executes_once(tmp_path: Path) -> Non
         assert pending.pending_approval is not None
         approval_id = pending.pending_approval.approval_id
 
-        resumed = await engine.resume("run-1", approval_id, "approve")
+        resumed = await engine.resume("run-1", approval_id, "allow once")
 
     assert resumed.status == "completed"
     assert "sent: go" in resumed.answer
@@ -141,18 +145,47 @@ async def test_approve_resumes_same_run_and_executes_once(tmp_path: Path) -> Non
     assert resumed.visited == ["writer"]  # same run, agent not re-selected as a new route
 
 
-async def test_reject_resumes_without_executing(tmp_path: Path) -> None:
+async def test_deny_resumes_without_executing(tmp_path: Path) -> None:
     counter = tmp_path / "calls.log"
     _write_counting_tool(tmp_path, "send_email", counter)
     async with await _engine(tmp_path) as engine:
         await engine.build(_spec("send_email"))
         pending = await engine.run("hi", context=RunContext(run_id="run-2"))
         assert pending.pending_approval is not None
-        resumed = await engine.resume("run-2", pending.pending_approval.approval_id, "reject")
+        resumed = await engine.resume("run-2", pending.pending_approval.approval_id, "deny")
 
     assert resumed.status == "completed"
     assert _executions(counter) == 0
-    assert "rejected" in resumed.answer.lower()
+    assert "denied" in resumed.answer.lower()
+
+
+async def test_allow_for_session_suppresses_later_prompt_same_conversation(
+    tmp_path: Path,
+) -> None:
+    counter = tmp_path / "calls.log"
+    _write_counting_tool(tmp_path, "send_email", counter)
+    async with await _engine(tmp_path) as engine:
+        await engine.build(_spec("send_email"))
+        # First run in conversation "conv-1": approval is requested.
+        pending = await engine.run(
+            "hi", context=RunContext(run_id="run-a", conversation_id="conv-1")
+        )
+        assert pending.pending_approval is not None
+        resumed = await engine.resume(
+            "run-a", pending.pending_approval.approval_id, "allow for this session"
+        )
+        assert resumed.status == "completed"
+
+        # Second run in the SAME conversation: no approval prompt this time.
+        second = await engine.run(
+            "hi", context=RunContext(run_id="run-b", conversation_id="conv-1")
+        )
+        assert second.status == "completed"
+        assert second.pending_approval is None
+
+        # A different conversation still requires approval (session is scoped).
+        other = await engine.run("hi", context=RunContext(run_id="run-c", conversation_id="conv-2"))
+        assert other.status == "pending_approval"
 
 
 async def test_auto_mode_executes_without_interrupt(tmp_path: Path) -> None:
@@ -167,7 +200,9 @@ async def test_auto_mode_executes_without_interrupt(tmp_path: Path) -> None:
     assert _executions(counter) == 1
 
 
-async def test_denied_tool_never_executes_even_in_auto_mode(tmp_path: Path) -> None:
+async def test_auto_mode_executes_any_tool_no_classification(tmp_path: Path) -> None:
+    # A name that a risk classifier would have blocked runs freely under auto:
+    # the new design performs no classification.
     counter = tmp_path / "calls.log"
     _write_counting_tool(tmp_path, "drop_database", counter)
     async with await _engine(tmp_path) as engine:
@@ -175,8 +210,7 @@ async def test_denied_tool_never_executes_even_in_auto_mode(tmp_path: Path) -> N
         result = await engine.run("hi", context=RunContext(run_id="run-4"))
 
     assert result.status == "completed"
-    assert _executions(counter) == 0
-    assert "denied" in result.answer.lower()
+    assert _executions(counter) == 1
 
 
 async def test_duplicate_resume_is_rejected_and_tool_runs_once(tmp_path: Path) -> None:
@@ -188,9 +222,9 @@ async def test_duplicate_resume_is_rejected_and_tool_runs_once(tmp_path: Path) -
         assert pending.pending_approval is not None
         approval_id = pending.pending_approval.approval_id
 
-        await engine.resume("run-5", approval_id, "approve")
+        await engine.resume("run-5", approval_id, "allow once")
         with pytest.raises(ApprovalAlreadyProcessed):
-            await engine.resume("run-5", approval_id, "approve")
+            await engine.resume("run-5", approval_id, "allow once")
 
     assert _executions(counter) == 1  # no duplicate side effect
 
@@ -205,17 +239,6 @@ async def test_pending_approval_query_and_run_status(tmp_path: Path) -> None:
         pa = await engine.get_pending_approval("run-6")
         assert pa is not None and pa.tool_name == "send_email"
 
-        await engine.resume("run-6", pa.approval_id, "approve")
+        await engine.resume("run-6", pa.approval_id, "allow once")
         assert await engine.get_run_status("run-6") == "completed"
         assert await engine.get_pending_approval("run-6") is None
-
-
-async def test_safe_tool_executes_without_approval(tmp_path: Path) -> None:
-    counter = tmp_path / "calls.log"
-    _write_counting_tool(tmp_path, "search_docs", counter)
-    async with await _engine(tmp_path) as engine:
-        await engine.build(_spec("search_docs"))  # auto_mode=False
-        result = await engine.run("hi", context=RunContext(run_id="run-7"))
-
-    assert result.status == "completed"
-    assert _executions(counter) == 1

@@ -6,7 +6,6 @@ import asyncio
 
 import pytest
 
-from agent_engine.approvals.decision import RiskCategory
 from agent_engine.approvals.errors import ApprovalNotFound, InvalidStateTransition
 from agent_engine.approvals.models import (
     ApprovalRecord,
@@ -30,8 +29,7 @@ def _approval(approval_id: str = "ap1", tool_call_id: str = "tc1") -> ApprovalRe
         tool_name="delete_user",
         tool_call_id=tool_call_id,
         provider="local",
-        category=RiskCategory.DELETE,
-        reason="deletes",
+        description="wants to call delete_user",
         arguments={},
     )
 

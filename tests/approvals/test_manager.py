@@ -1,14 +1,14 @@
-"""ToolExecutionManager (decide/auto_mode/idempotency) and ApprovalManager
-(lifecycle, validation, atomic claim) behavior."""
+"""ToolExecutionManager idempotency and ApprovalManager lifecycle/validation.
+
+Neither manager performs risk classification — that concern lives in the
+coordinator. These tests cover the resume lifecycle: pending creation, the atomic
+claim, authorization, finalization, and execution deduplication.
+"""
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
-from agent_engine.approvals.contract import ToolContract, ToolContractSource
-from agent_engine.approvals.decision import ApprovalDecision, ToolCall
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
     ApprovalRunMismatch,
@@ -21,7 +21,6 @@ from agent_engine.approvals.manager import (
     execution_id_for,
 )
 from agent_engine.approvals.models import ApprovalStatus, RunRecord, RunStatus
-from agent_engine.approvals.policy import DefaultToolApprovalPolicy
 from agent_engine.approvals.repository import (
     InMemoryApprovalRepository,
     InMemoryRunRepository,
@@ -30,68 +29,7 @@ from agent_engine.approvals.repository import (
 
 
 def _manager() -> ToolExecutionManager:
-    return ToolExecutionManager(
-        policy=DefaultToolApprovalPolicy(),
-        execution_repository=InMemoryToolExecutionRepository(),
-    )
-
-
-def _call(name: str, **kw: Any) -> ToolCall:
-    return ToolCall(tool_name=name, agent_id="a", **kw)
-
-
-def _contract(category, *, external: bool = False, destructive: bool = False) -> ToolContract:
-    return ToolContract(
-        category=category,
-        confidence=0.98,
-        source=ToolContractSource.DETERMINISTIC,
-        external_side_effect=external,
-        destructive=destructive,
-        reason=f"{category.value} contract",
-        fingerprint=f"fp_{category.value}",
-        trusted=True,
-    )
-
-
-def test_decide_safe_tool_executes() -> None:
-    from agent_engine.approvals.decision import RiskCategory
-
-    v = _manager().decide(
-        _call("search_docs"), auto_mode=False, contract=_contract(RiskCategory.READ)
-    )
-    assert v.decision == ApprovalDecision.EXECUTE
-    assert v.auto_mode_applied is False
-
-
-def test_decide_risky_tool_requires_approval_without_auto_mode() -> None:
-    from agent_engine.approvals.decision import RiskCategory
-
-    v = _manager().decide(
-        _call("send_email"), auto_mode=False, contract=_contract(RiskCategory.SEND, external=True)
-    )
-    assert v.decision == ApprovalDecision.REQUIRE_APPROVAL
-
-
-def test_auto_mode_bypasses_require_approval() -> None:
-    from agent_engine.approvals.decision import RiskCategory
-
-    v = _manager().decide(
-        _call("send_email"), auto_mode=True, contract=_contract(RiskCategory.SEND, external=True)
-    )
-    assert v.decision == ApprovalDecision.EXECUTE
-    assert v.auto_mode_applied is True
-
-
-def test_auto_mode_never_bypasses_deny() -> None:
-    from agent_engine.approvals.decision import RiskCategory
-
-    v = _manager().decide(
-        _call("drop_database"),
-        auto_mode=True,
-        contract=_contract(RiskCategory.FORBIDDEN, external=True, destructive=True),
-    )
-    assert v.decision == ApprovalDecision.DENY
-    assert v.auto_mode_applied is False
+    return ToolExecutionManager(execution_repository=InMemoryToolExecutionRepository())
 
 
 async def test_idempotency_reports_prior_success() -> None:
@@ -110,6 +48,15 @@ async def test_idempotency_reports_prior_success() -> None:
     assert prior is not None and prior.result == "R"
 
 
+async def test_idempotency_no_repository_never_dedupes() -> None:
+    mgr = ToolExecutionManager()  # no repository
+    exec_id = execution_id_for("tc1")
+    assert await mgr.already_executed(exec_id) is None
+    assert (
+        await mgr.begin_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t") is True
+    )
+
+
 # ------------------------------- ApprovalManager ------------------------------ #
 
 
@@ -121,11 +68,6 @@ def _approval_manager() -> ApprovalManager:
 
 
 async def _pending(mgr: ApprovalManager, *, user: str | None = None):
-    from agent_engine.approvals.decision import RiskCategory
-
-    assessment = DefaultToolApprovalPolicy().evaluate(
-        _call("send_email"), _contract(RiskCategory.SEND, external=True)
-    )
     return await mgr.create_pending(
         run_id="r1",
         thread_id="r1",
@@ -134,17 +76,18 @@ async def _pending(mgr: ApprovalManager, *, user: str | None = None):
         tool_name="send_email",
         tool_call_id="tc1",
         provider="local",
-        assessment=assessment,
+        description="agent 'a' wants to call 'send_email'",
         arguments={"to": "x@y.com", "api_key": "secret"},
         authorized_user_id=user,
     )
 
 
-async def test_create_pending_sets_run_pending_and_sanitizes() -> None:
+async def test_create_pending_sets_run_pending_and_masks() -> None:
     mgr = _approval_manager()
     record = await _pending(mgr)
     assert record.status == ApprovalStatus.PENDING
     assert record.arguments["api_key"] == "***redacted***"
+    assert record.arguments["to"] == "x@y.com"
     run = await mgr.get_run("r1")
     assert run.status == RunStatus.PENDING_APPROVAL
 

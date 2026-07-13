@@ -34,8 +34,7 @@ def test_pending_model_carries_sanitized_fields() -> None:
         approval_id="ap1",
         agent_id="writer",
         tool_name="send_email",
-        reason="sends externally",
-        category="send",
+        description="agent 'writer' wants to call 'send_email'",
         provider="mcp",
         server_id="srv",
         arguments={"to": "x@y.com", "api_key": "***redacted***"},
@@ -45,5 +44,6 @@ def test_pending_model_carries_sanitized_fields() -> None:
     assert model.run_id == "r1"
     assert model.approval_id == "ap1"
     assert model.tool_name == "send_email"
+    assert model.description == "agent 'writer' wants to call 'send_email'"
     assert model.provider == "mcp"
     assert model.arguments["api_key"] == "***redacted***"
