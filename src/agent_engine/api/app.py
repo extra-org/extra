@@ -15,6 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
     ApprovalError,
@@ -24,7 +25,6 @@ from agent_engine.approvals.errors import (
     RunNotFound,
     UnauthorizedApprover,
 )
-from agent_engine.approvals.models import ApprovalDecisionKind
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.engine import LangGraphEngine
@@ -80,8 +80,7 @@ def _pending_model(pa: PendingApproval | None) -> PendingApprovalModel | None:
         approval_id=pa.approval_id,
         agent_id=pa.agent_id,
         tool_name=pa.tool_name,
-        reason=pa.reason,
-        category=pa.category,
+        description=pa.description,
         provider=pa.provider,
         server_id=pa.server_id,
         arguments=pa.arguments,
@@ -121,8 +120,7 @@ class PendingApprovalModel(BaseModel):
     approval_id: str
     agent_id: str
     tool_name: str
-    reason: str
-    category: str
+    description: str
     provider: str
     server_id: str | None = None
     arguments: dict[str, Any] = {}
@@ -139,10 +137,18 @@ class InvokeResponse(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    """Approve/reject a pending tool call. ``user_id`` must match the run's
-    authorized approver when one was recorded."""
+    """Decide a pending tool call. ``user_id`` must match the run's authorized
+    approver when one was recorded."""
 
     user_id: str | None = None
+
+
+class ApprovalDecisionBody(ApprovalDecisionRequest):
+    """A free-text decision from a UI/CLI, parsed to a typed decision at this
+    boundary. Accepts values like ``allow``, ``allow for this session``, or
+    ``deny``; an unrecognized value yields a 400."""
+
+    decision: str
 
 
 class RunStatusResponse(BaseModel):
@@ -289,7 +295,7 @@ def create_app(config_path: str) -> FastAPI:
         )
 
     async def _decide(
-        run_id: str, approval_id: str, decision: ApprovalDecisionKind, user_id: str | None
+        run_id: str, approval_id: str, decision: ApprovalDecision, user_id: str | None
     ) -> InvokeResponse:
         engine = _hitl_engine()
         try:
@@ -308,16 +314,25 @@ def create_app(config_path: str) -> FastAPI:
             pending_approval=_pending_model(result.pending_approval),
         )
 
+    @app.post("/runs/{run_id}/approvals/{approval_id}/decision", response_model=InvokeResponse)
+    async def decide(run_id: str, approval_id: str, body: ApprovalDecisionBody) -> InvokeResponse:
+        # The single free-text → typed decision boundary for the API.
+        try:
+            decision = parse_decision(body.decision)
+        except InvalidDecision as exc:
+            raise _map_approval_error(exc) from exc
+        return await _decide(run_id, approval_id, decision, body.user_id)
+
     @app.post("/runs/{run_id}/approvals/{approval_id}/approve", response_model=InvokeResponse)
     async def approve(
         run_id: str, approval_id: str, body: ApprovalDecisionRequest
     ) -> InvokeResponse:
-        return await _decide(run_id, approval_id, ApprovalDecisionKind.APPROVE, body.user_id)
+        return await _decide(run_id, approval_id, ApprovalDecision.ALLOW_ONCE, body.user_id)
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/reject", response_model=InvokeResponse)
     async def reject(
         run_id: str, approval_id: str, body: ApprovalDecisionRequest
     ) -> InvokeResponse:
-        return await _decide(run_id, approval_id, ApprovalDecisionKind.REJECT, body.user_id)
+        return await _decide(run_id, approval_id, ApprovalDecision.DENY, body.user_id)
 
     return app
