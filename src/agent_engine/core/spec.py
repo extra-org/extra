@@ -91,10 +91,12 @@ class AgentSpec(NodeSpec):
     prompts: BasePromptSet = field(default_factory=BasePromptSet)
     tools: tuple[ToolSpec, ...] = field(default_factory=tuple)
     mcps: tuple[MCPSpec, ...] = field(default_factory=tuple)
-    auto_mode: bool = False
-    """When true, the agent runs without Human-in-the-Loop interrupts: tool calls
-    that would otherwise REQUIRE_APPROVAL execute automatically. It never bypasses
-    a DENY decision. Optional; defaults to false, preserving existing behavior."""
+    auto_mode: bool = True
+    """When true (YAML key ``auto``), this agent runs without Human-in-the-Loop
+    approval: its tool calls execute immediately and the approval provider is
+    never invoked. Evaluated per agent, so it never enables auto execution for
+    another agent in the same run. Optional; defaults to false, so every tool
+    call requires explicit approval unless already allowed for the session."""
 
     def get_prompts(self) -> BasePromptSet:
         return self.prompts
