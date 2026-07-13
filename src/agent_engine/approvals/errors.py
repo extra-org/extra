@@ -66,15 +66,6 @@ class InvalidStateTransition(ApprovalError):
         super().__init__(f"invalid {entity} transition: {from_state} -> {to_state}")
 
 
-class ToolDenied(ApprovalError):
-    """The policy classified the call as ``DENY``; it must never execute."""
-
-    def __init__(self, tool_name: str, reason: str) -> None:
-        self.tool_name = tool_name
-        self.reason = reason
-        super().__init__(f"tool {tool_name!r} denied: {reason}")
-
-
 class ToolNoLongerExists(ApprovalError):
     def __init__(self, tool_name: str) -> None:
         self.tool_name = tool_name
