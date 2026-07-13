@@ -1,73 +1,51 @@
-"""Deterministic, conservative tool-approval policy.
+"""The approval policy: does this tool call require a human decision?
 
-Runtime approval uses discovery-time :class:`ToolContract` values. It never calls
-an LLM and never scans arbitrary runtime argument values for risk keywords; for a
-conditional contract it reads only the declared discriminator path.
+The policy is a pure, deterministic function of a small query object. It never
+performs I/O, touches a UI, or executes a tool — the coordinator gathers the
+inputs (auto mode, session-permission lookup) and acts on the answer.
+
+This is the extension point for a future risk-classification layer: a smarter
+policy could inspect the invocation and auto-execute provably read-only tools,
+without changing the coordinator, the session store, or the runtime boundary.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import ClassVar
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
-from agent_engine.approvals.contract import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ToolContract
-from agent_engine.approvals.decision import (
-    ApprovalDecision,
-    RiskAssessment,
-    RiskCategory,
-    ToolCall,
-)
+from agent_engine.approvals.invocation import ToolInvocation
 
 
-class ToolApprovalPolicy(ABC):
-    """Strategy interface: assess one tool call's risk.
+@dataclass(frozen=True)
+class ApprovalQuery:
+    """The inputs a policy is allowed to consider.
 
-    Implementations must be pure and deterministic — the same call yields the
-    same assessment — so decisions are reproducible across pods and across a
-    checkpoint/resume boundary. ``auto_mode`` is intentionally *not* an input:
-    the execution manager applies it after the policy runs.
+    ``session_allowed`` is resolved by the coordinator against the session store
+    before the policy runs, keeping the policy free of I/O.
     """
 
-    @abstractmethod
-    def evaluate(self, call: ToolCall, contract: ToolContract) -> RiskAssessment: ...
+    invocation: ToolInvocation
+    auto_mode: bool
+    session_allowed: bool
 
 
-class DefaultToolApprovalPolicy(ToolApprovalPolicy):
-    """The engine's built-in conservative policy.
+@runtime_checkable
+class ApprovalPolicy(Protocol):
+    def requires_approval(self, query: ApprovalQuery) -> bool:
+        """Return True when a human decision is required before executing."""
 
-    Maps each :class:`RiskCategory` to an :class:`ApprovalDecision`. Read/draft
-    execute; anything with an external or persistent side effect requires
-    approval; the forbidden set is denied; unknown/ambiguous is treated as
-    requiring approval (fail-safe).
+
+class DefaultApprovalPolicy:
+    """The first-version deterministic policy.
+
+    Approval is required for every tool unless the agent is in auto mode or the
+    tool is already approved for this session. No risk classification is
+    performed — that is intentionally out of scope for this version.
     """
 
-    _DECISIONS: ClassVar[dict[RiskCategory, ApprovalDecision]] = {
-        RiskCategory.READ: ApprovalDecision.EXECUTE,
-        RiskCategory.DRAFT: ApprovalDecision.EXECUTE,
-        RiskCategory.SEND: ApprovalDecision.REQUIRE_APPROVAL,
-        RiskCategory.WRITE: ApprovalDecision.REQUIRE_APPROVAL,
-        RiskCategory.DELETE: ApprovalDecision.REQUIRE_APPROVAL,
-        RiskCategory.FINANCIAL: ApprovalDecision.REQUIRE_APPROVAL,
-        RiskCategory.ACCESS_CONTROL: ApprovalDecision.REQUIRE_APPROVAL,
-        RiskCategory.CODE_EXECUTION: ApprovalDecision.REQUIRE_APPROVAL,
-        RiskCategory.FORBIDDEN: ApprovalDecision.DENY,
-        RiskCategory.UNKNOWN: ApprovalDecision.REQUIRE_APPROVAL,
-        RiskCategory.CONDITIONAL: ApprovalDecision.REQUIRE_APPROVAL,
-    }
-
-    def evaluate(self, call: ToolCall, contract: ToolContract) -> RiskAssessment:
-        category = contract.effective_category(call.arguments)
-        decision = self._decision_for(category, contract)
-        reason = contract.reason
-        if contract.category == RiskCategory.CONDITIONAL:
-            reason = f"{contract.reason}; resolved conditional category={category.value}"
-        return RiskAssessment(decision=decision, category=category, reason=reason)
-
-    def _decision_for(self, category: RiskCategory, contract: ToolContract) -> ApprovalDecision:
-        if category in (RiskCategory.READ, RiskCategory.DRAFT):
-            if contract.confidence < AUTO_EXECUTE_CONFIDENCE_THRESHOLD:
-                return ApprovalDecision.REQUIRE_APPROVAL
-            if category == RiskCategory.DRAFT and contract.external_side_effect:
-                return ApprovalDecision.REQUIRE_APPROVAL
-            return ApprovalDecision.EXECUTE
-        return self._DECISIONS[category]
+    def requires_approval(self, query: ApprovalQuery) -> bool:
+        if query.auto_mode:
+            return False
+        # Otherwise approval is required unless the tool is already session-allowed.
+        return not query.session_allowed
