@@ -26,7 +26,8 @@ from agent_engine.approvals.repository import (
     InMemoryToolExecutionRepository,
 )
 from agent_engine.approvals.session_store import (
-    InMemorySessionApprovalStore,
+    InMemorySessionApprovalRepository,
+    SessionApprovalRepository,
     SessionApprovalStore,
 )
 from agent_engine.core.execution import ExecutionPolicy
@@ -187,8 +188,11 @@ class LangGraphEngine(Engine):
         checkpoint_connection_string: str | None = None,
         execution_manager: ToolExecutionManager | None = None,
         approval_manager: ApprovalManager | None = None,
+        session_approval_repository: SessionApprovalRepository | None = None,
         session_approval_store: SessionApprovalStore | None = None,
     ) -> None:
+        if session_approval_repository is not None and session_approval_store is not None:
+            raise ValueError("pass session_approval_repository or session_approval_store, not both")
         self._base_dir = base_dir
         self._model_factory = model_factory
         self._callbacks: list[BaseCallbackHandler] = [*build_callbacks(), *(callbacks or [])]
@@ -220,12 +224,18 @@ class LangGraphEngine(Engine):
             run_repository=InMemoryRunRepository(),
             approval_repository=InMemoryApprovalRepository(),
         )
-        # The session store is engine-scoped so "allow for this session" persists
-        # across the runs of one conversation (session_id == conversation_id).
-        self._session_store = session_approval_store or InMemorySessionApprovalStore()
+        # Composition roots inject a shared or persistent repository. The fallback
+        # keeps direct engine construction backwards-compatible for tests and
+        # embedded local use.
+        self._session_approval_repository = (
+            session_approval_repository or InMemorySessionApprovalRepository()
+            if session_approval_store is None
+            else None
+        )
         self._approval_coordinator = ApprovalCoordinator(
             InterruptApprovalProvider(self._approval_manager),
-            session_store=self._session_store,
+            session_repository=self._session_approval_repository,
+            session_store=session_approval_store,
         )
 
     async def build(self, spec: SystemSpec) -> None:
@@ -458,7 +468,13 @@ class LangGraphEngine(Engine):
             run_id=run_id, approval_id=approval_id, caller_user_id=caller_user_id
         )
         approved = kind != ApprovalDecision.DENY
-        ctx = RunContext(run_id=run_id, conversation_id=approval.auth_ref)
+        ctx = RunContext(
+            run_id=run_id,
+            conversation_id=approval.auth_ref,
+            user_id=approval.authorized_user_id,
+            organization_id=approval.organization_id,
+            metadata={"approval_id": approval.approval_id},
+        )
         token = current_run_context.set(ctx)
         exec_token = current_execution.set(ExecutionLimiter(self._policy))
         log(
@@ -768,6 +784,7 @@ class LangGraphEngine(Engine):
             base_dir=self._base_dir,
             execution_manager=self._execution_manager,
             approval_coordinator=self._approval_coordinator,
+            system_namespace=self._system_name,
         )
 
     def _build_model(self, model: NodeModelConfig) -> BaseChatModel:
