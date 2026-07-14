@@ -585,11 +585,16 @@ still not implemented — see §11.
 `agent_engine/models/factory.py` builds chat models for **Anthropic** (via
 `init_chat_model`), **Amazon Bedrock** (`ChatBedrockConverse`), **Google
 Gemini** (`ChatGoogleGenerativeAI`), and **OpenAI** (`ChatOpenAI`), with clear
-configuration errors for missing settings. The `openai` provider additionally
-accepts `base_url` and `api_key_env`, so it also covers any OpenAI-compatible
-endpoint — third-party vendors (Z.AI, DeepSeek, Moonshot, Groq, xAI,
-OpenRouter, ...) or a self-hosted server (Ollama, vLLM) — without a new
-provider integration. See [YAML_SPEC.md](YAML_SPEC.md#any-openai-compatible-endpoint).
+configuration errors for missing settings. The `openai` provider is also the
+entry point for any OpenAI-compatible endpoint: `agent_engine/models/presets.py`
+holds a small registry mapping known vendor ids (`zai`, `deepseek`, `moonshot`,
+`groq`, `xai`, `openrouter`) to their `base_url`/`api_key_env`, so `provider:
+zai` in YAML resolves both without either field being typed out. `base_url`
+and `api_key_env` remain available directly on `provider: openai` for any
+vendor not in the registry, a self-hosted server (Ollama, vLLM), or to
+override a listed vendor's preset (routing through an internal proxy, say).
+No new dependency either way, it's all `ChatOpenAI`. See
+[YAML_SPEC.md](YAML_SPEC.md#any-openai-compatible-endpoint).
 
 **CLI (0008 — ✅ done):**
 `agentctl validate`, `agentctl inspect` (offline summary: agents, MCPs, hooks,

@@ -346,39 +346,59 @@ access may be used via `name`. Secrets must never be stored in YAML.
 
 ### Any OpenAI-compatible endpoint
 
-The `openai` provider is not limited to `api.openai.com`. Two optional fields
-repoint it at any vendor (or self-hosted server) that speaks the OpenAI chat
-completions API:
+The `openai` provider is not limited to `api.openai.com`. A handful of
+well-known OpenAI-compatible vendors are wired in as `provider` shorthand, so
+`base_url` and `api_key_env` resolve automatically:
 
-- `base_url` — the endpoint's base URL.
-- `api_key_env` — the environment variable holding that vendor's API key.
-  Defaults to `OPENAI_API_KEY` when omitted, so existing YAML is unaffected.
+```yaml
+model:
+  provider: zai
+  name: glm-5.2
+  temperature: 0.2
+```
+
+| `provider` | Vendor     | `base_url`                              | `api_key_env`       |
+| ---------- | ---------- | ---------------------------------------- | -------------------- |
+| `zai`        | Z.AI (GLM) | `https://api.z.ai/api/coding/paas/v4`     | `ZAI_API_KEY`         |
+| `deepseek`   | DeepSeek   | `https://api.deepseek.com/v1`             | `DEEPSEEK_API_KEY`    |
+| `moonshot`   | Moonshot   | `https://api.moonshot.ai/v1`              | `MOONSHOT_API_KEY`    |
+| `groq`       | Groq       | `https://api.groq.com/openai/v1`          | `GROQ_API_KEY`        |
+| `xai`        | xAI (Grok) | `https://api.x.ai/v1`                     | `XAI_API_KEY`         |
+| `openrouter` | OpenRouter | `https://openrouter.ai/api/v1`            | `OPENROUTER_API_KEY`  |
+
+`name` must be a model ID that vendor's endpoint actually serves (`glm-5.2`
+for Z.AI, `deepseek-chat` for DeepSeek, and so on); it is passed through
+unmodified, no provider picks a default model on your behalf.
+
+For anything not in the table (a different vendor, a self-hosted Ollama or
+vLLM server, a proxy in front of one of the listed vendors), stay on
+`provider: openai` and set `base_url` and `api_key_env` directly:
 
 ```yaml
 model:
   provider: openai
-  name: glm-5.2
-  base_url: https://api.z.ai/api/coding/paas/v4
-  api_key_env: ZAI_API_KEY
-  temperature: 0.2
+  name: llama3.1
+  base_url: http://localhost:11434/v1
+  api_key_env: OLLAMA_API_KEY
 ```
 
-Known OpenAI-compatible vendors:
+`api_key_env` names the environment variable holding the key, it is never
+the key itself, and secrets must never be stored in YAML. If a local server
+doesn't check the key at all, point `api_key_env` at any variable set to a
+placeholder value; the field is still required so the request always sends
+an `Authorization` header.
 
-| Vendor      | `base_url`                                       | Typical `api_key_env` |
-| ----------- | ------------------------------------------------- | ---------------------- |
-| Z.AI (GLM)  | `https://api.z.ai/api/coding/paas/v4`              | `ZAI_API_KEY`           |
-| DeepSeek    | `https://api.deepseek.com/v1`                      | `DEEPSEEK_API_KEY`      |
-| Moonshot    | `https://api.moonshot.ai/v1`                       | `MOONSHOT_API_KEY`      |
-| Groq        | `https://api.groq.com/openai/v1`                   | `GROQ_API_KEY`          |
-| xAI (Grok)  | `https://api.x.ai/v1`                              | `XAI_API_KEY`           |
-| OpenRouter  | `https://openrouter.ai/api/v1`                     | `OPENROUTER_API_KEY`    |
-| Local (Ollama, vLLM, ...) | e.g. `http://localhost:11434/v1`     | any placeholder env var — set to a dummy value if the local server doesn't check it |
+`base_url`/`api_key_env` also override a listed vendor's preset when both a
+`provider` shorthand and one of these fields are set, useful for routing a
+known vendor through an internal proxy without giving up the shorthand:
 
-The `name` field must be a model ID that vendor's endpoint actually serves
-(e.g. `glm-5.2` for Z.AI, `deepseek-chat` for DeepSeek) — it is passed through
-unmodified. As with every provider, secrets must never be stored in YAML;
-only the *name* of the env var goes in `api_key_env`.
+```yaml
+model:
+  provider: zai
+  name: glm-5.2
+  base_url: https://llm-proxy.internal.example.com/zai
+  api_key_env: INTERNAL_PROXY_KEY
+```
 
 ---
 
