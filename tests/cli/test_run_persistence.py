@@ -23,7 +23,7 @@ class FakeRuntimeEngine:
     prompts: ClassVar[list[str]] = []
     contexts: ClassVar[list[RunContext | None]] = []
 
-    def __init__(self, _base_dir: Path) -> None: ...
+    def __init__(self, _base_dir: Path, **_kwargs: object) -> None: ...
 
     async def __aenter__(self) -> FakeRuntimeEngine:
         return self

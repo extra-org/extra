@@ -91,6 +91,7 @@ async def run_local_chat(
     grouped as a single Langfuse session. Pass ``session_id`` to set it
     explicitly; otherwise a short id is generated for the console session.
     """
+    from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
     from agent_engine.engine.langgraph.engine import LangGraphEngine
     from agent_engine.runtime.hooks import RunContext
 
@@ -103,7 +104,11 @@ async def run_local_chat(
         raise SystemExit(1) from exc
 
     context = RunContext(conversation_id=session_id or uuid.uuid4().hex[:16])
-    async with LangGraphEngine(base_dir) as engine:
+    session_approvals = InMemorySessionApprovalRepository()
+    async with LangGraphEngine(
+        base_dir,
+        session_approval_repository=session_approvals,
+    ) as engine:
         await engine.build(spec)
         await run_chat_loop(engine, stream=stream, context=context, read_line=read_line, echo=echo)
 

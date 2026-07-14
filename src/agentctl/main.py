@@ -124,9 +124,8 @@ async def _run_async(
         sys.exit(1)
 
     from agent_manager.application import ConversationService
+    from agent_manager.composition import application_repositories
     from agent_manager.config import Settings
-    from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
-    from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 
     effective_session_id = session_id or uuid4().hex[:16]
     effective_user_id = user_id or LOCAL_USER_ID
@@ -144,14 +143,18 @@ async def _run_async(
     click.echo("", err=True)
 
     settings = Settings()
-    db_engine = create_db_engine(settings.effective_database_url)
-    repository = SqlRepository(session_factory(db_engine))
     try:
-        async with LangGraphEngine(base_dir) as engine:
+        async with (
+            application_repositories(settings) as repositories,
+            LangGraphEngine(
+                base_dir,
+                session_approval_repository=repositories.session_approvals,
+            ) as engine,
+        ):
             await engine.build(spec)
             service = ConversationService(
                 engine,
-                repository,
+                repositories.conversations,
                 window=settings.context_window,
                 max_chars=settings.context_max_chars,
                 max_tokens=settings.context_max_tokens,
@@ -180,8 +183,6 @@ async def _run_async(
     except Exception as exc:
         click.echo(f"✗ Runtime error: {exc}", err=True)
         sys.exit(1)
-    finally:
-        await db_engine.dispose()
 
 
 @cli.command()

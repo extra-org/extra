@@ -173,7 +173,7 @@ async def test_local_mode_builds_engine_once(monkeypatch: pytest.MonkeyPatch) ->
     engine = FakeEngine()
 
     class _CtxEngine:
-        def __init__(self, _base_dir: object) -> None: ...
+        def __init__(self, _base_dir: object, **_kwargs: object) -> None: ...
 
         async def __aenter__(self) -> FakeEngine:
             return engine
@@ -197,7 +197,7 @@ async def test_local_mode_builds_engine_once(monkeypatch: pytest.MonkeyPatch) ->
 
 def _patch_local_engine(monkeypatch: pytest.MonkeyPatch, engine: FakeEngine) -> None:
     class _CtxEngine:
-        def __init__(self, _base_dir: object) -> None: ...
+        def __init__(self, _base_dir: object, **_kwargs: object) -> None: ...
 
         async def __aenter__(self) -> FakeEngine:
             return engine
