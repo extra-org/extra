@@ -39,7 +39,12 @@ from agent_engine.approvals.errors import (
     UnauthorizedApprover,
 )
 from agent_engine.approvals.identity import tool_identity
-from agent_engine.approvals.invocation import SessionApprovalKey, ToolInvocation
+from agent_engine.approvals.invocation import (
+    SessionApprovalGrant,
+    SessionApprovalKey,
+    SessionApprovalScope,
+    ToolInvocation,
+)
 from agent_engine.approvals.manager import (
     ApprovalManager,
     ToolExecutionManager,
@@ -72,7 +77,9 @@ from agent_engine.approvals.repository import (
 )
 from agent_engine.approvals.sanitization import mask_arguments, mask_sensitive
 from agent_engine.approvals.session_store import (
+    InMemorySessionApprovalRepository,
     InMemorySessionApprovalStore,
+    SessionApprovalRepository,
     SessionApprovalStore,
 )
 
@@ -96,6 +103,7 @@ __all__ = [
     "DefaultApprovalPolicy",
     "InMemoryApprovalRepository",
     "InMemoryRunRepository",
+    "InMemorySessionApprovalRepository",
     "InMemorySessionApprovalStore",
     "InMemoryToolExecutionRepository",
     "InvalidDecision",
@@ -104,7 +112,10 @@ __all__ = [
     "RunRecord",
     "RunRepository",
     "RunStatus",
+    "SessionApprovalGrant",
     "SessionApprovalKey",
+    "SessionApprovalRepository",
+    "SessionApprovalScope",
     "SessionApprovalStore",
     "ToolExecutionManager",
     "ToolExecutionRecord",
