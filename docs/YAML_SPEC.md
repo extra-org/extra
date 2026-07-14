@@ -344,6 +344,42 @@ For OpenAI, set `OPENAI_API_KEY` in your environment and install the provider
 extra with `pip install "agent-engine[openai]"`. Any OpenAI model your key can
 access may be used via `name`. Secrets must never be stored in YAML.
 
+### Any OpenAI-compatible endpoint
+
+The `openai` provider is not limited to `api.openai.com`. Two optional fields
+repoint it at any vendor (or self-hosted server) that speaks the OpenAI chat
+completions API:
+
+- `base_url` — the endpoint's base URL.
+- `api_key_env` — the environment variable holding that vendor's API key.
+  Defaults to `OPENAI_API_KEY` when omitted, so existing YAML is unaffected.
+
+```yaml
+model:
+  provider: openai
+  name: glm-5.2
+  base_url: https://api.z.ai/api/coding/paas/v4
+  api_key_env: ZAI_API_KEY
+  temperature: 0.2
+```
+
+Known OpenAI-compatible vendors:
+
+| Vendor      | `base_url`                                       | Typical `api_key_env` |
+| ----------- | ------------------------------------------------- | ---------------------- |
+| Z.AI (GLM)  | `https://api.z.ai/api/coding/paas/v4`              | `ZAI_API_KEY`           |
+| DeepSeek    | `https://api.deepseek.com/v1`                      | `DEEPSEEK_API_KEY`      |
+| Moonshot    | `https://api.moonshot.ai/v1`                       | `MOONSHOT_API_KEY`      |
+| Groq        | `https://api.groq.com/openai/v1`                   | `GROQ_API_KEY`          |
+| xAI (Grok)  | `https://api.x.ai/v1`                              | `XAI_API_KEY`           |
+| OpenRouter  | `https://openrouter.ai/api/v1`                     | `OPENROUTER_API_KEY`    |
+| Local (Ollama, vLLM, ...) | e.g. `http://localhost:11434/v1`     | any placeholder env var — set to a dummy value if the local server doesn't check it |
+
+The `name` field must be a model ID that vendor's endpoint actually serves
+(e.g. `glm-5.2` for Z.AI, `deepseek-chat` for DeepSeek) — it is passed through
+unmodified. As with every provider, secrets must never be stored in YAML;
+only the *name* of the env var goes in `api_key_env`.
+
 ---
 
 ## Graph Topology

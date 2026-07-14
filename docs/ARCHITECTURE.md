@@ -582,9 +582,14 @@ LLM-invoked tools. Per-tool `input_policy` (trusted parameter injection) is
 still not implemented — see §11.
 
 **Model providers (✅ done, not in the original task list):**
-`agent_engine/models/factory.py` builds chat models via `init_chat_model` for
-both **Anthropic** and **Amazon Bedrock** (`ChatBedrockConverse`), with clear
-configuration errors for missing settings.
+`agent_engine/models/factory.py` builds chat models for **Anthropic** (via
+`init_chat_model`), **Amazon Bedrock** (`ChatBedrockConverse`), **Google
+Gemini** (`ChatGoogleGenerativeAI`), and **OpenAI** (`ChatOpenAI`), with clear
+configuration errors for missing settings. The `openai` provider additionally
+accepts `base_url` and `api_key_env`, so it also covers any OpenAI-compatible
+endpoint — third-party vendors (Z.AI, DeepSeek, Moonshot, Groq, xAI,
+OpenRouter, ...) or a self-hosted server (Ollama, vLLM) — without a new
+provider integration. See [YAML_SPEC.md](YAML_SPEC.md#any-openai-compatible-endpoint).
 
 **CLI (0008 — ✅ done):**
 `agentctl validate`, `agentctl inspect` (offline summary: agents, MCPs, hooks,

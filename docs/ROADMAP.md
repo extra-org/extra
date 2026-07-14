@@ -38,7 +38,8 @@ table above:
 | ---------- | ------ | ----- |
 | Runtime hooks (auth/policy/audit/context-enrichment, incl. `transform_tool_result`) | ✅ done | `agent_engine/runtime/hooks/`, [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) |
 | Per-run execution-limit guardrails | ✅ done | `agent_engine/core/execution.py`, `agent_engine/runtime/execution.py`, [EXECUTION_LIMITS.md](EXECUTION_LIMITS.md) |
-| Amazon Bedrock model provider (in addition to Anthropic) | ✅ done | `agent_engine/models/factory.py` |
+| Amazon Bedrock, Google Gemini, and OpenAI model providers (in addition to Anthropic) | ✅ done | `agent_engine/models/factory.py` |
+| Any OpenAI-compatible endpoint via `provider: openai` + `base_url`/`api_key_env` (Z.AI, DeepSeek, Moonshot, Groq, xAI, OpenRouter, local Ollama/vLLM, ...) | ✅ done | `agent_engine/models/factory.py`, [YAML_SPEC.md](YAML_SPEC.md#any-openai-compatible-endpoint) |
 | Conversation persistence (SQLite default, sessions, users) | ✅ done | `agent_manager/` |
 | Embeddable JS/React chat widget | ✅ done | `agent_manager/api/static/widget/` |
 | Long-term / cross-conversation memory | ⏳ planned | — |
