@@ -34,6 +34,8 @@ def build_chat_model(
     region: str | None = None,
     max_tokens: int | None = None,
     top_p: float | None = None,
+    base_url: str | None = None,
+    api_key_env: str | None = None,
 ) -> BaseChatModel:
     """Construct a chat model from flat config fields.
 
@@ -81,6 +83,8 @@ def build_chat_model(
             temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
+            base_url=base_url,
+            api_key_env=api_key_env,
         )
     supported = ", ".join(_SUPPORTED_PROVIDERS)
     raise ModelConfigurationError(
@@ -205,11 +209,19 @@ def _build_openai_model(
     temperature: float | None,
     max_tokens: int | None,
     top_p: float | None,
+    base_url: str | None = None,
+    api_key_env: str | None = None,
 ) -> BaseChatModel:
-    api_key = _resolve_openai_api_key()
+    # `api_key_env` lets this provider point at ANY OpenAI-compatible chat
+    # completions endpoint (Z.AI, DeepSeek, Moonshot, Groq, xAI, OpenRouter,
+    # a local Ollama/vLLM server, ...) by naming the env var that holds that
+    # vendor's key. Defaults to OPENAI_API_KEY to keep existing YAML working
+    # unchanged.
+    key_env_var = api_key_env.strip() if api_key_env and api_key_env.strip() else "OPENAI_API_KEY"
+    api_key = _resolve_openai_api_key(key_env_var)
     if not api_key:
         raise ModelConfigurationError(
-            "OpenAI provider requires OPENAI_API_KEY. "
+            f"OpenAI-compatible provider requires {key_env_var}. "
             "Set it in your environment before running agentctl."
         )
 
@@ -223,14 +235,17 @@ def _build_openai_model(
         ) from exc
 
     # OpenAI's chat model uses the same `max_tokens` name as extra's config, so
-    # no remapping is needed. The API key is passed explicitly so OPENAI_API_KEY
-    # is honored regardless of how the installed SDK resolves credentials.
+    # no remapping is needed. The API key is passed explicitly so the resolved
+    # env var is honored regardless of how the installed SDK resolves
+    # credentials. `base_url` repoints the client at any OpenAI-compatible
+    # endpoint; when unset, ChatOpenAI's own default (api.openai.com) applies.
     try:
         return ChatOpenAI(
             **_without_none(
                 {
                     "model": name,
                     "api_key": api_key,
+                    "base_url": base_url,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                     "top_p": top_p,
@@ -239,8 +254,8 @@ def _build_openai_model(
         )
     except Exception as exc:
         raise ModelConfigurationError(
-            "Could not initialize OpenAI chat model. Verify OPENAI_API_KEY is valid "
-            "and the model name is an OpenAI model your key can access."
+            f"Could not initialize OpenAI-compatible chat model. Verify {key_env_var} is "
+            "valid and the model name is one your key/endpoint can access."
         ) from exc
 
 
@@ -257,8 +272,8 @@ def _resolve_gemini_api_key() -> str | None:
     return key.strip() if key and key.strip() else None
 
 
-def _resolve_openai_api_key() -> str | None:
-    key = os.getenv("OPENAI_API_KEY")
+def _resolve_openai_api_key(env_var: str = "OPENAI_API_KEY") -> str | None:
+    key = os.getenv(env_var)
     return key.strip() if key and key.strip() else None
 
 

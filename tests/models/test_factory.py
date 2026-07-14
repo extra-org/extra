@@ -318,6 +318,52 @@ def test_openai_does_not_log_api_key(
     assert "super-secret-openai-key" not in caplog.text
 
 
+def test_openai_base_url_points_at_a_compatible_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeOpenAIModel.instances.clear()
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.setenv("ZAI_API_KEY", "zai-test-key")
+
+    result = build_chat_model(
+        "openai",
+        "glm-5.2",
+        temperature=0.2,
+        base_url="https://api.z.ai/api/coding/paas/v4",
+        api_key_env="ZAI_API_KEY",
+    )
+
+    assert result is _FakeOpenAIModel.instances[0]
+    assert _FakeOpenAIModel.instances[0].kwargs == {
+        "model": "glm-5.2",
+        "api_key": "zai-test-key",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "temperature": 0.2,
+    }
+
+
+def test_openai_api_key_env_defaults_to_openai_api_key_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeOpenAIModel.instances.clear()
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.setenv("OPENAI_API_KEY", "oa-test-key")
+
+    build_chat_model("openai", "gpt-4.1-mini", api_key_env=None)
+
+    assert _FakeOpenAIModel.instances[0].kwargs["api_key"] == "oa-test-key"
+
+
+def test_openai_missing_custom_api_key_env_names_that_var_in_the_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+
+    with pytest.raises(ModelConfigurationError, match="requires ZAI_API_KEY"):
+        build_chat_model("openai", "glm-5.2", api_key_env="ZAI_API_KEY")
+
+
 def test_unsupported_provider_is_rejected_clearly() -> None:
     with pytest.raises(ModelConfigurationError, match="Unsupported model provider 'cohere'"):
         build_chat_model("cohere", "command-r")

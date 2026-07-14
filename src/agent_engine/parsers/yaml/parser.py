@@ -604,6 +604,8 @@ class YAMLParser(Parser):
             region=raw.get("region"),
             max_tokens=raw.get("max_tokens"),
             top_p=raw.get("top_p"),
+            base_url=raw.get("base_url"),
+            api_key_env=raw.get("api_key_env"),
         )
 
     def _build_resolvers(
