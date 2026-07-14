@@ -109,6 +109,7 @@ class ApprovalRecord:
     server_id: str | None = None
     auth_ref: str | None = None
     authorized_user_id: str | None = None
+    organization_id: str | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 

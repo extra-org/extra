@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 
 from agent_engine.approvals.decision import ApprovalDecision
-from agent_engine.approvals.invocation import ToolInvocation
+from agent_engine.approvals.invocation import SessionApprovalGrant, ToolInvocation
 from agent_engine.approvals.policy import (
     ApprovalPolicy,
     ApprovalQuery,
@@ -33,7 +33,8 @@ from agent_engine.approvals.provider import (
 )
 from agent_engine.approvals.sanitization import mask_arguments
 from agent_engine.approvals.session_store import (
-    InMemorySessionApprovalStore,
+    InMemorySessionApprovalRepository,
+    SessionApprovalRepository,
     SessionApprovalStore,
 )
 from agent_engine.logging_config import log
@@ -61,11 +62,20 @@ class ApprovalCoordinator:
         provider: ApprovalProvider,
         *,
         policy: ApprovalPolicy | None = None,
+        session_repository: SessionApprovalRepository | None = None,
         session_store: SessionApprovalStore | None = None,
     ) -> None:
+        if session_repository is not None and session_store is not None:
+            raise ValueError("pass session_repository or session_store, not both")
         self._provider = provider
         self._policy = policy or DefaultApprovalPolicy()
-        self._sessions = session_store or InMemorySessionApprovalStore()
+        self._session_repository = session_repository
+        self._legacy_session_store = session_store
+        self._default_session_repository = (
+            InMemorySessionApprovalRepository()
+            if session_repository is None and session_store is None
+            else None
+        )
 
     async def resolve(self, invocation: ToolInvocation, *, auto_mode: bool) -> ApprovalOutcome:
         query = await self._build_query(invocation, auto_mode=auto_mode)
@@ -104,7 +114,11 @@ class ApprovalCoordinator:
         key = invocation.session_key
         if key is None:
             return False
-        return await self._sessions.is_allowed(key)
+        repository = self._session_repository or self._default_session_repository
+        if repository is not None:
+            return await repository.is_allowed(key)
+        assert self._legacy_session_store is not None
+        return await self._legacy_session_store.is_allowed(key)
 
     async def _apply(self, invocation: ToolInvocation, decision: ApprovalDecision) -> bool:
         """Apply a typed decision; return whether the invocation may execute.
@@ -125,7 +139,18 @@ class ApprovalCoordinator:
         if decision == ApprovalDecision.ALLOW_FOR_SESSION:
             key = invocation.session_key
             if key is not None:
-                await self._sessions.allow(key)
+                repository = self._session_repository or self._default_session_repository
+                if repository is not None:
+                    await repository.allow(
+                        key,
+                        grant=SessionApprovalGrant(
+                            run_id=invocation.run_id,
+                            approval_id=invocation.approval_id,
+                        ),
+                    )
+                else:
+                    assert self._legacy_session_store is not None
+                    await self._legacy_session_store.allow(key)
                 log(
                     logger,
                     logging.INFO,

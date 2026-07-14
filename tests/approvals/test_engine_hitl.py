@@ -18,10 +18,11 @@ from typing import Any, cast
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.tool import ToolCall as LCToolCall
 
 from agent_engine.approvals.errors import ApprovalAlreadyProcessed
+from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 from agent_engine.core.spec import (
     AgentSpec,
     BasePromptSet,
@@ -38,7 +39,7 @@ _MODEL = ModelConfig(provider="fake", name="fake", temperature=None)
 
 
 class FakeChatModel:
-    """Calls a fixed tool (stable id ``call_1``) once, then answers.
+    """Calls a fixed tool once, with an id stable for the input message.
 
     Deterministic across graph re-entry: given the same messages it returns the
     same tool call, so resume replays to the same interrupt point.
@@ -58,10 +59,17 @@ class FakeChatModel:
 
     def _respond(self, messages: list[Any]) -> AIMessage:
         if self._tool_names and not any(isinstance(m, ToolMessage) for m in messages):
+            input_text = next(
+                (str(m.content) for m in messages if isinstance(m, HumanMessage)), "message"
+            )
             return AIMessage(
                 content="",
                 tool_calls=[
-                    LCToolCall(name=self._tool_names[0], args={"message": "go"}, id="call_1")
+                    LCToolCall(
+                        name=self._tool_names[0],
+                        args={"message": "go"},
+                        id=f"call_{input_text}",
+                    )
                 ],
             )
         # Echo the last tool result so tests can see what reached the model.
@@ -168,24 +176,81 @@ async def test_allow_for_session_suppresses_later_prompt_same_conversation(
         await engine.build(_spec("send_email"))
         # First run in conversation "conv-1": approval is requested.
         pending = await engine.run(
-            "hi", context=RunContext(run_id="run-a", conversation_id="conv-1")
+            "hi",
+            context=RunContext(run_id="run-a", conversation_id="conv-1", user_id="user-1"),
         )
         assert pending.pending_approval is not None
         resumed = await engine.resume(
-            "run-a", pending.pending_approval.approval_id, "allow for this session"
+            "run-a",
+            pending.pending_approval.approval_id,
+            "allow for this session",
+            caller_user_id="user-1",
         )
         assert resumed.status == "completed"
 
         # Second run in the SAME conversation: no approval prompt this time.
         second = await engine.run(
-            "hi", context=RunContext(run_id="run-b", conversation_id="conv-1")
+            "again",
+            context=RunContext(run_id="run-b", conversation_id="conv-1", user_id="user-1"),
         )
         assert second.status == "completed"
         assert second.pending_approval is None
+        assert _executions(counter) == 2
+
+        # The same conversation id must not leak permission to another user.
+        other_user = await engine.run(
+            "other-user",
+            context=RunContext(run_id="run-c", conversation_id="conv-1", user_id="user-2"),
+        )
+        assert other_user.status == "pending_approval"
 
         # A different conversation still requires approval (session is scoped).
-        other = await engine.run("hi", context=RunContext(run_id="run-c", conversation_id="conv-2"))
+        other = await engine.run(
+            "other-session",
+            context=RunContext(run_id="run-d", conversation_id="conv-2", user_id="user-1"),
+        )
         assert other.status == "pending_approval"
+
+
+async def test_session_permission_survives_engine_reconstruction(tmp_path: Path) -> None:
+    counter = tmp_path / "calls.log"
+    _write_counting_tool(tmp_path, "send_email", counter)
+    repository = InMemorySessionApprovalRepository()
+    context = RunContext(run_id="run-first", conversation_id="conv-1", user_id="user-1")
+
+    async with LangGraphEngine(
+        tmp_path,
+        model_factory=_factory,
+        session_approval_repository=repository,
+    ) as first_engine:
+        await first_engine.build(_spec("send_email"))
+        pending = await first_engine.run("first", context=context)
+        assert pending.pending_approval is not None
+        await first_engine.resume(
+            "run-first",
+            pending.pending_approval.approval_id,
+            "allow for this session",
+            caller_user_id="user-1",
+        )
+
+    async with LangGraphEngine(
+        tmp_path,
+        model_factory=_factory,
+        session_approval_repository=repository,
+    ) as second_engine:
+        await second_engine.build(_spec("send_email"))
+        later = await second_engine.run(
+            "later",
+            context=RunContext(
+                run_id="run-later",
+                conversation_id="conv-1",
+                user_id="user-1",
+            ),
+        )
+
+    assert later.status == "completed"
+    assert later.pending_approval is None
+    assert _executions(counter) == 2
 
 
 async def test_auto_mode_executes_without_interrupt(tmp_path: Path) -> None:

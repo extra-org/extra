@@ -41,7 +41,21 @@ class InterruptApprovalProvider:
         inv = request.invocation
         run_context = current_run_context.get()
         run_id = run_context.run_id if run_context and run_context.run_id else inv.tool_call_id
-        authorized_user_id = run_context.user_id if run_context else None
+        auth_context = run_context.auth_context if run_context else None
+        authorized_user_id = (
+            auth_context.user_id
+            if auth_context and auth_context.user_id is not None
+            else run_context.user_id
+            if run_context
+            else None
+        )
+        organization_id = (
+            auth_context.organization_id
+            if auth_context and auth_context.organization_id is not None
+            else run_context.organization_id
+            if run_context
+            else None
+        )
         auth_ref = run_context.conversation_id if run_context else None
         approval_id = f"appr_{uuid.uuid4().hex[:16]}"
 
@@ -58,6 +72,7 @@ class InterruptApprovalProvider:
             server_id=inv.server_id,
             auth_ref=auth_ref,
             authorized_user_id=authorized_user_id,
+            organization_id=organization_id,
         )
 
         payload = {
