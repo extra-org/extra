@@ -6,7 +6,8 @@ import logging
 import re
 import sys
 import time
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -24,6 +25,10 @@ from agent_engine.approvals.errors import (
     InvalidDecision,
     RunNotFound,
     UnauthorizedApprover,
+)
+from agent_engine.approvals.session_store import (
+    InMemorySessionApprovalRepository,
+    SessionApprovalRepository,
 )
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.engine import Engine
@@ -157,7 +162,21 @@ class RunStatusResponse(BaseModel):
     pending_approval: PendingApprovalModel | None = None
 
 
-def create_app(config_path: str) -> FastAPI:
+SessionApprovalRepositoryFactory = Callable[
+    [], AbstractAsyncContextManager[SessionApprovalRepository]
+]
+
+
+@asynccontextmanager
+async def _in_memory_session_approvals() -> AsyncIterator[SessionApprovalRepository]:
+    yield InMemorySessionApprovalRepository()
+
+
+def create_app(
+    config_path: str,
+    *,
+    session_approval_repository_factory: SessionApprovalRepositoryFactory | None = None,
+) -> FastAPI:
     _engine: Engine | None = None
     _system_name: str = ""
 
@@ -177,7 +196,14 @@ def create_app(config_path: str) -> FastAPI:
 
         _system_name = spec.meta.name
 
-        async with LangGraphEngine(base_dir) as e:
+        repository_factory = session_approval_repository_factory or _in_memory_session_approvals
+        async with (
+            repository_factory() as session_approvals,
+            LangGraphEngine(
+                base_dir,
+                session_approval_repository=session_approvals,
+            ) as e,
+        ):
             await e.build(spec)
             _engine = e
             yield
