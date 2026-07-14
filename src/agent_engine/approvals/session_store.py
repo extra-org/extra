@@ -1,27 +1,35 @@
-"""Where "allow for this session" permissions live.
+"""Session-approval repository port and local in-memory adapter.
 
-The coordinator depends only on the :class:`SessionApprovalStore` protocol
-(Dependency Inversion), never on a concrete store. The default in-memory
-implementation is process-local and async-safe.
+The engine depends only on :class:`SessionApprovalRepository`. Persistent
+implementations live outside ``agent_engine`` and are injected by application
+composition. The in-memory implementation remains here as the dependency-free
+local-development and backwards-compatibility adapter.
 
-Session lifecycle: a permission is keyed by :class:`SessionApprovalKey`
-(session id + agent id + tool identity). Because the default store holds its
-state in a plain in-process set, permissions become unreachable when the
-process ends — they are intentionally *not* durable. A distributed deployment
-that needs cross-process resume can supply another implementation of this same
-protocol (e.g. Redis keyed by the same tuple) without touching callers.
+Session lifecycle: a permission is keyed by :class:`SessionApprovalKey`, which
+includes deployment, tenant, user, session, agent, and provider-qualified tool
+identity. The local adapter holds state for the lifetime of the injected
+repository instance. A distributed deployment supplies a persistent adapter
+behind the same protocol without changing engine callers.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
-from agent_engine.approvals.invocation import SessionApprovalKey
+from agent_engine.approvals.invocation import (
+    SessionApprovalGrant,
+    SessionApprovalKey,
+    SessionApprovalScope,
+)
 
 
 @runtime_checkable
 class SessionApprovalStore(Protocol):
+    """Legacy session-approval contract retained for existing integrations."""
+
     async def is_allowed(self, key: SessionApprovalKey) -> bool:
         """Return True if this tool is already approved for the session."""
 
@@ -29,7 +37,24 @@ class SessionApprovalStore(Protocol):
         """Record a session-scoped approval for this tool."""
 
 
-class InMemorySessionApprovalStore:
+@runtime_checkable
+class SessionApprovalRepository(Protocol):
+    async def is_allowed(self, key: SessionApprovalKey) -> bool:
+        """Return True if this tool is already approved for the session."""
+
+    async def allow(
+        self, key: SessionApprovalKey, *, grant: SessionApprovalGrant | None = None
+    ) -> None:
+        """Record a session-scoped approval for this tool."""
+
+    async def revoke(self, key: SessionApprovalKey) -> None:
+        """Revoke one permission if it exists."""
+
+    async def clear_session(self, scope: SessionApprovalScope) -> None:
+        """Revoke every permission in the exact session identity scope."""
+
+
+class InMemorySessionApprovalRepository(SessionApprovalRepository):
     """Process-local, async-safe session-permission store.
 
     Not shared across processes/pods: permissions are lost on restart. A single
@@ -37,14 +62,37 @@ class InMemorySessionApprovalStore:
     and an insert, so contention is negligible.
     """
 
-    def __init__(self) -> None:
-        self._allowed: set[SessionApprovalKey] = set()
+    def __init__(self, *, clock: Callable[[], datetime] | None = None) -> None:
+        self._grants: dict[SessionApprovalKey, SessionApprovalGrant] = {}
         self._lock = asyncio.Lock()
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def is_allowed(self, key: SessionApprovalKey) -> bool:
         async with self._lock:
-            return key in self._allowed
+            grant = self._grants.get(key)
+            if grant is None:
+                return False
+            if grant.expires_at is not None and grant.expires_at <= self._clock():
+                self._grants.pop(key, None)
+                return False
+            return True
 
-    async def allow(self, key: SessionApprovalKey) -> None:
+    async def allow(
+        self, key: SessionApprovalKey, *, grant: SessionApprovalGrant | None = None
+    ) -> None:
         async with self._lock:
-            self._allowed.add(key)
+            self._grants[key] = grant or SessionApprovalGrant()
+
+    async def revoke(self, key: SessionApprovalKey) -> None:
+        async with self._lock:
+            self._grants.pop(key, None)
+
+    async def clear_session(self, scope: SessionApprovalScope) -> None:
+        async with self._lock:
+            matching = [key for key in self._grants if key.scope == scope]
+            for key in matching:
+                self._grants.pop(key, None)
+
+
+# Backwards-compatible concrete name for integrations built against the first HITL API.
+InMemorySessionApprovalStore = InMemorySessionApprovalRepository
