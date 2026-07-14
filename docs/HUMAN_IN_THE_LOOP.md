@@ -67,14 +67,15 @@ Components (all small, single-responsibility):
 | --- | --- |
 | `ApprovalDecision` / `parse_decision` | Typed decision + the single free-text parsing boundary |
 | `ApprovalPolicy` / `DefaultApprovalPolicy` | Pure "does this need approval?" rule |
-| `SessionApprovalStore` | Where `ALLOW_FOR_SESSION` permissions live (in-memory default) |
+| `SessionApprovalRepository` | Port for looking up, granting, revoking, and clearing session permissions |
+| `InMemorySessionApprovalRepository` | Current process-lifetime adapter |
 | `ApprovalProvider` | Requests a decision from a human (frontend-agnostic) |
 | `ApprovalCoordinator` | Wires policy + session store + provider together |
 | `ApprovalManager` | Pending-approval lifecycle + atomic resume claim |
 | `ToolExecutionManager` | Execution idempotency ledger |
 | `CheckpointProviderFactory` | Selects the checkpointer once at startup |
 
-The policy, session store, and provider are all injected behind interfaces
+The policy, session repository, and provider are all injected behind interfaces
 (Dependency Inversion) — nothing is hardcoded into the coordinator, nodes, or
 providers.
 
@@ -105,12 +106,23 @@ typed `ApprovalDecision` enum — no raw-string comparisons.
 
 ### Session-permission key and lifecycle
 
-A session permission is keyed by:
+A session permission is keyed by the exact normalized tuple:
 
 ```text
-session_id + agent_id + tool_identity
+system_namespace
++ organization_id
++ user_id
++ session_id
++ agent_id
++ provider_namespaced_tool_identity
 ```
 
+- `system_namespace` is the validated system name, preventing two systems in the
+  same process from sharing a permission.
+- `organization_id` and `user_id` come from the server-resolved `RunContext`
+  identity when available. Missing optional identity values normalize to an empty
+  string so lookup semantics stay deterministic. A permission recorded with no
+  authenticated user does not match a later authenticated user.
 - `session_id` is the **conversation id** carried on `RunContext`
   (`conversation_id`, from the `X-Session-Id` request header). A conversation
   spans multiple runs, so `ALLOW_FOR_SESSION` persists across the runs of one
@@ -122,11 +134,29 @@ session_id + agent_id + tool_identity
   namespaced by their server id). Two MCP servers exposing the same short tool
   name therefore never share a permission.
 
-The default `SessionApprovalStore` keeps permissions in a process-local, async-safe
-set. **They are lost when the process restarts** — this is intentional and
-isolated behind the store interface. A distributed deployment can supply another
-implementation of the same protocol (e.g. Redis keyed by the same tuple) without
-touching callers.
+`run_id` and `approval_id` are stored as audit provenance, not as lookup-key
+fields. `tool_call_id` is never part of this permission. Raw tool arguments are
+neither part of the key nor stored: approving `send_email` for a session allows
+future `send_email` calls in that scope regardless of their arguments.
+
+### Repository selection and lifetime
+
+The application composition layer creates one async-safe in-memory repository
+for the application lifespan and injects that same instance into the long-lived
+engine. The engine does not read configuration or know which adapter it receives.
+Grants survive later runs and engine calls that share the repository, and they
+disappear when the process restarts. Direct engine construction retains an
+in-memory default for backwards compatibility and tests.
+
+There is intentionally no database table, migration, or ORM adapter for session
+approvals yet. The repository port is the extension point for adding a persistent
+adapter later without changing `ApprovalCoordinator` or `LangGraphEngine`.
+
+`revoke(key)` deactivates one exact grant and `clear_session(scope)` deactivates
+all tools for one exact `(system, organization, user, session)` scope. The current
+adapter supports `expires_at`; expired grants fail lookup. No arbitrary TTL or
+automatic logout/deletion cleanup is currently applied because the platform does
+not yet expose one reliable session-end lifecycle hook.
 
 ## 4. `auto`
 
@@ -209,16 +239,17 @@ local development and production.
 The in-memory checkpointer is process-local. On selection the engine logs a
 warning that it: is not shared between replicas/Pods, is lost on restart, and
 cannot resume a run on another instance. It is intended for local development and
-tests, never for multi-replica production. The default session-approval store has
-the same lifetime.
+tests, never for multi-replica production. Session approvals currently have the
+same process-local lifetime.
 
 ### Cross-Pod resume
 
 With a shared persistent checkpointer, the run state belongs to the `thread_id`,
 not the Pod. Pod A can start a run and reach an interrupt; the approval can later
 be delivered to Pod C, which loads the same `thread_id` and resumes. No sticky
-sessions are required. (Cross-Pod `ALLOW_FOR_SESSION` additionally requires a
-shared `SessionApprovalStore` implementation.)
+sessions are required. Session approvals, the pending-approval repository, and
+the execution ledger are currently process-local, so fully cross-Pod HITL remains
+future work behind their existing repository contracts.
 
 ## 7. Concurrency and idempotency
 
@@ -232,8 +263,23 @@ others get a stable `ApprovalAlreadyProcessed`. In-memory this is a locked
 transition; the shared-DB implementation maps it to a conditional
 `UPDATE ... WHERE status = 'pending'`.
 
-**Session-store safety.** The in-memory session store guards its state with a
-lock, so concurrent `ALLOW_FOR_SESSION` grants and lookups cannot corrupt it.
+**Session-repository safety.** The in-memory adapter guards lookup, grant,
+revocation, expiry removal, and session cleanup with one async lock. Repeated
+grants replace the value for the same immutable key and cannot create duplicates.
+
+### Execution cache versus session permission
+
+These are independent mechanisms:
+
+| Mechanism | Key | Purpose | Effect on a later call |
+| --- | --- | --- | --- |
+| Tool execution ledger | `execution_id` derived from `tool_call_id` | Prevent replay of the same requested side effect | Same call id returns the recorded result without executing again |
+| Session approval repository | system/org/user/session/agent/tool identity | Authorize future calls to the tool | A **new** call id skips the prompt but executes normally |
+
+Consequently, `ALLOW_FOR_SESSION` never returns a prior tool result. A later
+model request has a new `tool_call_id`, passes the permission lookup, and reaches
+the provider again. The execution ledger is consulted afterward only to protect
+against replay of that particular call id.
 
 **Execution idempotency.** Each execution attempt has a stable `execution_id`
 derived from the `tool_call_id`. Before running a tool the engine checks the
@@ -290,9 +336,12 @@ argument bodies.
 - **No risk classification (by design).** This version asks for approval on every
   tool by default. A future `ApprovalPolicy` implementation can add risk-based
   auto-execution at the extension point in §2 without reworking the workflow.
-- **In-memory session approvals.** The default `SessionApprovalStore` is
-  process-local and lost on restart. This is explicit and isolated behind the
-  store interface; a distributed implementation can replace it.
+- **Lifecycle cleanup is explicit.** Expiry, `revoke`, and `clear_session` are
+  implemented, but there is no automatic cleanup on logout or conversation
+  deletion until a reliable platform session-end hook exists.
+- **In-memory session approvals.** Permissions are process-local and lost on
+  restart. Cross-Pod behavior requires a future persistent implementation of the
+  existing `SessionApprovalRepository` port.
 - **Single-node re-execution.** With the current one-node-per-graph-node design,
   resuming replays the node from its start (LangGraph semantics). Preparation is
   deterministic and the idempotency ledger prevents duplicate side effects; a
