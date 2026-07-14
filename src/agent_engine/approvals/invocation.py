@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from agent_engine.approvals.identity import tool_identity
@@ -20,13 +21,46 @@ class SessionApprovalKey:
     """The scope of a single "allow for this session" permission.
 
     Frozen (and therefore hashable) so it can key a set/dict store directly.
-    Scoped by session, agent, and stable tool identity — never by argument
-    values, so ``ALLOW_FOR_SESSION`` applies to the tool, not one argument set.
+    Optional identity dimensions use empty strings rather than ``None`` so
+    persistent adapters can enforce one collision-safe uniqueness constraint.
+    Argument values are deliberately excluded: ``ALLOW_FOR_SESSION`` applies
+    to the tool identity, not one argument set.
     """
 
     session_id: str
     agent_id: str
     tool_identity: str
+    system_namespace: str = ""
+    user_id: str = ""
+    organization_id: str = ""
+
+    @property
+    def scope(self) -> SessionApprovalScope:
+        return SessionApprovalScope(
+            session_id=self.session_id,
+            system_namespace=self.system_namespace,
+            user_id=self.user_id,
+            organization_id=self.organization_id,
+        )
+
+
+@dataclass(frozen=True)
+class SessionApprovalScope:
+    """Identity shared by every permission in one logical session."""
+
+    session_id: str
+    system_namespace: str = ""
+    user_id: str = ""
+    organization_id: str = ""
+
+
+@dataclass(frozen=True)
+class SessionApprovalGrant:
+    """Optional provenance and lifecycle metadata for a permission grant."""
+
+    run_id: str | None = None
+    approval_id: str | None = None
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +80,11 @@ class ToolInvocation:
     provider: ToolProviderName = "local"
     server_id: str | None = None
     arguments: Mapping[str, Any] = field(default_factory=dict)
+    system_namespace: str = ""
+    user_id: str = ""
+    organization_id: str = ""
+    run_id: str | None = None
+    approval_id: str | None = None
 
     @property
     def tool_identity(self) -> str:
@@ -67,6 +106,9 @@ class ToolInvocation:
             session_id=self.session_id,
             agent_id=self.agent_id,
             tool_identity=self.tool_identity,
+            system_namespace=self.system_namespace,
+            user_id=self.user_id,
+            organization_id=self.organization_id,
         )
 
     @property
