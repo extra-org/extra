@@ -148,6 +148,7 @@ class AgentNode:
         base_dir: Path,
         execution_manager: ToolExecutionManager,
         approval_coordinator: ApprovalCoordinator,
+        system_namespace: str = "",
         mcp_server_by_tool: dict[str, str] | None = None,
     ) -> None:
         self._spec = spec
@@ -161,6 +162,7 @@ class AgentNode:
         self._base_dir = base_dir
         self._execution_manager = execution_manager
         self._approval_coordinator = approval_coordinator
+        self._system_namespace = system_namespace
 
     async def __call__(self, state: GraphState) -> dict[str, object]:
         ctx = self._resolve_context()
@@ -447,6 +449,22 @@ class AgentNode:
         """
         run_context = current_run_context.get()
         session_id = run_context.conversation_id if run_context else None
+        auth_context = run_context.auth_context if run_context else None
+        user_id = (
+            auth_context.user_id
+            if auth_context and auth_context.user_id is not None
+            else run_context.user_id
+            if run_context
+            else None
+        )
+        organization_id = (
+            auth_context.organization_id
+            if auth_context and auth_context.organization_id is not None
+            else run_context.organization_id
+            if run_context
+            else None
+        )
+        approval_id_value = run_context.metadata.get("approval_id") if run_context else None
         invocation = ToolInvocation(
             tool_call_id=call.tool_call_id,
             agent_id=self._spec.id,
@@ -455,6 +473,11 @@ class AgentNode:
             provider=call.provider,
             server_id=call.server_id,
             arguments=call.args,
+            system_namespace=self._system_namespace,
+            user_id=user_id or "",
+            organization_id=organization_id or "",
+            run_id=run_context.run_id if run_context else None,
+            approval_id=(approval_id_value if isinstance(approval_id_value, str) else None),
         )
         outcome = await self._approval_coordinator.resolve(
             invocation, auto_mode=self._spec.auto_mode

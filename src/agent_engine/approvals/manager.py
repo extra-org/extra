@@ -139,6 +139,7 @@ class ApprovalManager:
         server_id: str | None = None,
         auth_ref: str | None = None,
         authorized_user_id: str | None = None,
+        organization_id: str | None = None,
     ) -> ApprovalRecord:
         """Persist a pending approval and move the run into PENDING_APPROVAL.
 
@@ -166,6 +167,7 @@ class ApprovalManager:
             server_id=server_id,
             auth_ref=auth_ref,
             authorized_user_id=authorized_user_id,
+            organization_id=organization_id,
         )
         await self._approvals.create(record)
         # A run may not have been registered by an external caller; register lazily.

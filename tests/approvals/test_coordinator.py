@@ -13,7 +13,7 @@ import pytest
 
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision
-from agent_engine.approvals.invocation import ToolInvocation
+from agent_engine.approvals.invocation import SessionApprovalKey, ToolInvocation
 from agent_engine.approvals.provider import ApprovalRequest
 from agent_engine.approvals.session_store import InMemorySessionApprovalStore
 
@@ -49,6 +49,19 @@ class MappingProvider:
         return self._by_call[request.invocation.tool_call_id]
 
 
+class LegacySessionApprovalStore:
+    """An integration implementing the original two-method store contract."""
+
+    def __init__(self) -> None:
+        self.allowed: set[SessionApprovalKey] = set()
+
+    async def is_allowed(self, key: SessionApprovalKey) -> bool:
+        return key in self.allowed
+
+    async def allow(self, key: SessionApprovalKey) -> None:
+        self.allowed.add(key)
+
+
 def _inv(
     *,
     tool_call_id: str = "tc1",
@@ -81,7 +94,10 @@ async def test_allow_once_executes_and_asks_again() -> None:
     assert first.execute is True
     assert first.decision == ApprovalDecision.ALLOW_ONCE
 
-    second = await coord.resolve(_inv(tool_call_id="tc2"), auto_mode=False)
+    second = await coord.resolve(
+        _inv(tool_call_id="tc2", arguments={"different": "arguments"}),
+        auto_mode=False,
+    )
     assert second.execute is True
     # ALLOW_ONCE persists nothing: the provider is consulted a second time.
     assert len(provider.requests) == 2
@@ -96,9 +112,25 @@ async def test_allow_for_session_suppresses_further_prompts() -> None:
 
     assert (await coord.resolve(_inv(), auto_mode=False)).execute is True
     # Same tool, agent, session -> no second prompt.
-    second = await coord.resolve(_inv(tool_call_id="tc2"), auto_mode=False)
+    second = await coord.resolve(
+        _inv(tool_call_id="tc2", arguments={"different": "arguments"}),
+        auto_mode=False,
+    )
     assert second.execute is True
     assert second.decision is None  # session-allowed, provider not consulted
+    assert len(provider.requests) == 1
+
+
+async def test_legacy_session_store_keeps_original_allow_signature() -> None:
+    provider = RecordingProvider(ApprovalDecision.ALLOW_FOR_SESSION)
+    store = LegacySessionApprovalStore()
+    coord = ApprovalCoordinator(provider, session_store=store)
+
+    assert (await coord.resolve(_inv(), auto_mode=False)).execute is True
+    second = await coord.resolve(_inv(tool_call_id="tc2"), auto_mode=False)
+
+    assert second.execute is True
+    assert second.decision is None
     assert len(provider.requests) == 1
 
 
