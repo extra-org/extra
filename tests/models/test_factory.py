@@ -9,6 +9,7 @@ import pytest
 
 from agent_engine.models import factory as factory_mod
 from agent_engine.models.factory import ModelConfigurationError, build_chat_model
+from agent_engine.models.presets import OPENAI_COMPAT_PRESETS
 
 
 class _FakeAnthropicModel:
@@ -362,6 +363,61 @@ def test_openai_missing_custom_api_key_env_names_that_var_in_the_error(
 
     with pytest.raises(ModelConfigurationError, match="requires ZAI_API_KEY"):
         build_chat_model("openai", "glm-5.2", api_key_env="ZAI_API_KEY")
+
+
+@pytest.mark.parametrize("preset_id", sorted(OPENAI_COMPAT_PRESETS))
+def test_preset_provider_resolves_its_own_base_url_and_key_env(
+    preset_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _FakeOpenAIModel.instances.clear()
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    preset = OPENAI_COMPAT_PRESETS[preset_id]
+    monkeypatch.setenv(preset.api_key_env, f"{preset_id}-test-key")
+
+    build_chat_model(preset_id, "some-model")
+
+    kwargs = _FakeOpenAIModel.instances[0].kwargs
+    assert kwargs["base_url"] == preset.base_url
+    assert kwargs["api_key"] == f"{preset_id}-test-key"
+
+
+def test_preset_provider_yaml_override_wins_over_preset_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeOpenAIModel.instances.clear()
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.setenv("MY_ZAI_PROXY_KEY", "proxy-test-key")
+
+    build_chat_model(
+        "zai",
+        "glm-5.2",
+        base_url="https://my-internal-proxy.example.com/v1",
+        api_key_env="MY_ZAI_PROXY_KEY",
+    )
+
+    kwargs = _FakeOpenAIModel.instances[0].kwargs
+    assert kwargs["base_url"] == "https://my-internal-proxy.example.com/v1"
+    assert kwargs["api_key"] == "proxy-test-key"
+
+
+def test_preset_provider_is_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeOpenAIModel.instances.clear()
+    _install_fake_langchain_openai(monkeypatch, _FakeOpenAIModel)
+    monkeypatch.setenv("ZAI_API_KEY", "zai-test-key")
+
+    build_chat_model("ZAI", "glm-5.2")
+
+    assert _FakeOpenAIModel.instances[0].kwargs["base_url"] == OPENAI_COMPAT_PRESETS["zai"].base_url
+
+
+def test_unsupported_provider_lists_presets_alongside_base_providers() -> None:
+    with pytest.raises(
+        ModelConfigurationError, match="Unsupported model provider 'cohere'"
+    ) as excinfo:
+        build_chat_model("cohere", "command-r")
+
+    assert "zai" in str(excinfo.value)
+    assert "deepseek" in str(excinfo.value)
 
 
 def test_unsupported_provider_is_rejected_clearly() -> None:

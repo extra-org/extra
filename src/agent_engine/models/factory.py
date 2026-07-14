@@ -16,6 +16,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
 from agent_engine.logging_config import log
+from agent_engine.models.presets import OPENAI_COMPAT_PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,25 @@ def build_chat_model(
     if not model_name:
         raise ModelConfigurationError("Model name must not be empty.")
 
+    # A preset id (zai, deepseek, moonshot, groq, xai, openrouter, ...) is
+    # shorthand for provider: openai with that vendor's base_url/api_key_env
+    # filled in. YAML-supplied base_url/api_key_env still win if both are
+    # set explicitly alongside a preset id, so a preset can be overridden
+    # (a proxy in front of it, a different key variable name) without
+    # switching away from the shorthand.
+    preset_id = normalized_provider
+    preset = OPENAI_COMPAT_PRESETS.get(preset_id)
+    if preset is not None:
+        base_url = base_url or preset.base_url
+        api_key_env = api_key_env or preset.api_key_env
+        normalized_provider = "openai"
+
     log(
         logger,
         logging.INFO,
         "llm configured",
         provider=normalized_provider,
+        provider_preset=preset_id if preset is not None else None,
         model=model_name,
         temperature=temperature,
         region=region,
@@ -86,7 +101,7 @@ def build_chat_model(
             base_url=base_url,
             api_key_env=api_key_env,
         )
-    supported = ", ".join(_SUPPORTED_PROVIDERS)
+    supported = ", ".join((*_SUPPORTED_PROVIDERS, *OPENAI_COMPAT_PRESETS))
     raise ModelConfigurationError(
         f"Unsupported model provider '{provider}'. Supported providers: {supported}."
     )
