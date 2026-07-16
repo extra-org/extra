@@ -468,11 +468,23 @@ they are logged with their point and `ref`, and (except `on_engine_stop` and
 
 ## Logging and no-op behavior
 
-The runtime emits structured logs at hook and lifecycle boundaries:
+The runtime emits structured logs for meaningful hook actions and failures:
 
-- **Hook lifecycle** (`HookManager`): manager init with total count; per hook
-  `loaded` / `start` / `done` (with `duration_ms`) / `failed` (with
-  `failure_policy`). Config **keys only** are logged at DEBUG — never values.
+- **Transforming hooks** (`on_run_start`, `before_mcp_request`, and
+  `transform_tool_result`): `HookManager` emits `hook applied` at INFO only when
+  the effective context changed, including an in-place mutation. A no-op is
+  completely silent; there are no per-invocation `start` or `done` logs at any
+  level.
+- **Observe-only hooks**: the manager emits no success log because a `None`
+  return cannot prove that an external audit or metric action occurred. The hook
+  implementation should emit its own safe INFO event only after that action
+  succeeds.
+- **Failures**: `HookManager` emits `hook failed` at ERROR with point, ref,
+  duration, policy, and exception type. Exception messages and payload values
+  are omitted because they may contain secrets.
+- Manager initialization and hook loading remain startup diagnostics. An empty
+  manager logs its zero count only at DEBUG. Config **keys only** are logged at
+  DEBUG — never values.
 - **Runtime stages**: `system ready`, `engine stopping`, `run started`,
   `run ended`, `run failed`, `tool call started` / `ended` / `failed` (with
   `latency_ms`), and at DEBUG `before_mcp_request applied headers` /

@@ -40,8 +40,25 @@ def add_tenant_header(context: RunContext | None, request: McpRequestContext) ->
     return request.with_headers({"X-Tenant": "acme"})
 
 
+def leave_mcp_request_unchanged(
+    context: RunContext | None, request: McpRequestContext
+) -> McpRequestContext:
+    return request
+
+
+def mutate_mcp_request_in_place(
+    context: RunContext | None, request: McpRequestContext
+) -> McpRequestContext:
+    request.headers["X-Tenant"] = "acme"
+    return request
+
+
 def boom(*args: Any) -> None:
     raise RuntimeError("hook exploded")
+
+
+def secret_boom(*args: Any) -> None:
+    raise RuntimeError("secret-context7-key")
 
 
 class CallableHook:
