@@ -32,7 +32,7 @@ from agent_engine.parsers.parser import Parser
 from agent_engine.runtime.hooks.models import HOOK_POINTS
 
 _SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
-_SECRET_KEY_EXEMPTIONS = {"max_tokens"}
+_SECRET_KEY_EXEMPTIONS = {"max_tokens", "api_key_env"}
 
 # For *values*, a marker word alone is not evidence — ordinary prose like
 # "Handles password reset requests" must pass. Flag a string value only when it

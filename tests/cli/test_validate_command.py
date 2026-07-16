@@ -216,6 +216,21 @@ def test_validate_rejects_api_key_env_for_fixed_endpoint_provider(tmp_path: Path
     assert any("api_key_env" in e and "anthropic" in e for e in result.errors)
 
 
+def test_validate_accepts_base_url_and_api_key_env_for_openai(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults: {model: {provider: openai, name: gpt-4.1-mini, "
+        "base_url: 'https://api.example.com/v1', api_key_env: MY_KEY}}\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+
+    result = validate_spec(spec)
+
+    assert result.ok, result.errors
+
+
 def test_validate_rejects_unsupported_model_provider(tmp_path: Path) -> None:
     spec = _write(
         tmp_path,
