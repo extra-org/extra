@@ -50,6 +50,7 @@ _CREDENTIAL_SHAPES = re.compile(
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"  # PEM private keys
 )
 _SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock", "gemini", "openai")
+_FIXED_ENDPOINT_PROVIDERS = ("anthropic", "bedrock", "gemini")
 
 
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
@@ -348,6 +349,17 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
                 f"{', '.join(_SUPPORTED_MODEL_PROVIDERS)}",
             )
         )
+
+    if provider in _FIXED_ENDPOINT_PROVIDERS:
+        for field_name in ("base_url", "api_key_env"):
+            if raw.get(field_name) is not None:
+                errors.append(
+                    ValidationError(
+                        f"{path}.{field_name}",
+                        f"Not supported for provider '{provider}'; only OpenAI-compatible "
+                        "providers accept a custom endpoint or key variable.",
+                    )
+                )
 
     name = raw.get("name")
     if not isinstance(name, str) or not name.strip():

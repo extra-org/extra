@@ -184,6 +184,38 @@ def test_yaml_parser_preserves_bedrock_model_fields(tmp_path: Path) -> None:
     assert model.top_p == 0.8
 
 
+def test_validate_rejects_base_url_for_fixed_endpoint_provider(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults: {model: {provider: gemini, name: gemini-2.5-flash, "
+        "base_url: 'https://proxy.example.com'}}\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+
+    result = validate_spec(spec)
+
+    assert not result.ok
+    assert any("base_url" in e and "gemini" in e for e in result.errors)
+
+
+def test_validate_rejects_api_key_env_for_fixed_endpoint_provider(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults: {model: {provider: anthropic, name: claude-haiku-4-5, "
+        "api_key_env: MY_KEY}}\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+
+    result = validate_spec(spec)
+
+    assert not result.ok
+    assert any("api_key_env" in e and "anthropic" in e for e in result.errors)
+
+
 def test_validate_rejects_unsupported_model_provider(tmp_path: Path) -> None:
     spec = _write(
         tmp_path,
@@ -200,6 +232,7 @@ def test_validate_rejects_unsupported_model_provider(tmp_path: Path) -> None:
 
 
 # -- failing specs -----------------------------------------------------------
+
 
 def test_validate_rejects_negative_temperature(tmp_path: Path) -> None:
     spec = _write(
@@ -225,6 +258,7 @@ def test_validate_rejects_non_numeric_temperature(tmp_path: Path) -> None:
     result = validate_spec(spec)
     assert not result.ok
     assert any("temperature" in e for e in result.errors)
+
 
 def test_validate_fails_on_invalid_tool_tags(tmp_path: Path) -> None:
     spec = _write(
