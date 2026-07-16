@@ -14,7 +14,13 @@ from typing import Literal
 
 import pytest
 
-from agent_engine.runtime.hooks import HookInvocation, RunContext, ToolResultContext
+from agent_engine.runtime.hooks import (
+    HookInvocation,
+    McpRequestContext,
+    RunContext,
+    ToolResultContext,
+)
+from agent_engine.runtime.hooks.manager import HookManager, LoadedHook
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RESEARCH_HOOKS = (
@@ -90,3 +96,46 @@ async def test_research_hook_leaves_non_deepwiki_results_unchanged() -> None:
         transformed = await hook.truncate_tool_result(event)
 
         assert transformed is original
+
+
+async def test_context7_auth_logs_only_when_header_is_attached(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_research_hooks()
+    hook = module.ResearchHooksHook()
+    api_key = "secret-context7-key"
+    monkeypatch.setenv("CONTEXT7_API_KEY", api_key)
+    manager = HookManager(
+        {
+            "before_mcp_request": [
+                LoadedHook(
+                    point="before_mcp_request",
+                    ref="research_hooks:inject_context7_auth",
+                    func=hook.inject_context7_auth,
+                    plugin="research_hooks",
+                    method="inject_context7_auth",
+                    event_mode=True,
+                )
+            ]
+        }
+    )
+    caplog.clear()
+
+    with caplog.at_level(logging.DEBUG, logger="agent_engine.runtime.hooks.manager"):
+        deepwiki = McpRequestContext(server_id="deepwiki", url="https://deepwiki.test/mcp")
+        unchanged = await manager.run_before_mcp_request(None, deepwiki)
+
+    assert unchanged is deepwiki
+    assert caplog.text == ""
+
+    with caplog.at_level(logging.INFO, logger="agent_engine.runtime.hooks.manager"):
+        context7 = McpRequestContext(server_id="context7", url="https://context7.test/mcp")
+        updated = await manager.run_before_mcp_request(None, context7)
+
+    assert updated.headers["CONTEXT7_API_KEY"] == api_key
+    assert (
+        "hook applied point=before_mcp_request ref=research_hooks:inject_context7_auth"
+        in caplog.text
+    )
+    assert api_key not in caplog.text

@@ -340,6 +340,52 @@ async def test_logs_do_not_leak_hook_payload_values(caplog: pytest.LogCaptureFix
     assert "SECRET_VALUE_XYZ" not in text
 
 
+async def test_no_op_hook_invocation_is_completely_silent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:leave_mcp_request_unchanged"))
+    request = McpRequestContext(server_id="s", url="https://x/mcp")
+    caplog.clear()
+
+    with caplog.at_level(logging.DEBUG, logger="agent_engine.runtime.hooks.manager"):
+        await mgr.run_before_mcp_request(RunContext(), request)
+
+    assert caplog.text == ""
+
+
+@pytest.mark.parametrize("ref", ["add_auth_header", "mutate_mcp_request_in_place"])
+async def test_changed_hook_payload_logs_safe_applied_event(
+    ref: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:{ref}"))
+    request = McpRequestContext(server_id="s", url="https://x/mcp")
+    caplog.clear()
+
+    with caplog.at_level(logging.INFO, logger="agent_engine.runtime.hooks.manager"):
+        await mgr.run_before_mcp_request(RunContext(), request)
+
+    assert "hook applied point=before_mcp_request" in caplog.text
+    assert "Bearer static" not in caplog.text
+    assert "acme" not in caplog.text
+
+
+async def test_hook_failure_log_omits_exception_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:secret_boom", failure_policy="warn"))
+    caplog.clear()
+
+    with caplog.at_level(logging.ERROR, logger="agent_engine.runtime.hooks.manager"):
+        await mgr.run_before_mcp_request(
+            RunContext(), McpRequestContext(server_id="s", url="https://x/mcp")
+        )
+
+    assert "hook failed" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert "secret-context7-key" not in caplog.text
+
+
 def test_has_reports_declared_points() -> None:
     mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:add_auth_header"))
     assert mgr.has("before_mcp_request") is True
