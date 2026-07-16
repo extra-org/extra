@@ -1,0 +1,49 @@
+system:
+  name: "Interactive MCP Control"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5
+    temperature: 0.0
+    max_tokens: 1200
+
+execution:
+  max_iterations: 12
+  max_tool_calls: 10
+  max_tool_calls_per_agent: 8
+  allow_duplicate_tool_calls: false
+
+mcps:
+  github:
+    url: "https://api.githubcopilot.com/mcp/"
+    auth: true
+  context7:
+    url: "https://mcp.context7.com/mcp"
+    auth: true
+
+plugins:
+  import_roots:
+    - "."
+
+hooks:
+  before_tool_call:
+    - ref: "plugins.events:before_tool_call"
+  after_tool_call:
+    - ref: "plugins.events:after_tool_call"
+  on_tool_error:
+    - ref: "plugins.events:on_tool_error"
+
+agents:
+  interactive_control_agent:
+    name: "Interactive MCP Control Agent"
+    description: "Answers terminal questions using GitHub and Context7 when current data is needed."
+    auto: false
+    prompts:
+      system: prompts/system.md
+    mcps:
+      - github
+      - context7
+
+graph:
+  interactive_control_agent:

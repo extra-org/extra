@@ -281,6 +281,13 @@ class LangGraphEngine(Engine):
         self._mcp_clients.clear()
         self._mcp_tools.clear()
 
+    def discovered_mcp_tools(self) -> dict[str, tuple[str, ...]]:
+        """Return discovered MCP tool names grouped by server for diagnostics/UIs."""
+        return {
+            server_id: tuple(sorted(tool.name for tool in tools))
+            for server_id, tools in sorted(self._mcp_tools.items())
+        }
+
     async def _begin_run(self, context: RunContext | None) -> RunContext:
         hook_manager = self._require_built("running")[1]
         ctx = context or RunContext()
