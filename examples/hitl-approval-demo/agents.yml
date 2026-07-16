@@ -1,0 +1,64 @@
+system:
+  name: "HITL Approval Demo"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5
+    temperature: 0.0
+
+execution:
+  max_iterations: 10
+  max_tool_calls: 10
+  max_tool_calls_per_agent: 5
+  max_child_agent_calls: 5
+  allow_duplicate_tool_calls: false
+
+tools:
+  write_demo_message:
+    description: "Print a harmless message and increment the demo execution counter."
+
+orchestrators:
+  demo_router:
+    name: "Demo Router"
+    description: "Routes each demo request to the selected agent."
+    model:
+      provider: anthropic
+      name: demo-router
+      temperature: 0.0
+    prompts:
+      orchestrator: prompts/router.md
+
+agents:
+  approval_demo_agent:
+    name: "Manual Approval Agent"
+    description: "Uses the demo tool only after human approval."
+    auto: false
+    prompts:
+      system: prompts/agent.md
+    tools:
+      - write_demo_message
+
+  second_approval_demo_agent:
+    name: "Second Manual Approval Agent"
+    description: "Proves that session permission is scoped by agent."
+    auto: false
+    prompts:
+      system: prompts/agent.md
+    tools:
+      - write_demo_message
+
+  auto_demo_agent:
+    name: "Auto Agent"
+    description: "Uses the same demo tool without approval."
+    auto: true
+    prompts:
+      system: prompts/agent.md
+    tools:
+      - write_demo_message
+
+graph:
+  demo_router:
+    approval_demo_agent:
+    second_approval_demo_agent:
+    auto_demo_agent:
