@@ -13,8 +13,9 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
+from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.engine.engine import Engine
-from agent_engine.engine.types import RunResult
+from agent_engine.engine.types import PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agentctl import chat as chat_mod
@@ -62,6 +63,66 @@ class FakeEngine(Engine):
         self.contexts.append(context)
         for chunk in ("a", "b"):
             yield RunStreamEvent(type="answer_delta", content=chunk)
+
+
+def pending_approval(
+    *, run_id: str = "run-1", approval_id: str = "approval-1", tool_name: str = "read_docs"
+) -> PendingApproval:
+    return PendingApproval(
+        run_id=run_id,
+        approval_id=approval_id,
+        agent_id="researcher",
+        tool_name=tool_name,
+        description=f"Researcher wants to call {tool_name}; it has not been executed.",
+        provider="mcp",
+        server_id="deepwiki",
+        arguments={"repoName": "extra-org/extra"},
+    )
+
+
+class ApprovalFakeEngine(FakeEngine):
+    def __init__(self, results: list[RunResult], *, stream_pending: PendingApproval | None = None):
+        super().__init__()
+        self.results = iter(results)
+        self.stream_pending = stream_pending
+        self.resume_calls: list[tuple[str, str, ApprovalDecision, str | None]] = []
+
+    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+        self.questions.append(message)
+        self.contexts.append(context)
+        return next(self.results)
+
+    async def stream(
+        self, message: str, *, context: RunContext | None = None
+    ) -> AsyncIterator[RunStreamEvent]:
+        self.questions.append(message)
+        self.contexts.append(context)
+        assert self.stream_pending is not None
+        yield RunStreamEvent(
+            type="pending_approval",
+            run_id=self.stream_pending.run_id,
+            approval_id=self.stream_pending.approval_id,
+            agent_id=self.stream_pending.agent_id,
+            tool_name=self.stream_pending.tool_name,
+            description=self.stream_pending.description,
+        )
+
+    async def get_pending_approval(self, run_id: str) -> PendingApproval | None:
+        assert self.stream_pending is not None
+        assert run_id == self.stream_pending.run_id
+        return self.stream_pending
+
+    async def resume(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision | str,
+        *,
+        caller_user_id: str | None = None,
+    ) -> RunResult:
+        assert isinstance(decision, ApprovalDecision)
+        self.resume_calls.append((run_id, approval_id, decision, caller_user_id))
+        return next(self.results)
 
 
 class CollectingEcho:
@@ -256,6 +317,174 @@ async def test_local_one_failure_does_not_kill_loop() -> None:
     await run_chat_loop(engine, stream=False, read_line=scripted_reader(["boom", "ok"]), echo=echo)
     assert any("model exploded" in line for line in echo.lines)
     assert any(line == "Agent > echo:ok" for line in echo.lines)
+
+
+# ---------------------------------------------------------------------------
+# local mode: human approval and resume
+# ---------------------------------------------------------------------------
+
+
+async def test_local_chat_prompts_for_approval_and_resumes_allow_once() -> None:
+    pending = pending_approval()
+    engine = ApprovalFakeEngine(
+        [
+            RunResult(
+                system_name="fake",
+                visited=["researcher"],
+                answer="",
+                status="pending_approval",
+                pending_approval=pending,
+            ),
+            RunResult(system_name="fake", visited=["researcher"], answer="architecture"),
+        ]
+    )
+    echo = CollectingEcho()
+
+    await run_chat_loop(
+        engine,
+        stream=False,
+        context=RunContext(conversation_id="session-1", user_id="user-1"),
+        read_line=scripted_reader(["question", "o"]),
+        echo=echo,
+    )
+
+    assert engine.resume_calls == [("run-1", "approval-1", ApprovalDecision.ALLOW_ONCE, "user-1")]
+    assert "  Tool      : deepwiki.read_docs (mcp)" in echo.lines
+    assert '  Arguments : {"repoName": "extra-org/extra"}' in echo.lines
+    assert "Agent > architecture" in echo.lines
+
+
+async def test_local_chat_reprompts_invalid_approval_then_allows_session() -> None:
+    pending = pending_approval()
+    engine = ApprovalFakeEngine(
+        [
+            RunResult(
+                system_name="fake",
+                visited=[],
+                answer="",
+                status="pending_approval",
+                pending_approval=pending,
+            ),
+            RunResult(system_name="fake", visited=[], answer="done"),
+        ]
+    )
+    echo = CollectingEcho()
+
+    await run_chat_loop(
+        engine,
+        stream=False,
+        read_line=scripted_reader(["question", "maybe", "s"]),
+        echo=echo,
+    )
+
+    assert engine.resume_calls[0][2] is ApprovalDecision.ALLOW_FOR_SESSION
+    assert any("Enter 'o'" in line for line in echo.lines)
+
+
+async def test_local_chat_stops_when_approval_input_ends() -> None:
+    pending = pending_approval()
+    engine = ApprovalFakeEngine(
+        [
+            RunResult(
+                system_name="fake",
+                visited=[],
+                answer="",
+                status="pending_approval",
+                pending_approval=pending,
+            ),
+        ]
+    )
+    echo = CollectingEcho()
+
+    await run_chat_loop(
+        engine,
+        stream=False,
+        read_line=scripted_reader(["question"]),
+        echo=echo,
+    )
+
+    assert engine.resume_calls == []
+    assert not any(line.startswith("Agent > ") for line in echo.lines)
+
+
+@pytest.mark.parametrize("word", ["exit", "quit", "q", "EXIT", "Quit"])
+async def test_local_chat_exit_words_stop_from_approval_prompt(word: str) -> None:
+    pending = pending_approval()
+    engine = ApprovalFakeEngine(
+        [
+            RunResult(
+                system_name="fake",
+                visited=[],
+                answer="",
+                status="pending_approval",
+                pending_approval=pending,
+            ),
+        ]
+    )
+
+    await run_chat_loop(
+        engine,
+        stream=False,
+        read_line=scripted_reader(["question", word]),
+        echo=CollectingEcho(),
+    )
+
+    assert engine.resume_calls == []
+
+
+async def test_local_chat_handles_multiple_approvals_in_one_run() -> None:
+    first = pending_approval()
+    second = pending_approval(approval_id="approval-2", tool_name="read_page")
+    engine = ApprovalFakeEngine(
+        [
+            RunResult(
+                system_name="fake",
+                visited=[],
+                answer="",
+                status="pending_approval",
+                pending_approval=first,
+            ),
+            RunResult(
+                system_name="fake",
+                visited=[],
+                answer="",
+                status="pending_approval",
+                pending_approval=second,
+            ),
+            RunResult(system_name="fake", visited=[], answer="complete"),
+        ]
+    )
+
+    await run_chat_loop(
+        engine,
+        stream=False,
+        read_line=scripted_reader(["question", "o", "d"]),
+        echo=CollectingEcho(),
+    )
+
+    assert [call[2] for call in engine.resume_calls] == [
+        ApprovalDecision.ALLOW_ONCE,
+        ApprovalDecision.DENY,
+    ]
+
+
+async def test_local_stream_prompts_and_resumes_pending_approval() -> None:
+    pending = pending_approval()
+    engine = ApprovalFakeEngine(
+        [RunResult(system_name="fake", visited=[], answer="stream resumed")],
+        stream_pending=pending,
+    )
+    echo = CollectingEcho()
+
+    await run_chat_loop(
+        engine,
+        stream=True,
+        read_line=scripted_reader(["question", "allow once"]),
+        echo=echo,
+    )
+
+    assert engine.resume_calls[0][2] is ApprovalDecision.ALLOW_ONCE
+    assert "Agent > stream resumed" in echo.lines
 
 
 # ---------------------------------------------------------------------------
