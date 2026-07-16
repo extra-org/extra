@@ -77,6 +77,20 @@ async def test_revoke_and_clear_exact_session() -> None:
     assert await store.is_allowed(other_user) is True
 
 
+async def test_list_session_returns_only_active_exact_scope() -> None:
+    store = InMemorySessionApprovalStore()
+    first = _key(tool="local:local:first")
+    second = _key(tool="local:local:second")
+    other = _key(tool="local:local:other", user="other")
+    await store.allow(first)
+    await store.allow(second)
+    await store.allow(other)
+
+    listed = await store.list_session(first.scope)
+
+    assert set(listed) == {first, second}
+
+
 async def test_expired_grant_is_not_allowed() -> None:
     now = datetime(2026, 7, 14, tzinfo=UTC)
     store = InMemorySessionApprovalStore(clock=lambda: now)
