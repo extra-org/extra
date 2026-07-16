@@ -99,6 +99,26 @@ async def test_create_pending_is_idempotent_by_tool_call() -> None:
     assert first.approval_id == second.approval_id
 
 
+async def test_another_pending_call_keeps_run_pending() -> None:
+    mgr = _approval_manager()
+    await _pending(mgr)
+
+    second = await mgr.create_pending(
+        run_id="r1",
+        thread_id="r1",
+        approval_id="ap2",
+        agent_id="a",
+        tool_name="query_docs",
+        tool_call_id="tc2",
+        provider="mcp",
+        description="second MCP tool",
+        arguments={},
+    )
+
+    assert second.approval_id == "ap2"
+    assert (await mgr.get_run("r1")).status == RunStatus.PENDING_APPROVAL
+
+
 async def test_claim_moves_run_and_approval_to_resuming() -> None:
     mgr = _approval_manager()
     await _pending(mgr)

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, replace
@@ -248,17 +250,27 @@ class AgentNode:
     def _describe_call(self, tool: BaseTool, tc: dict[str, Any]) -> _ToolCall:
         """Freeze the tool's runtime identity: provider, ids, and idempotency key."""
         name: str = tc["name"]
+        args = tc.get("args") or {}
         run_context = current_run_context.get()
         run_id = run_context.run_id if run_context and run_context.run_id else tc["id"]
+        provider: ToolProviderName = "mcp" if name in self._mcp_tool_names else "local"
+        server_id = self._mcp_server_by_tool.get(name)
+        stable_payload = json.dumps(
+            [run_id, self._node_path, provider, server_id, name, args],
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        tool_call_id = f"call_{hashlib.sha256(stable_payload.encode()).hexdigest()[:24]}"
         return _ToolCall(
             tool=tool,
             name=name,
-            args=tc.get("args") or {},
-            provider="mcp" if name in self._mcp_tool_names else "local",
-            server_id=self._mcp_server_by_tool.get(name),
-            tool_call_id=tc["id"],
+            args=args,
+            provider=provider,
+            server_id=server_id,
+            tool_call_id=tool_call_id,
             run_id=run_id,
-            exec_id=execution_id_for(tc["id"]),
+            exec_id=execution_id_for(tool_call_id),
         )
 
     def _enforce_limits(self, call: _ToolCall) -> str | None:
