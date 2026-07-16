@@ -120,6 +120,12 @@ agentctl chat --url http://localhost:8090 --stream
 
 Pass `--config` (local) or `--url` (remote), not both. Type `exit`, `quit`, or press Ctrl-C to stop.
 
+In local mode, a tool call that requires human approval pauses the run and shows
+its sanitized agent, tool, description, and arguments. Choose `o` to allow that
+call once, `s` to allow the same tool for the current console session, or `d` to
+deny it. Enter `q`, `quit`, or `exit` to stop from the approval prompt. Ctrl-C
+and Ctrl-D also stop the console immediately; the pending tool is not executed.
+
 ---
 
 ## agent-manager
