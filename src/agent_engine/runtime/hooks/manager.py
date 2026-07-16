@@ -29,6 +29,7 @@ aborting.
 
 from __future__ import annotations
 
+import copy
 import inspect
 import logging
 import time
@@ -54,6 +55,7 @@ from agent_engine.runtime.hooks.models import (
 )
 
 logger = logging.getLogger(__name__)
+_SNAPSHOT_UNAVAILABLE = object()
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,10 @@ class HookManager:
         for point, loaded in (hooks or {}).items():
             self._hooks[point] = list(loaded)
         total = sum(len(v) for v in self._hooks.values())
-        logger.info("HookManager initialized hooks=%d", total)
+        if total:
+            logger.info("HookManager initialized hooks=%d", total)
+        else:
+            logger.debug("HookManager initialized hooks=0")
 
     @classmethod
     def empty(cls) -> HookManager:
@@ -178,13 +183,16 @@ class HookManager:
         for hook in self._hooks["on_engine_stop"]:
             try:
                 await self._invoke(hook, payload=context, positional=(context,))
-            except Exception:  # cleanup must proceed regardless
-                logger.exception(
-                    "on_engine_stop hook failed (continuing shutdown) ref=%s", hook.ref
+            except Exception as exc:  # cleanup must proceed regardless
+                logger.error(
+                    "on_engine_stop hook failed (continuing shutdown) ref=%s error_type=%s",
+                    hook.ref,
+                    type(exc).__name__,
                 )
 
     async def run_run_start(self, context: RunContext) -> RunContext:
         for hook in self._hooks["on_run_start"]:
+            before = self._snapshot(context)
             result = await self._invoke(
                 hook,
                 payload=context,
@@ -193,6 +201,7 @@ class HookManager:
             )
             if isinstance(result, RunContext):
                 context = result
+            self._log_applied_if_changed(hook, before, context)
         return context
 
     async def run_run_end(self, run_context: RunContext | None, summary: RunEndContext) -> None:
@@ -239,6 +248,7 @@ class HookManager:
         ``None`` (e.g. a ``warn`` hook that failed) leaves the result unchanged.
         """
         for hook in self._hooks["transform_tool_result"]:
+            before = self._snapshot(result)
             transformed = await self._invoke(
                 hook,
                 payload=result,
@@ -247,6 +257,7 @@ class HookManager:
             )
             if isinstance(transformed, ToolResultContext):
                 result = transformed
+            self._log_applied_if_changed(hook, before, result)
         return result
 
     async def run_on_tool_error(
@@ -265,6 +276,7 @@ class HookManager:
         self, run_context: RunContext | None, request: McpRequestContext
     ) -> McpRequestContext:
         for hook in self._hooks["before_mcp_request"]:
+            before = self._snapshot(request)
             result = await self._invoke(
                 hook,
                 payload=request,
@@ -273,6 +285,7 @@ class HookManager:
             )
             if isinstance(result, McpRequestContext):
                 request = result
+            self._log_applied_if_changed(hook, before, request)
         return request
 
     async def run_after_mcp_response(
@@ -297,9 +310,11 @@ class HookManager:
                     run_context=run_context,
                     positional=(run_context, error),
                 )
-            except Exception:  # preserve the original run error above all
-                logger.exception(
-                    "on_run_error hook failed (original error preserved) ref=%s", hook.ref
+            except Exception as exc:  # preserve the original run error above all
+                logger.error(
+                    "on_run_error hook failed (original error preserved) ref=%s error_type=%s",
+                    hook.ref,
+                    type(exc).__name__,
                 )
 
     # -- internals -----------------------------------------------------------
@@ -312,7 +327,6 @@ class HookManager:
         positional: tuple[Any, ...],
         run_context: RunContext | None = None,
     ) -> Any:
-        logger.info("hook start point=%s ref=%s", hook.point, hook.ref)
         start = time.perf_counter()
         try:
             if hook.event_mode:
@@ -333,16 +347,40 @@ class HookManager:
         except Exception as exc:
             duration_ms = int((time.perf_counter() - start) * 1000)
             logger.error(
-                "hook failed point=%s ref=%s ms=%d policy=%s err=%s",
+                "hook failed point=%s ref=%s ms=%d policy=%s error_type=%s",
                 hook.point,
                 hook.ref,
                 duration_ms,
                 hook.failure_policy,
-                exc,
+                type(exc).__name__,
             )
             if hook.failure_policy == "warn":
                 return None
             raise HookExecutionError(hook.point, hook.ref, exc) from exc
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        logger.info("hook done point=%s ref=%s ms=%d", hook.point, hook.ref, duration_ms)
         return result
+
+    @staticmethod
+    def _snapshot(payload: object) -> object:
+        """Copy a transform payload so in-place mutations can be detected safely.
+
+        Metadata may contain application-owned objects that cannot be copied. A
+        failed snapshot must never break hook execution; it only means the
+        manager cannot emit its generic applied log for that invocation.
+        """
+        try:
+            return copy.deepcopy(payload)
+        except Exception:
+            return _SNAPSHOT_UNAVAILABLE
+
+    @staticmethod
+    def _log_applied_if_changed(hook: LoadedHook, before: object, after: object) -> None:
+        if before is _SNAPSHOT_UNAVAILABLE:
+            return
+        try:
+            changed = before != after
+        except Exception:
+            return
+        if changed:
+            # Log identity only. Payloads can contain credentials, headers,
+            # prompts, arguments, results, or other sensitive application data.
+            logger.info("hook applied point=%s ref=%s", hook.point, hook.ref)
