@@ -171,13 +171,20 @@ class ApprovalManager:
         )
         await self._approvals.create(record)
         # A run may not have been registered by an external caller; register lazily.
-        if await self._runs.get(run_id) is None:
+        run = await self._runs.get(run_id)
+        if run is None:
             await self._runs.create(
                 RunRecord(
                     run_id=run_id, thread_id=thread_id, system_name="", status=RunStatus.RUNNING
                 )
             )
-        await self._runs.set_status(run_id, RunStatus.PENDING_APPROVAL)
+            run = await self._runs.get(run_id)
+        assert run is not None
+        # A model can emit several tool calls in one response. Reaching another
+        # interrupt while the run is already pending should keep that state,
+        # rather than attempting an illegal pending -> pending transition.
+        if run.status != RunStatus.PENDING_APPROVAL:
+            await self._runs.set_status(run_id, RunStatus.PENDING_APPROVAL)
         log(
             logger,
             logging.INFO,
