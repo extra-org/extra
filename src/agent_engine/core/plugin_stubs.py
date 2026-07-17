@@ -12,6 +12,8 @@ conservative — it reports only what it can positively identify:
 
 - a function/method whose body is just ``raise NotImplementedError``
   (optionally preceded by a docstring) is a stub;
+- a prompt file whose content is the sentinel ``<!-- STUB: fill in this prompt -->``
+  is a stub;
 - a missing plugin file for something the spec declares is an error;
 - anything else (dynamic definitions, methods inherited from bases other
   than the conventional ``shared.py``, unparseable files) is skipped and
@@ -51,6 +53,7 @@ class _Scanner:
         self._base_dir = base_dir
         self._seen_tools: set[str] = set()
         self._seen_mcp_auth: set[str] = set()
+        self._seen_prompts: set[str] = set()
         self.has_protected = False
         self.errors: list[ValidationError] = []
 
@@ -61,6 +64,7 @@ class _Scanner:
             self._check_tools(node.node)
             self._check_resolvers(node.node)
             self._check_mcp_auth(node.node)
+        self._check_prompts(node)
         for child in node.children:
             self.walk(child)
 
@@ -127,6 +131,34 @@ class _Scanner:
                 self._error(
                     f"mcps.{mcp.id}.auth",
                     f"MCP auth 'get_headers' for '{mcp.id}' is not implemented (generated stub)",
+                )
+
+    # -- prompts ---------------------------------------------------------
+
+    def _check_prompts(self, node: GraphNode) -> None:
+        prompts = node.node.get_prompts()
+        for field_name in ("system", "user", "orchestrator"):
+            path_str = getattr(prompts, field_name, None)
+            if not path_str or path_str in self._seen_prompts:
+                continue
+            self._seen_prompts.add(path_str)
+            path = self._base_dir / path_str
+            if not path.is_file():
+                self._error(
+                    f"{node.node.id}.prompts.{field_name}",
+                    f"Prompt file not found: {path_str} — {_GENERATE_HINT}",
+                )
+                continue
+
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+
+            if "<!-- STUB: fill in this prompt -->" in content:
+                self._error(
+                    f"{node.node.id}.prompts.{field_name}",
+                    f"Prompt '{path_str}' is declared but not implemented (generated stub)",
                 )
 
     # -- access ----------------------------------------------------------
