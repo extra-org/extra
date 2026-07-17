@@ -4,6 +4,12 @@ from agent_manager.application.service import (
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
+    PreparedConversationTurn,
 )
 
-__all__ = ["ConversationNotFound", "ConversationService", "ConversationTokenBudgetExceeded"]
+__all__ = [
+    "ConversationNotFound",
+    "ConversationService",
+    "ConversationTokenBudgetExceeded",
+    "PreparedConversationTurn",
+]

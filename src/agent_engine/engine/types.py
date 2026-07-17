@@ -1,9 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from agent_engine.runtime.tool_models import ToolUsageRecord
+
+
+class ChatRole(StrEnum):
+    """Roles accepted as structured conversation history by the engine."""
+
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+@dataclass(frozen=True)
+class ChatMessage:
+    """One prior conversational turn supplied to a stateless engine run."""
+
+    role: ChatRole
+    content: str
 
 
 @dataclass(frozen=True)

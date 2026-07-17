@@ -22,6 +22,9 @@ class GraphState(TypedDict, total=False):
     message: str
     """The user's incoming message."""
 
+    history: list[dict[str, str]]
+    """Prior user/assistant turns, oldest-first, serialized for checkpointing."""
+
     visited: list[str]
     """Ordered node paths visited — the execution trace."""
 

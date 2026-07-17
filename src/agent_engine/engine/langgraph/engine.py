@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -48,7 +48,7 @@ from agent_engine.engine.langgraph.helpers import (
     walk,
 )
 from agent_engine.engine.langgraph.nodes import AgentNode, ChildEntry, OrchestratorNode
-from agent_engine.engine.types import PendingApproval, RunResult
+from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.loaders.tool_loader import ToolLoader
@@ -82,9 +82,17 @@ def _root_cause(exc: BaseException) -> str:
 def _new_state(
     message: str,
     *,
+    history: Sequence[ChatMessage] = (),
     run_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    state: dict[str, Any] = {"message": message, "used_tools": []}
+    state: dict[str, Any] = {
+        "message": message,
+        "history": [
+            {"role": history_message.role.value, "content": history_message.content}
+            for history_message in history
+        ],
+        "used_tools": [],
+    }
     if run_context is not None:
         state["run_context"] = run_context
     return state
@@ -300,7 +308,13 @@ class LangGraphEngine(Engine):
             raise RuntimeError(f"Engine must be built before {action}")
         return self._app, self._hook_manager
 
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
         app, hook_manager = self._require_built("running")
         has_caller_context = context is not None
         ctx = await self._begin_run(context)
@@ -324,6 +338,7 @@ class LangGraphEngine(Engine):
                     Any,
                     _new_state(
                         message,
+                        history=history,
                         run_context=_state_run_context(ctx) if has_caller_context else None,
                     ),
                 ),
@@ -531,7 +546,11 @@ class LangGraphEngine(Engine):
             current_execution.reset(exec_token)
 
     async def stream(
-        self, message: str, *, context: RunContext | None = None
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
         app, hook_manager = self._require_built("streaming")
 
@@ -548,6 +567,7 @@ class LangGraphEngine(Engine):
 
         state = _new_state(
             message,
+            history=history,
             run_context=_state_run_context(ctx) if has_caller_context else None,
         )
         sinks = StreamSinks(

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
 from click.testing import CliRunner, Result
 
-from agent_engine.engine.types import RunResult
+from agent_engine.engine.types import ChatMessage, ChatRole, RunResult
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
@@ -21,6 +21,7 @@ from agentctl.main import cli
 
 class FakeRuntimeEngine:
     prompts: ClassVar[list[str]] = []
+    histories: ClassVar[list[tuple[ChatMessage, ...]]] = []
     contexts: ClassVar[list[RunContext | None]] = []
 
     def __init__(self, _base_dir: Path, **_kwargs: object) -> None: ...
@@ -32,8 +33,15 @@ class FakeRuntimeEngine:
 
     async def build(self, _spec: object) -> None: ...
 
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
         self.prompts.append(message)
+        self.histories.append(tuple(history))
         self.contexts.append(context)
         return RunResult(
             system_name="Fake System",
@@ -42,9 +50,14 @@ class FakeRuntimeEngine:
         )
 
     async def stream(
-        self, message: str, *, context: RunContext | None = None
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
         self.prompts.append(message)
+        self.histories.append(tuple(history))
         self.contexts.append(context)
         yield RunStreamEvent(type="answer_delta", content="chunk")
         yield RunStreamEvent(
@@ -56,8 +69,15 @@ class FakeRuntimeEngine:
 
 
 class FailingRuntimeEngine(FakeRuntimeEngine):
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
         self.prompts.append(message)
+        self.histories.append(tuple(history))
         self.contexts.append(context)
         raise RuntimeError("model failed safely")
 
@@ -149,6 +169,7 @@ def test_agentctl_run_persists_messages_and_reuses_session_context(
     monkeypatch.setenv("AGENT_DB_URL", db_url)
     monkeypatch.setattr(main_mod, "LangGraphEngine", FakeRuntimeEngine)
     FakeRuntimeEngine.prompts.clear()
+    FakeRuntimeEngine.histories.clear()
     FakeRuntimeEngine.contexts.clear()
 
     first = _run_cli(spec, "hello", "--session-id", "sess-1", "--user-id", "u1")
@@ -174,10 +195,11 @@ def test_agentctl_run_persists_messages_and_reuses_session_context(
     assert snapshot is not None
     assert snapshot.message_count == 4
 
-    assert "Conversation so far:" in FakeRuntimeEngine.prompts[1]
-    assert "user: hello" in FakeRuntimeEngine.prompts[1]
-    assert "assistant: answer-1" in FakeRuntimeEngine.prompts[1]
-    assert FakeRuntimeEngine.prompts[1].rstrip().endswith("what did I say?")
+    assert FakeRuntimeEngine.prompts[1] == "what did I say?"
+    assert FakeRuntimeEngine.histories[1] == (
+        ChatMessage(ChatRole.USER, "hello"),
+        ChatMessage(ChatRole.ASSISTANT, "answer-1"),
+    )
 
     run_ids = [m.run_id for m in messages]
     assert run_ids[0] == run_ids[1]
@@ -201,6 +223,7 @@ def test_agentctl_run_without_session_prints_reusable_generated_session(
     monkeypatch.setenv("AGENT_DB_URL", db_url)
     monkeypatch.setattr(main_mod, "LangGraphEngine", FakeRuntimeEngine)
     FakeRuntimeEngine.prompts.clear()
+    FakeRuntimeEngine.histories.clear()
     FakeRuntimeEngine.contexts.clear()
 
     result = _run_cli(spec, "hello")
@@ -230,6 +253,7 @@ def test_agentctl_run_failure_keeps_user_message_without_assistant_response(
     monkeypatch.setenv("AGENT_DB_URL", db_url)
     monkeypatch.setattr(main_mod, "LangGraphEngine", FailingRuntimeEngine)
     FailingRuntimeEngine.prompts.clear()
+    FailingRuntimeEngine.histories.clear()
     FailingRuntimeEngine.contexts.clear()
 
     result = _run_cli(spec, "persist me before failure", "--session-id", "sess-fail")

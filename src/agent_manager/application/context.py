@@ -1,19 +1,30 @@
-"""Build the per-request prompt by inlining recent history.
-
-# ponytail: string-prepended transcript. Upgrade path when richer context is
-# needed: pass history via RunContext.metadata + a declared resolver (Engine.run
-# already accepts a `context` arg). Not needed to prove the layer works.
-"""
+"""Convert persisted conversation turns to the engine's structured history."""
 
 from __future__ import annotations
 
-from agent_manager.domain import Message
+from agent_engine.engine.types import ChatMessage, ChatRole
+from agent_manager.domain import Message, Role
+
+
+def build_history(history: list[Message], window: int = 10) -> tuple[ChatMessage, ...]:
+    """Return recent user/assistant turns in provider-independent structured form."""
+    recent = history[-window:] if window else history
+    roles = {
+        Role.USER: ChatRole.USER,
+        Role.ASSISTANT: ChatRole.ASSISTANT,
+    }
+    return tuple(
+        ChatMessage(role=roles[message.role], content=message.content)
+        for message in recent
+        if message.role in roles
+    )
 
 
 def build_prompt(history: list[Message], new_message: str, window: int = 10) -> str:
-    """Prepend up to `window` most-recent prior messages to `new_message`.
+    """Build the legacy flattened transcript used by older standalone examples.
 
-    `history` is the prior messages (oldest-first), NOT including the new one.
+    ConversationService no longer uses this compatibility helper; it passes
+    :func:`build_history` through the engine's structured history boundary.
     """
     recent = history[-window:] if window else history
     if not recent:

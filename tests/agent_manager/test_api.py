@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent_engine.engine.engine import Engine
-from agent_engine.engine.types import RunResult
+from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.routes import router
@@ -55,7 +55,13 @@ class _SubAgentEngine(Engine):
 
     async def build(self, _spec: object) -> None: ...
 
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
         return RunResult(
             system_name="Knowledge Assistant",
             visited=["knowledge_router", "knowledge_router/documentation_agent"],
@@ -63,7 +69,11 @@ class _SubAgentEngine(Engine):
         )
 
     async def stream(
-        self, message: str, *, context: RunContext | None = None
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
         yield RunStreamEvent(type="final", content="unused")
 
@@ -71,11 +81,21 @@ class _SubAgentEngine(Engine):
 class _FinalThenCleanupErrorEngine(Engine):
     async def build(self, _spec: object) -> None: ...
 
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
         return RunResult(system_name="stub", visited=["agent"], answer=message)
 
     async def stream(
-        self, message: str, *, context: RunContext | None = None
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
         yield RunStreamEvent(type="answer_delta", content="done")
         yield RunStreamEvent(type="final", content="done", route=("agent",))

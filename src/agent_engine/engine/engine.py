@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Self
 
 from agent_engine.core.spec import SystemSpec
-from agent_engine.engine.types import RunResult
+from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 
@@ -15,11 +15,21 @@ class Engine(ABC):
     async def build(self, spec: SystemSpec) -> None: ...
 
     @abstractmethod
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult: ...
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult: ...
 
     @abstractmethod
     def stream(
-        self, message: str, *, context: RunContext | None = None
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]: ...
 
     async def close(self) -> None:  # noqa: B027

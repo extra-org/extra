@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec
 from agent_engine.runtime.execution import ExecutionLimitExceeded, current_execution, log_limit
@@ -14,6 +14,26 @@ from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import current_streams
 
 logger = logging.getLogger(__name__)
+
+
+def model_context(
+    system_prompt: str,
+    history: list[dict[str, str]],
+    user_message: str,
+) -> list[Any]:
+    """Build ordered provider-native messages from structured prior turns."""
+    messages: list[Any] = [SystemMessage(content=system_prompt)]
+    for message in history:
+        role = message.get("role")
+        content = message.get("content", "")
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+        else:
+            raise ValueError(f"Unsupported conversation history role: {role!r}")
+    messages.append(HumanMessage(content=user_message))
+    return messages
 
 
 def node_id(node: GraphNode, parent_path: str | None) -> str:
