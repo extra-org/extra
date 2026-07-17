@@ -16,6 +16,9 @@ execution:
 
 mcps:
 
+  local_knowledge_mcp:
+    url: "http://127.0.0.1:8765/mcp"
+
   deepwiki:
     url: "https://mcp.deepwiki.com/mcp"
 
@@ -174,6 +177,7 @@ agents:
 
     mcps:
       - context7
+      - local_knowledge_mcp
 
     protected: true
 
