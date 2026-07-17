@@ -59,6 +59,29 @@ Everything that varies between requests lives on the `ExecutionContext`.
 
 ---
 
+## Conversation history composition
+
+`agent_engine` remains stateless between completed runs. Its `run` and `stream`
+ports accept optional typed prior user/assistant messages, convert them to
+provider-native messages in order, and append the latest user message. The
+engine never stores that history on `RuntimeEngine`.
+
+`agent_manager` owns conversation history through its repository. Before a
+turn, `ConversationService` loads prior messages for the session and appends the
+new user message. It passes the prior turns through the engine's structured
+history argument, then appends the final assistant response only after the run
+finishes. During a model tool loop, the tool-call message and matching tool
+result remain structured and ordered for the provider. A run paused for tool
+approval stores its continuation in the LangGraph checkpoint keyed by `run_id`;
+session-wide approval grants live in a separate approval repository keyed by
+session and tool identity.
+
+Starting a new session therefore selects both an empty conversation history and
+an empty approval scope without putting either kind of request state on the
+long-lived engine.
+
+---
+
 ## Streaming Runs
 
 `Engine.run(message)` remains the non-streaming API and returns a completed

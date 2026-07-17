@@ -149,15 +149,15 @@ This phase happens **per request**. It answers:
 Responsibilities:
 
 - **Receive** the request. The core engine API (`agent_engine`, `/invoke` and
-  `/stream`) is stateless per call — it takes headers and a complete
-  `messages` array and owns no conversation memory. The optional
+  `/stream`) is stateless per call — it accepts the latest user message plus
+  optional structured prior user/assistant turns supplied by its caller, and
+  owns no conversation memory. The optional
   `agent_manager` layer sits in front of it and **does** own conversation
   memory: it persists messages per conversation/session (SQLite by default),
-  assembles prior context before calling the engine, and exposes
+  loads prior messages in order, passes them through the engine's typed history
+  boundary, and exposes
   `/conversations` endpoints and SSE streaming
-  (see `src/agent_manager/application/service.py`). `RUNTIME_LIFECYCLE.md`
-  currently documents only the stateless engine path; it has not yet been
-  updated to describe this composition.
+  (see `src/agent_manager/application/service.py`).
 - **Create** a fresh `ExecutionContext` for this request.
 - **Build `ctx`** from request headers and request data.
 - **Resolve identity/context/permissions** via the extension layer (in-process
@@ -607,7 +607,7 @@ server by default; in `--url` mode it talks to `agentctl serve`'s stateless
 **Conversation persistence (✅ done, not in the original task list):**
 `agent_manager` is a DDD-style service (`domain/`, `application/`,
 `infrastructure/persistence/`) providing `ConversationService` (send/stream,
-prior-context assembly, post-success persistence), a SQLite-backed
+structured prior-context assembly, post-success persistence), a SQLite-backed
 `SqlRepository` with Alembic migrations, and tables for conversations,
 messages, users, and sessions. It is wired into both `agentctl run`/`chat`
 (CLI) and the `agent_manager` API server. `agent_engine` has no dependency on
