@@ -9,13 +9,14 @@ from __future__ import annotations
 import dataclasses
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from agent_engine.engine.engine import Engine
-from agent_engine.engine.types import RunResult
+from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
-from agent_manager.application.context import build_prompt
+from agent_manager.application.context import build_history
 from agent_manager.domain import ConversationMessage, Message, Repository, Role
 
 
@@ -25,6 +26,17 @@ class ConversationNotFound(Exception):
 
 class ConversationTokenBudgetExceeded(Exception):
     """Raised when a conversation's lifetime token budget is exhausted."""
+
+
+@dataclass(frozen=True)
+class PreparedConversationTurn:
+    """A persisted user turn plus the prior structured model context."""
+
+    session_id: str
+    run_id: str
+    user_id: str | None
+    message: str
+    history: tuple[ChatMessage, ...]
 
 
 class ConversationService:
@@ -67,6 +79,28 @@ class ConversationService:
     async def send(
         self, conversation_id: str, text: str, *, user_id: str | None = None
     ) -> RunResult:
+        turn = await self.prepare_turn(conversation_id, text, user_id=user_id)
+        result = await self._engine.run(
+            turn.message,
+            history=turn.history,
+            context=RunContext(
+                run_id=turn.run_id,
+                conversation_id=turn.session_id,
+                user_id=turn.user_id,
+            ),
+        )
+        if result.pending_approval is None:
+            await self.complete_turn(turn, result)
+        return result
+
+    async def prepare_turn(
+        self,
+        conversation_id: str,
+        text: str,
+        *,
+        user_id: str | None = None,
+    ) -> PreparedConversationTurn:
+        """Persist a user message and return its isolated prior model context."""
         await self._require(conversation_id)
         if user_id:
             await self._repository.upsert_user(user_id)
@@ -97,17 +131,28 @@ class ConversationService:
             snapshot_ttl_seconds=self._snapshot_ttl_seconds,
         )
 
-        result = await self._engine.run(
-            build_prompt(prior_context.messages, text, self._window),
-            context=RunContext(run_id=run_id, conversation_id=conversation_id, user_id=user_id),
+        return PreparedConversationTurn(
+            session_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            message=text,
+            history=build_history(prior_context.messages, self._window),
         )
 
+    async def complete_turn(
+        self,
+        turn: PreparedConversationTurn,
+        result: RunResult,
+    ) -> None:
+        """Persist the final assistant response after any approval resumes finish."""
+        if result.pending_approval is not None:
+            raise ValueError("cannot complete a conversation turn while approval is pending")
         await self._repository.append_message(
             ConversationMessage(
                 message_id=uuid.uuid4().hex,
-                session_id=conversation_id,
-                run_id=run_id,
-                user_id=user_id,
+                session_id=turn.session_id,
+                run_id=turn.run_id,
+                user_id=turn.user_id,
                 role=Role.ASSISTANT,
                 content=result.answer,
                 created_at=datetime.now(UTC),
@@ -120,44 +165,22 @@ class ConversationService:
             ),
             snapshot_ttl_seconds=self._snapshot_ttl_seconds,
         )
-        return result
 
     async def stream(
         self, conversation_id: str, text: str, *, user_id: str | None = None
     ) -> AsyncIterator[RunStreamEvent]:
-        await self._require(conversation_id)
-        if user_id:
-            await self._repository.upsert_user(user_id)
-
-        if self._max_tokens is not None:
-            used = await self._repository.get_token_usage(conversation_id)
-            if used >= self._max_tokens:
-                raise ConversationTokenBudgetExceeded(conversation_id)
-
-        prior_context = await self._repository.get_context(
-            conversation_id,
-            max_messages=self._window,
-            max_chars=self._max_chars,
-        )
-        run_id = uuid.uuid4().hex
-        await self._repository.append_message(
-            ConversationMessage(
-                message_id=uuid.uuid4().hex,
-                session_id=conversation_id,
-                run_id=run_id,
-                user_id=user_id,
-                role=Role.USER,
-                content=text,
-                created_at=datetime.now(UTC),
-            ),
-            snapshot_ttl_seconds=self._snapshot_ttl_seconds,
-        )
+        turn = await self.prepare_turn(conversation_id, text, user_id=user_id)
 
         final: RunStreamEvent | None = None
         try:
             async for event in self._engine.stream(
-                build_prompt(prior_context.messages, text, self._window),
-                context=RunContext(run_id=run_id, conversation_id=conversation_id, user_id=user_id),
+                turn.message,
+                history=turn.history,
+                context=RunContext(
+                    run_id=turn.run_id,
+                    conversation_id=turn.session_id,
+                    user_id=turn.user_id,
+                ),
             ):
                 if event.type == "final":
                     final = event
@@ -170,9 +193,9 @@ class ConversationService:
             await self._repository.append_message(
                 ConversationMessage(
                     message_id=uuid.uuid4().hex,
-                    session_id=conversation_id,
-                    run_id=run_id,
-                    user_id=user_id,
+                    session_id=turn.session_id,
+                    run_id=turn.run_id,
+                    user_id=turn.user_id,
                     role=Role.ASSISTANT,
                     content=final.content or "",
                     created_at=datetime.now(UTC),

@@ -7,7 +7,7 @@ the remote server is an httpx ``MockTransport``.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 
 import httpx
 import pytest
@@ -15,7 +15,7 @@ from click.testing import CliRunner
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.engine.engine import Engine
-from agent_engine.engine.types import PendingApproval, RunResult
+from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agentctl import chat as chat_mod
@@ -51,14 +51,26 @@ class FakeEngine(Engine):
     async def build(self, _spec: object) -> None:
         self.builds += 1
 
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
+        del history
         self.questions.append(message)
         self.contexts.append(context)
         return RunResult(system_name="fake", visited=["a"], answer=f"echo:{message}")
 
     async def stream(
-        self, message: str, *, context: RunContext | None = None
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
+        del history
         self.questions.append(message)
         self.contexts.append(context)
         for chunk in ("a", "b"):
@@ -87,14 +99,26 @@ class ApprovalFakeEngine(FakeEngine):
         self.stream_pending = stream_pending
         self.resume_calls: list[tuple[str, str, ApprovalDecision, str | None]] = []
 
-    async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
+        del history
         self.questions.append(message)
         self.contexts.append(context)
         return next(self.results)
 
     async def stream(
-        self, message: str, *, context: RunContext | None = None
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
+        del history
         self.questions.append(message)
         self.contexts.append(context)
         assert self.stream_pending is not None
@@ -307,10 +331,16 @@ async def test_local_chat_autogenerates_one_session(monkeypatch: pytest.MonkeyPa
 
 async def test_local_one_failure_does_not_kill_loop() -> None:
     class FlakyEngine(FakeEngine):
-        async def run(self, message: str, *, context: RunContext | None = None) -> RunResult:
+        async def run(
+            self,
+            message: str,
+            *,
+            history: Sequence[ChatMessage] = (),
+            context: RunContext | None = None,
+        ) -> RunResult:
             if message == "boom":
                 raise RuntimeError("model exploded")
-            return await super().run(message)
+            return await super().run(message, history=history, context=context)
 
     engine = FlakyEngine()
     echo = CollectingEcho()

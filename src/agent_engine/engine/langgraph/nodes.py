@@ -14,7 +14,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.errors import GraphInterrupt
 from pydantic import BaseModel
@@ -28,6 +27,7 @@ from agent_engine.engine.langgraph.helpers import (
     as_text,
     emit_route,
     load_file,
+    model_context,
     render_prompt,
     run_tool_loop,
 )
@@ -190,10 +190,7 @@ class AgentNode:
     async def _run(self, system_prompt: str, state: GraphState) -> dict[str, object]:
         """Drive the model + tool loop until the model stops requesting tools."""
         user_msg: str = state.get("message", "")
-        messages: list[Any] = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_msg),
-        ]
+        messages = model_context(system_prompt, state.get("history", []), user_msg)
         logger.debug("[%s] system:\n%s", self._node_path, system_prompt)
         logger.debug("[%s] → user: %s", self._node_path, user_msg)
 
@@ -618,10 +615,7 @@ class OrchestratorNode:
         tool_by_name = {t.name: t for t in tools}
 
         user_msg: str = state.get("message", "")
-        messages: list[Any] = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_msg),
-        ]
+        messages = model_context(system_prompt, state.get("history", []), user_msg)
         logger.debug(
             "[%s] system:\n%s\ntools: %s", self._node_path, system_prompt, list(tool_by_name)
         )
