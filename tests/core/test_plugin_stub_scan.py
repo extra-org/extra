@@ -294,3 +294,145 @@ def test_validator_includes_stub_errors(tmp_path: Path) -> None:
     errors = SystemSpecValidator().validate(spec, tmp_path)
 
     assert any("not implemented" in e.message for e in errors)
+
+
+# -- prompts --------------------------------------------------------------------
+
+
+def test_stub_prompts_are_reported(tmp_path: Path) -> None:
+    # 1. Test Agent stub prompts
+    write(tmp_path, "prompts/a/system.md", "<!-- STUB: fill in this prompt -->")
+    write(tmp_path, "prompts/a/user.md", "some real user prompt")
+
+    agent_node = GraphNode(
+        node=AgentSpec(
+            id="a",
+            name="a",
+            description="a agent",
+            model=_MODEL,
+            prompts=BasePromptSet(system="prompts/a/system.md", user="prompts/a/user.md"),
+        )
+    )
+
+    # 2. Test Orchestrator stub prompts
+    write(tmp_path, "prompts/orch.md", "<!-- STUB: fill in this prompt -->")
+    orch_node = GraphNode(
+        node=OrchestratorSpec(
+            id="orch",
+            name="orch",
+            description="orch orchestrator",
+            model=_MODEL,
+            prompts=OrchestratorPromptSet(orchestrator="prompts/orch.md"),
+        ),
+        children=(agent_node,),
+    )
+
+    spec = system(orch_node)
+    errors = scan(spec, tmp_path)
+
+    assert len(errors) == 2
+    assert any("a.prompts.system" in e and "is declared but not implemented" in e for e in errors)
+    assert any(
+        "orch.prompts.orchestrator" in e and "is declared but not implemented" in e for e in errors
+    )
+
+
+def test_implemented_prompts_pass(tmp_path: Path) -> None:
+    write(tmp_path, "prompts/a/system.md", "some real system prompt")
+    write(tmp_path, "prompts/a/user.md", "some real user prompt")
+
+    agent_node = GraphNode(
+        node=AgentSpec(
+            id="a",
+            name="a",
+            description="a agent",
+            model=_MODEL,
+            prompts=BasePromptSet(system="prompts/a/system.md", user="prompts/a/user.md"),
+        )
+    )
+
+    spec = system(agent_node)
+    assert scan(spec, tmp_path) == []
+
+
+def test_duplicate_prompt_path_reported_once(tmp_path: Path) -> None:
+    """The same prompt file path declared by two nodes must only generate
+    one error — consistent with how shared tools are reported once."""
+    write(tmp_path, "prompts/shared.md", "<!-- STUB: fill in this prompt -->")
+    shared_prompt = BasePromptSet(system="prompts/shared.md")
+
+    spec = system(
+        GraphNode(
+            node=OrchestratorSpec(
+                id="root",
+                name="root",
+                description="root",
+                model=_MODEL,
+                prompts=OrchestratorPromptSet(),
+            ),
+            children=(
+                GraphNode(
+                    node=AgentSpec(
+                        id="a",
+                        name="a",
+                        description="a",
+                        model=_MODEL,
+                        prompts=shared_prompt,
+                    )
+                ),
+                GraphNode(
+                    node=AgentSpec(
+                        id="b",
+                        name="b",
+                        description="b",
+                        model=_MODEL,
+                        prompts=shared_prompt,
+                    )
+                ),
+            ),
+        )
+    )
+    errors = scan(spec, tmp_path)
+    assert len(errors) == 1
+
+
+def test_stub_user_prompt_is_reported(tmp_path: Path) -> None:
+    """Error for an unimplemented user prompt must be correctly reported."""
+    write(tmp_path, "prompts/a/user.md", "<!-- STUB: fill in this prompt -->")
+    spec = system(
+        GraphNode(
+            node=AgentSpec(
+                id="a",
+                name="a",
+                description="a agent",
+                model=_MODEL,
+                prompts=BasePromptSet(user="prompts/a/user.md"),
+            )
+        )
+    )
+    errors = scan(spec, tmp_path)
+    assert len(errors) == 1
+    assert any("a.prompts.user" in e and "is declared but not implemented" in e for e in errors)
+
+
+def test_missing_prompt_file_is_reported_with_hint(tmp_path: Path) -> None:
+    """Missing prompt file must be reported with the run generate hint."""
+    spec = system(
+        GraphNode(
+            node=AgentSpec(
+                id="a",
+                name="a",
+                description="a agent",
+                model=_MODEL,
+                prompts=BasePromptSet(system="prompts/a/system.md"),
+            )
+        )
+    )
+    errors = scan(spec, tmp_path)
+    assert len(errors) == 1
+    assert any(
+        "a.prompts.system" in e and "Prompt file not found: prompts/a/system.md — run `agentctl generate` to create the stub" in e
+        for e in errors
+    )
+
+

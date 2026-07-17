@@ -19,7 +19,7 @@ class GenerateResult:
 
 
 class Generator:
-    """Generates plugin stubs for tools and resolvers declared in the spec.
+    """Generates plugin stubs for tools, resolvers, and prompt files declared in the spec.
 
     Never overwrites existing files — only creates missing stubs.
 
@@ -42,7 +42,7 @@ class Generator:
         tools_dir = base_dir / "plugins" / "tools"
         tools_dir.mkdir(parents=True, exist_ok=True)
         for tool_id, description in tool_ids.items():
-            self._write(tools_dir / f"{tool_id}.py", _tool_stub(tool_id, description), result)
+            self._write(tools_dir / f"{tool_id}.py", _tool_stub(tool_id, description), result, base_dir)
 
         resolvers_dir = base_dir / "plugins" / "resolvers"
         resolvers_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +52,7 @@ class Generator:
                 resolvers_dir / "shared.py",
                 _shared_resolver_stub(shared_ids),
                 result,
+                base_dir,
             )
 
         for agent_id, agent_only_ids in agent_resolver_ids.items():
@@ -60,6 +61,7 @@ class Generator:
                 resolvers_dir / f"{agent_id}.py",
                 _agent_resolver_stub(agent_only_ids, has_shared),
                 result,
+                base_dir,
             )
 
         if has_protected:
@@ -67,13 +69,14 @@ class Generator:
                 base_dir / "plugins" / "access.py",
                 _access_stub(),
                 result,
+                base_dir,
             )
 
         if mcp_plugin_ids:
             mcp_auth_dir = base_dir / "plugins" / "mcp_auth"
             mcp_auth_dir.mkdir(parents=True, exist_ok=True)
             for mcp_id in mcp_plugin_ids:
-                self._write(mcp_auth_dir / f"{mcp_id}.py", _mcp_auth_stub(mcp_id), result)
+                self._write(mcp_auth_dir / f"{mcp_id}.py", _mcp_auth_stub(mcp_id), result, base_dir)
 
         hook_methods = _collect_hook_methods(spec)
         if hook_methods:
@@ -87,7 +90,13 @@ class Generator:
                     hooks_dir / f"{plugin_id}.py",
                     _hook_plugin_stub(plugin_id, methods),
                     result,
+                    base_dir,
                 )
+        prompt_paths = _collect_prompts(spec.graph)
+        for path_str in prompt_paths:
+            path = base_dir / path_str
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._write(path, "<!-- STUB: fill in this prompt -->\n", result, base_dir)
 
         self._sync_manifest(
             base_dir / "plugins",
@@ -142,14 +151,17 @@ class Generator:
             resolvers=resolver_refs,
             tools=tool_refs,
         )
-        (result.created if created else result.skipped).append(MANIFEST_NAME)
+        base_dir = plugins_root.parent
+        rel_manifest = manifest_path.relative_to(base_dir)
+        (result.created if created else result.skipped).append(str(rel_manifest))
 
-    def _write(self, path: Path, content: str, result: GenerateResult) -> None:
+    def _write(self, path: Path, content: str, result: GenerateResult, base_dir: Path) -> None:
+        rel_path = path.relative_to(base_dir)
         if path.exists():
-            result.skipped.append(str(path.name))
+            result.skipped.append(str(rel_path))
             return
         path.write_text(content, encoding="utf-8")
-        result.created.append(str(path.name))
+        result.created.append(str(rel_path))
 
 
 def _collect(
@@ -316,3 +328,26 @@ def _hook_plugin_stub(plugin_id: str, methods: list[str]) -> str:
         "        # Read that data from event.run_context and event.payload.\n\n"
         f"{method_blocks}"
     )
+
+
+def _collect_prompts(node: GraphNode) -> list[str]:
+    """Walk the graph and collect all declared prompt paths (system, user, orchestrator).
+
+    Deduplicates paths so the same file declared by multiple nodes is only
+    scaffolded once — consistent with how _collect() deduplicates tool/resolver IDs.
+    """
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    def walk(n: GraphNode) -> None:
+        prompts = n.node.get_prompts()
+        for field_name in ("system", "user", "orchestrator"):
+            path_str = getattr(prompts, field_name, None)
+            if path_str and path_str not in seen:
+                seen.add(path_str)
+                paths.append(path_str)
+        for child in n.children:
+            walk(child)
+
+    walk(node)
+    return paths

@@ -14,6 +14,8 @@ from agent_engine.core.spec import (
     HooksConfig,
     HookSpec,
     ModelConfig,
+    OrchestratorPromptSet,
+    OrchestratorSpec,
     ResolverSpec,
     SystemMeta,
     SystemSpec,
@@ -192,7 +194,7 @@ def test_generate_creates_manifest_with_refs(tmp_path: Path) -> None:
 
     manifest = tmp_path / "plugins" / MANIFEST_NAME
     assert manifest.is_file()
-    assert MANIFEST_NAME in result.created
+    assert f"plugins/{MANIFEST_NAME}" in result.created
 
     data = _read(manifest)
     assert data["tools"]["book_flight"].endswith(".plugins.tools.book_flight:book_flight")
@@ -216,4 +218,101 @@ def test_generate_is_idempotent_and_preserves_manifest(tmp_path: Path) -> None:
     result = Generator().generate(_spec_with_plugins(), tmp_path)
 
     assert manifest.read_text() == snapshot  # no churn
-    assert MANIFEST_NAME in result.skipped  # existed, not recreated
+    assert f"plugins/{MANIFEST_NAME}" in result.skipped  # existed, not recreated
+
+
+def test_generator_creates_missing_prompt_stubs(tmp_path: Path) -> None:
+    # Setup spec with an orchestrator routing to an agent, both having missing prompts
+    agent = AgentSpec(
+        id="flights",
+        name="flights",
+        description="books flights",
+        model=_MODEL,
+        prompts=BasePromptSet(system="prompts/flights/system.md", user="prompts/flights/user.md"),
+    )
+    orch = OrchestratorSpec(
+        id="router",
+        name="router",
+        description="routes to flights",
+        model=_MODEL,
+        prompts=OrchestratorPromptSet(orchestrator="prompts/router.md"),
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="gen-test"),
+        defaults=None,
+        graph=GraphNode(node=orch, children=(GraphNode(node=agent),)),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    # Verify stubs created
+    sys_prompt = tmp_path / "prompts" / "flights" / "system.md"
+    user_prompt = tmp_path / "prompts" / "flights" / "user.md"
+    orch_prompt = tmp_path / "prompts" / "router.md"
+
+    assert sys_prompt.is_file()
+    assert user_prompt.is_file()
+    assert orch_prompt.is_file()
+
+    assert sys_prompt.read_text() == "<!-- STUB: fill in this prompt -->\n"
+    assert user_prompt.read_text() == "<!-- STUB: fill in this prompt -->\n"
+    assert orch_prompt.read_text() == "<!-- STUB: fill in this prompt -->\n"
+
+    # Verify result records
+    assert "prompts/flights/system.md" in result.created
+    assert "prompts/flights/user.md" in result.created
+    assert "prompts/router.md" in result.created
+
+
+def test_generator_does_not_overwrite_existing_prompt(tmp_path: Path) -> None:
+    """Never-overwrite rule: an existing prompt file must be left untouched."""
+    real_content = "You are a real, implemented flight-booking assistant.\n"
+    prompt_path = tmp_path / "prompts" / "flights" / "system.md"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(real_content, encoding="utf-8")
+
+    agent = AgentSpec(
+        id="flights",
+        name="flights",
+        description="books flights",
+        model=_MODEL,
+        prompts=BasePromptSet(system="prompts/flights/system.md"),
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="gen-test"),
+        defaults=None,
+        graph=GraphNode(node=agent),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    assert prompt_path.read_text() == real_content  # untouched
+    assert "prompts/flights/system.md" in result.skipped
+    assert "prompts/flights/system.md" not in result.created
+
+
+def test_generator_deduplicates_shared_prompt_path(tmp_path: Path) -> None:
+    """A prompt path referenced by two agents must be scaffolded only once
+    and appear in result.created exactly once — not in both created and skipped."""
+    shared_prompt = BasePromptSet(system="prompts/shared/system.md")
+    agent_a = AgentSpec(id="a", name="a", description="a", model=_MODEL, prompts=shared_prompt)
+    agent_b = AgentSpec(id="b", name="b", description="b", model=_MODEL, prompts=shared_prompt)
+    orch = OrchestratorSpec(
+        id="root", name="root", description="root", model=_MODEL, prompts=OrchestratorPromptSet()
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="gen-test"),
+        defaults=None,
+        graph=GraphNode(node=orch, children=(GraphNode(node=agent_a), GraphNode(node=agent_b))),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    # File must exist and contain the sentinel
+    p = tmp_path / "prompts" / "shared" / "system.md"
+    assert p.is_file()
+    assert p.read_text() == "<!-- STUB: fill in this prompt -->\n"
+
+    # Must appear in created exactly once, never in skipped
+    assert result.created.count("prompts/shared/system.md") == 1
+    assert "prompts/shared/system.md" not in result.skipped
