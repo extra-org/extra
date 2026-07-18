@@ -188,6 +188,10 @@ def _format_inspection_report(spec: SystemSpec, base_dir: Path, path: Path) -> s
     for agent in agents:
         out.append(f"  - {agent.id} ({agent.name})")
         out.append(f"      model: {agent.model.provider}/{agent.model.name}")
+        if agent.model.fallback:
+            out.append(
+                f"      fallback: {agent.model.fallback.provider}/{agent.model.fallback.name}"
+            )
         if agent.prompts.system:
             out.append(f"      prompt: {agent.prompts.system}")
         out.append(f"      tools: {', '.join(t.id for t in agent.tools) or '(none)'}")

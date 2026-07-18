@@ -330,7 +330,9 @@ def _validate_mcps(mcps: dict[str, Any], errors: list[ValidationError]) -> None:
         _validate_mcp_tool_tags(mcp_id, raw, errors)
 
 
-def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
+def _validate_model(
+    path: str, raw: Any, errors: list[ValidationError], is_fallback: bool = False
+) -> None:
     if raw is None:
         return
     if not isinstance(raw, dict):
@@ -355,9 +357,7 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
 
     temperature = raw.get("temperature")
     if temperature is not None and (
-        not isinstance(temperature, int | float)
-        or isinstance(temperature, bool)
-        or temperature < 0
+        not isinstance(temperature, int | float) or isinstance(temperature, bool) or temperature < 0
     ):
         errors.append(ValidationError(f"{path}.temperature", "Must be a non-negative number"))
 
@@ -372,6 +372,13 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
         not isinstance(top_p, int | float) or isinstance(top_p, bool) or top_p < 0 or top_p > 1
     ):
         errors.append(ValidationError(f"{path}.top_p", "Must be between 0 and 1"))
+
+    fallback = raw.get("fallback")
+    if fallback is not None:
+        if is_fallback:
+            errors.append(ValidationError(f"{path}.fallback", "Nested fallbacks are not supported"))
+        else:
+            _validate_model(f"{path}.fallback", fallback, errors, is_fallback=True)
 
 
 def _validate_models(
@@ -598,6 +605,8 @@ class YAMLParser(Parser):
         return ModelConfig(provider="", name="")
 
     def _build_model(self, raw: dict[str, Any]) -> ModelConfig:
+        fallback_raw = raw.get("fallback")
+        fallback = self._build_model(fallback_raw) if isinstance(fallback_raw, dict) else None
         return ModelConfig(
             provider=raw.get("provider", ""),
             name=raw.get("name", ""),
@@ -605,6 +614,7 @@ class YAMLParser(Parser):
             region=raw.get("region"),
             max_tokens=raw.get("max_tokens"),
             top_p=raw.get("top_p"),
+            fallback=fallback,
         )
 
     def _build_resolvers(
@@ -631,9 +641,7 @@ def _looks_secret(value: str) -> bool:
 
 def _looks_secret_value(value: str) -> bool:
     """Value check: flag only strings that plausibly contain a credential."""
-    return bool(
-        _SECRET_VALUE_ASSIGNMENT.search(value) or _CREDENTIAL_SHAPES.search(value)
-    )
+    return bool(_SECRET_VALUE_ASSIGNMENT.search(value) or _CREDENTIAL_SHAPES.search(value))
 
 
 def _dedupe_stable(items: Iterable[str]) -> tuple[str, ...]:

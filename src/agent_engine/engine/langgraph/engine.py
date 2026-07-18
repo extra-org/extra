@@ -10,7 +10,7 @@ from typing import Any, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -797,8 +797,7 @@ class LangGraphEngine(Engine):
         assert self._resolver_loader is not None
         assert self._hook_manager is not None
         tools, mcp_names, server_by_tool = self._build_agent_tools(spec)
-        model = self._build_model(spec.model)
-        bound_model = model.bind_tools(tools) if tools else model
+        bound_model = self._build_model(spec.model, tools=tools)
         return AgentNode(
             spec=spec,
             node_path=node_path,
@@ -814,13 +813,20 @@ class LangGraphEngine(Engine):
             system_namespace=self._system_name,
         )
 
-    def _build_model(self, model: NodeModelConfig) -> BaseChatModel:
-        return self._model_factory(
+    def _build_model(
+        self, model: NodeModelConfig, tools: list[BaseTool] | None = None
+    ) -> BaseChatModel | Runnable:
+        primary_model = self._model_factory(
             model.provider,
             model.name,
             model.temperature,
             **_model_factory_kwargs(self._model_factory, model),
         )
+        bound_primary = primary_model.bind_tools(tools) if tools else primary_model
+        if model.fallback is not None:
+            bound_fallback = self._build_model(model.fallback, tools=tools)
+            return bound_primary.with_fallbacks([bound_fallback], exceptions_to_handle=(Exception,))
+        return bound_primary
 
     def _build_agent_tools(
         self, spec: AgentSpec

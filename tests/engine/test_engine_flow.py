@@ -46,6 +46,57 @@ from agent_engine.runtime.state import GraphState
 # ---------------------------------------------------------------------------
 
 
+class FakeRunnableWithFallbacks:
+    def __init__(self, primary: Any, fallbacks: list[Any]) -> None:
+        self._primary = primary
+        self._fallbacks = fallbacks
+
+    async def ainvoke(self, messages: list[Any]) -> Any:
+        try:
+            return await self._primary.ainvoke(messages)
+        except Exception:
+            for fallback in self._fallbacks:
+                try:
+                    return await fallback.ainvoke(messages)
+                except Exception:
+                    continue
+            raise
+
+    async def astream(self, messages: list[Any]) -> AsyncIterator[Any]:
+        try:
+            async for chunk in self._primary.astream(messages):
+                yield chunk
+        except Exception:
+            for fallback in self._fallbacks:
+                try:
+                    async for chunk in fallback.astream(messages):
+                        yield chunk
+                    return
+                except Exception:
+                    continue
+            raise
+
+
+class FailingChatModel:
+    def bind_tools(self, tools: list[Any]) -> FailingChatModel:
+        return self
+
+    def with_fallbacks(
+        self,
+        fallbacks: list[Any],
+        exceptions_to_handle: tuple[type[BaseException], ...] = (Exception,),
+    ) -> Any:
+        return FakeRunnableWithFallbacks(self, fallbacks)
+
+    async def ainvoke(self, messages: list[Any]) -> AIMessage:
+        raise RuntimeError("Model execution failed")
+
+    async def astream(self, messages: list[Any]) -> AsyncIterator[AIMessage]:
+        if False:
+            yield AIMessage(content="")
+        raise RuntimeError("Model stream failed")
+
+
 class FakeChatModel:
     """A scriptless stand-in: route through one tool, then answer."""
 
@@ -55,6 +106,13 @@ class FakeChatModel:
 
     def bind_tools(self, tools: list[Any]) -> FakeChatModel:
         return FakeChatModel(self._answer, [t.name for t in tools])
+
+    def with_fallbacks(
+        self,
+        fallbacks: list[Any],
+        exceptions_to_handle: tuple[type[BaseException], ...] = (Exception,),
+    ) -> Any:
+        return FakeRunnableWithFallbacks(self, fallbacks)
 
     async def ainvoke(self, messages: list[Any]) -> AIMessage:
         return self._respond(messages)
@@ -91,6 +149,10 @@ class FakeChatModel:
 @pytest.fixture
 def model_factory() -> Callable[[str, str, float | None], BaseChatModel]:
     def factory(provider: str, name: str, temperature: float | None) -> BaseChatModel:
+        if name == "failing-primary":
+            return cast(BaseChatModel, FailingChatModel())
+        if name == "successful-fallback":
+            return cast(BaseChatModel, FakeChatModel(answer="recovered ok"))
         return cast(BaseChatModel, FakeChatModel())
 
     return factory
@@ -392,3 +454,61 @@ def test_graph_state_accepts_generic_run_context() -> None:
     }
 
     assert state["run_context"]["metadata"]["allowed_nodes"] == ("admin",)
+
+
+# -- fallback execution tests --------------------------------------------------
+
+
+async def test_fallback_model_execution(tmp_path: Path, model_factory: Any) -> None:
+    # Configure an agent where the primary model fails and fallback succeeds
+    fallback_model = ModelConfig(provider="fake", name="successful-fallback")
+    model = ModelConfig(
+        provider="fake",
+        name="failing-primary",
+        fallback=fallback_model,
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="fallback-test"),
+        defaults=None,
+        graph=GraphNode(
+            node=AgentSpec(
+                id="agent",
+                name="agent",
+                description="test agent",
+                model=model,
+                prompts=BasePromptSet(),
+            )
+        ),
+    )
+
+    result = await run_message(spec, tmp_path, model_factory, "hello")
+    assert result.answer == "recovered ok"
+    assert result.visited == ["agent"]
+
+
+async def test_fallback_model_streaming(tmp_path: Path, model_factory: Any) -> None:
+    fallback_model = ModelConfig(provider="fake", name="successful-fallback")
+    model = ModelConfig(
+        provider="fake",
+        name="failing-primary",
+        fallback=fallback_model,
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="fallback-test"),
+        defaults=None,
+        graph=GraphNode(
+            node=AgentSpec(
+                id="agent",
+                name="agent",
+                description="test agent",
+                model=model,
+                prompts=BasePromptSet(),
+            )
+        ),
+    )
+
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        events = [e async for e in engine.stream("hello")]
+
+    assert any(e.type == "answer_delta" and e.content == "recovered ok" for e in events)
