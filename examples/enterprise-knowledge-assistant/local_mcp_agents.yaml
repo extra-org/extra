@@ -1,5 +1,5 @@
 system:
-  name: "Enterprise Knowledge Assistant Local MCP Approval"
+  name: "Enterprise Knowledge Assistant Local MCP Auto Mode"
 
 defaults:
   model:
@@ -22,8 +22,8 @@ agents:
     name: "Local Enterprise Knowledge Expert"
     description: >
       Uses local enterprise knowledge MCP tools selected from natural-language
-      requests so session approval scope can be verified end to end.
-    auto: false
+      requests so automatic MCP tool execution can be verified end to end.
+    auto: true
     prompts:
       system: prompts/local_knowledge_agent/system.md
     mcps:

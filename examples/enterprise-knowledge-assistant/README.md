@@ -2,10 +2,9 @@
 
 This flagship example demonstrates a declarative multi-agent system with local
 tools, remote MCP servers, runtime hooks, and a self-contained local MCP server.
-The local server provides deterministic data for proving that “Approve for this
-session” is scoped to one canonical MCP tool identity rather than every tool on
-the server. The interactive runner uses the real LLM provider and model declared
-in `local_mcp_agents.yaml`.
+The local server provides deterministic data for proving that auto mode executes
+MCP tools without pausing for human approval. The interactive runner uses the
+real LLM provider and model declared in `local_mcp_agents.yaml`.
 
 ## Local MCP tools
 
@@ -21,9 +20,9 @@ All three tools use the normal Extra MCP Streamable HTTP integration. They are
 not registered as local Python agent tools. The MCP itself requires no external
 API, credential, database, or internet connection. The configured LLM still
 requires its normal provider credentials. The focused runner configures its
-agent with `auto: false`, so every one of these MCP tools requires approval
-unless its exact canonical identity is already approved for the current
-session.
+agent with `auto: true`, so these MCP tools execute immediately without an
+approval prompt. Only use this setting when every tool exposed to the agent is
+trusted for automatic execution.
 
 ## Installation
 
@@ -64,7 +63,7 @@ python3 -m mcps.local_knowledge_mcp.server
 
 The Streamable HTTP endpoint is `http://127.0.0.1:8765/mcp`.
 
-## Run the interactive approval example
+## Run the interactive auto-mode example
 
 In terminal 2:
 
@@ -73,14 +72,12 @@ cd /Users/spwrwn/projects/extra
 python3 examples/enterprise-knowledge-assistant/run_local_mcp_approval.py
 ```
 
-This runner uses the production `LangGraphEngine`, the real in-memory approval
-repository, the existing in-memory conversation repository, the real configured
-LLM, and the real local MCP transport. The conversation repository and approval
-repository are separate, but both are scoped by the same session ID. The LLM
-receives structured prior user/assistant messages plus the latest
-natural-language message, discovers the bound tool schemas, selects a tool,
-generates arguments, receives the result after approval, and writes the final
-response.
+This runner uses the production `LangGraphEngine`, the existing in-memory
+conversation repository, the real configured LLM, and the real local MCP
+transport. The LLM receives structured prior user/assistant messages plus the
+latest natural-language message, discovers the bound tool schemas, selects a
+tool, generates arguments, receives the automatically executed result, and
+writes the final response.
 
 To use a different environment file:
 
@@ -93,7 +90,7 @@ If the configured provider cannot initialize, startup fails with the provider
 and model names plus a pointer to `.env.example`; secret values and underlying
 provider error details are not printed.
 
-## Exact manual approval sequence
+## Exact auto-mode sequence
 
 Enter these natural-language prompts in the interactive runner. They avoid MCP
 implementation names while clearly expressing the intended business action.
@@ -104,7 +101,8 @@ implementation names while clearly expressing the intended business action.
    Find internal documents about the session approval security policy and summarize them.
    ```
 
-   Choose `2` — Approve for this session.
+   The selected document-search tool must execute immediately. No approval menu
+   should appear.
 
 2. Ask another document question:
 
@@ -112,8 +110,8 @@ implementation names while clearly expressing the intended business action.
    Look through our internal documents for publishing guidelines and summarize what you find.
    ```
 
-   The LLM should select the same document-search tool. It must execute with
-   `requested=false source=session_cache` and no prompt.
+   The LLM should select the same document-search tool and execute it without an
+   approval prompt.
 
 3. Enter:
 
@@ -121,10 +119,10 @@ implementation names while clearly expressing the intended business action.
    Who is employee E-100, what is their role, and which team are they on?
    ```
 
-   It is a different canonical tool identity on the same MCP server, so it must
-   prompt. Choose `2`.
+   It is a different canonical tool identity on the same MCP server, but auto
+   mode must still execute it without prompting.
 
-4. Ask both approved categories again, one message at a time:
+4. Ask both tool categories again, one message at a time:
 
    ```text
    Search our internal documents for information about enterprise knowledge search.
@@ -139,9 +137,8 @@ implementation names while clearly expressing the intended business action.
    Publish an internal note titled "Approval demonstration" saying that session approvals were tested.
    ```
 
-   It must request its own approval. Choose `3` to deny it and verify
-   `executed=false status=denied`. The final LLM response should acknowledge
-   that publishing was denied rather than claiming the note was created.
+   It must execute without prompting. The returned value uses
+   `published_demo_only`; the local demo does not persist the note.
 
 6. Enter:
 
@@ -150,7 +147,8 @@ implementation names while clearly expressing the intended business action.
    Find internal documents about the session approval security policy and summarize them.
    ```
 
-   The new session must show a cache miss and request approval again.
+   The new session must also execute without prompting. Auto mode is configured
+   on the agent and does not depend on session approval state.
 
 Use `/session` to show the current session, `/tools` to list commands, and
 `/exit` to stop the runner.
@@ -163,8 +161,8 @@ In one session, enter:
 Find internal documents about the session approval security policy and summarize them.
 ```
 
-Choose `2` to approve the selected search tool for the session. After the
-assistant returns the results and numbered follow-up choices, enter:
+The selected search tool executes automatically. After the assistant returns
+the results and numbered follow-up choices, enter:
 
 ```text
 1
@@ -172,7 +170,7 @@ assistant returns the results and numbered follow-up choices, enter:
 
 The terminal must show `messages_before_run=2` and `message_count=3` before the
 second run. The model should interpret the number using the previous assistant
-response, perform the selected follow-up search, and execute without another
+response, perform the selected follow-up search, and execute without an
 approval prompt. The same behavior can be tested with:
 
 ```text
@@ -190,7 +188,8 @@ Then enter:
 ```
 
 The new session must show `messages_before_run=0`. The model must not know about
-the previous session's numbered choices, and no previous approval may be reused.
+the previous session's numbered choices; newly selected tools still execute
+automatically.
 
 ## Expected safe terminal events
 
@@ -206,9 +205,7 @@ The runner prints events such as:
 [MODEL CONTEXT] session_id=... message_count=...
 [MODEL INVOCATION] session_id=... provider=... model=... phase=started
 [MODEL TOOL SELECTION] session_id=... server=local_knowledge_mcp tool=... identity=mcp:local_knowledge_mcp:...
-[APPROVAL CACHE] session_id=... tool=mcp:local_knowledge_mcp:... source=session_cache hit=false
-[APPROVAL] session_id=... server=local_knowledge_mcp tool=... requested=true source=user
-[APPROVAL STORED] session_id=... tool=mcp:local_knowledge_mcp:... decision=allow_for_session
+[APPROVAL] session_id=... server=local_knowledge_mcp tool=... requested=false source=auto_mode
 [TOOL EXECUTION] session_id=... server=local_knowledge_mcp tool=... executed=true status=succeeded
 [TOOL RESULT] session_id=... tool=mcp:local_knowledge_mcp:... returned_to_llm=true kind=mcp_result
 [SESSION MESSAGE APPENDED] session_id=... role=assistant
@@ -222,19 +219,18 @@ authentication headers, and secrets are never logged.
 ## Automated and live validation
 
 Automated tests remain offline and deterministic. They start the local MCP,
-verify discovery through `LangGraphEngine`, exercise the real approval
-coordinator and session repository, and validate per-tool/session isolation and
-denial. A deterministic context-aware fake model also asserts the exact
-structured user/assistant history for numeric and natural-language follow-ups,
-calls the real local MCP through the approval gate, receives its `ToolMessage`,
-and proves that the approved search tool is reused without another prompt. No
-test calls an external model provider.
+verify discovery through `LangGraphEngine`, and prove that the configured agent
+executes MCP calls without an approval interrupt. A deterministic context-aware
+fake model also asserts the exact structured user/assistant history for numeric
+and natural-language follow-ups, calls the real local MCP through the approval
+boundary, and receives its `ToolMessage` without prompting. No test calls an
+external model provider.
 
 The real flow is intentionally a documented manual integration test because
 live model selection is networked, credentialed, billable, and not deterministic:
 
 ```text
-real configured LLM → tool selection → approval → session cache
+real configured LLM → tool selection → automatic execution
 → local MCP → tool result returned to LLM → final response
 ```
 
@@ -243,5 +239,5 @@ real configured LLM → tool selection → approval → session cache
 The main `agents.yaml` registers `local_knowledge_mcp` and makes it available to
 `enterprise_docs_agent` alongside Context7. The runner uses
 `local_mcp_agents.yaml`, a focused single-agent projection that prevents remote
-MCP availability from affecting this approval test while retaining the
+MCP availability from affecting this auto-mode test while retaining the
 flagship example's configured provider and model.

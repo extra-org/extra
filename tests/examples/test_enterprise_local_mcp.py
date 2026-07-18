@@ -1,4 +1,4 @@
-"""Offline local-MCP discovery and deterministic approval-scope tests."""
+"""Offline local-MCP discovery and deterministic auto-mode tests."""
 
 from __future__ import annotations
 
@@ -233,7 +233,7 @@ class ApprovalHarness:
             session_id=session_id,
             provider="mcp",
             server_id=SERVER_ID,
-            system_namespace="Enterprise Knowledge Assistant Local MCP Approval",
+            system_namespace="Enterprise Knowledge Assistant Local MCP Auto Mode",
             user_id="local-demo-user",
         )
         outcome = await self.coordinator.resolve(invocation, auto_mode=False)
@@ -310,7 +310,7 @@ async def test_local_mcp_is_discovered_through_engine_flow(
 
 
 @pytest.mark.parametrize("follow_up", ["1", "search more broadly"])
-async def test_follow_up_receives_history_and_reuses_tool_approval(
+async def test_auto_mode_executes_initial_and_follow_up_tools_without_approval(
     local_mcp_url: str,
     follow_up: str,
 ) -> None:
@@ -329,7 +329,7 @@ async def test_follow_up_receives_history_and_reuses_tool_approval(
         conversations = ConversationService(
             engine,
             conversation_repository,
-            system_name="Enterprise Knowledge Assistant Local MCP Approval",
+            system_name="Enterprise Knowledge Assistant Local MCP Auto Mode",
         )
         session_id = await conversations.create(
             user_id="local-demo-user",
@@ -352,7 +352,7 @@ async def test_follow_up_receives_history_and_reuses_tool_approval(
             approve_for_session=False,
         )
 
-    assert first_prompted is True
+    assert first_prompted is False
     assert second_prompted is False
     assert [usage.name for usage in first.used_tools] == ["search_internal_documents"]
     assert [usage.name for usage in second.used_tools] == ["search_internal_documents"]
@@ -392,6 +392,13 @@ def test_local_runner_uses_same_real_model_config_as_flagship() -> None:
     assert local_spec.graph.node.model.provider == flagship.defaults.model.provider
     assert local_spec.graph.node.model.name == flagship.defaults.model.name
     assert local_spec.graph.node.model.name != "deterministic-local-mcp-demo"
+
+
+def test_local_runner_enables_auto_mode() -> None:
+    spec = RUNNER["load_spec"]()
+
+    assert isinstance(spec.graph.node, AgentSpec)
+    assert spec.graph.node.auto_mode is True
 
 
 def test_configured_model_failure_is_actionable_and_secret_free(
