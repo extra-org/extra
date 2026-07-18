@@ -1,4 +1,4 @@
-"""Interactive real-LLM session approval proof using the local knowledge MCP."""
+"""Interactive real-LLM auto-mode proof using the local knowledge MCP."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from agent_manager.infrastructure.persistence.memory_repository import MemoryRep
 EXAMPLE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = EXAMPLE_DIR / "local_mcp_agents.yaml"
 SERVER_ID = "local_knowledge_mcp"
-SYSTEM_NAMESPACE = "Enterprise Knowledge Assistant Local MCP Approval"
+SYSTEM_NAMESPACE = "Enterprise Knowledge Assistant Local MCP Auto Mode"
 USER_ID = "local-demo-user"
 DEFAULT_MCP_URL = "http://127.0.0.1:8765/mcp"
 EXPECTED_TOOLS = {
