@@ -37,6 +37,7 @@
         "group": "Features",
         "pages": [
           "docs/mcp-and-tools",
+          "docs/human-in-the-loop",
           "docs/runtime-hooks",
           "docs/plugins",
           "docs/execution-limits"
