@@ -1,0 +1,41 @@
+# plugins.toml — unified manifest for this client extension package.
+#
+# ONE manifest for ALL client extension code: hooks, resolvers, and tools.
+# It is a catalog/generation companion. The runtime reads only [hooks.plugins]
+# to resolve managed hook ids; resolvers and tools load by file path.
+# `agentctl generate` creates this file if missing and merges new entries in
+# without overwriting manual edits.
+#
+# SECURITY: never put secrets here. Only import refs and metadata — no tokens,
+# client secrets, HMAC keys, or Authorization values.
+
+[package]
+name = "fixtures.plugins"
+description = "Client extension package for hooks, resolvers, and tools."
+
+[paths]
+hooks = "fixtures.plugins.hooks"
+resolvers = "fixtures.plugins.resolvers"
+tools = "fixtures.plugins.tools"
+
+[hooks]
+on_engine_start = []
+on_engine_stop = []
+on_run_start = []
+on_run_end = []
+on_run_error = []
+before_tool_call = []
+after_tool_call = []
+transform_tool_result = []
+on_tool_error = []
+before_mcp_request = []
+after_mcp_response = []
+
+[hooks.plugins]
+
+[resolvers]
+greeting_agent = "fixtures.plugins.resolvers.greeting_agent:Resolver"
+shared = "fixtures.plugins.resolvers.shared:SharedResolver"
+
+[tools]
+echo_tool = "fixtures.plugins.tools.echo_tool:echo_tool"

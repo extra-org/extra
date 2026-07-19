@@ -1,0 +1,71 @@
+system:
+  name: "Test Agent System"
+
+# Pick the provider you have a key for: anthropic | openai | gemini | bedrock.
+# Set the matching key in a ".env" file next to this config (see .env.example).
+#   - openai   -> OPENAI_API_KEY      (example below)
+#   - anthropic-> ANTHROPIC_API_KEY
+#   - gemini   -> GEMINI_API_KEY
+#   - bedrock  -> AWS_REGION + ambient AWS creds
+defaults:
+  model:
+    provider: openai
+    name: gpt-4o-mini
+    temperature: 0.0
+
+execution:
+  max_iterations: 10
+  max_tool_calls: 5
+  max_tool_calls_per_agent: 3
+  max_child_agent_calls: 4
+  allow_duplicate_tool_calls: false
+
+tools:
+  echo_tool:
+    description: >
+      Echo back the input text. Used to verify tool wiring end to end.
+
+resolvers:
+  current_date:
+    scope: shared
+
+  user_name:
+    scope: shared
+
+orchestrators:
+  root_router:
+    name: "Root Router"
+    description: >
+      Entry point. Routes the user request to the appropriate specialist.
+    model:
+      provider: openai
+      name: gpt-4o
+      temperature: 0.0
+    prompts:
+      orchestrator: prompts/root_router/orchestrator.md
+      system: prompts/root_router/system.md
+
+agents:
+  greeting_agent:
+    name: "Greeting Agent"
+    description: >
+      Handles simple greetings and small talk.
+    prompts:
+      system: prompts/greeting_agent/system.md
+    resolvers:
+      - current_date
+      - user_name
+
+  echo_agent:
+    name: "Echo Agent"
+    description: >
+      Demonstrates tool usage by echoing user input.
+    prompts:
+      system: prompts/echo_agent/system.md
+    tools:
+      - echo_tool
+
+graph:
+  root_router:
+    greeting_agent:
+    echo_agent:
