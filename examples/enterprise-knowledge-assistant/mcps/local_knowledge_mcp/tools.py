@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TypedDict
+
+# typing_extensions rather than typing: pydantic (which FastMCP uses to build
+# tool schemas from these types) rejects typing.TypedDict on Python < 3.12,
+# and this project supports 3.11.
+from typing_extensions import TypedDict
 
 
 class Document(TypedDict):
