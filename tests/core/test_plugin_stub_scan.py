@@ -430,9 +430,10 @@ def test_missing_prompt_file_is_reported_with_hint(tmp_path: Path) -> None:
     )
     errors = scan(spec, tmp_path)
     assert len(errors) == 1
-    assert any(
-        "a.prompts.system" in e and "Prompt file not found: prompts/a/system.md — run `agentctl generate` to create the stub" in e
-        for e in errors
+    expected = (
+        "Prompt file not found: prompts/a/system.md — "
+        "run `agentctl generate` to create the stub"
     )
+    assert any("a.prompts.system" in e and expected in e for e in errors)
 
 
