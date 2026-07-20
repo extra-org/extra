@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.4.0](https://github.com/extra-org/extra/compare/agent-engine-v0.3.1...agent-engine-v0.4.0) (2026-07-20)
+
+
+### Features
+
+* add agent auto mode config ([a1d1016](https://github.com/extra-org/extra/commit/a1d10165769e86b93d256d9c29d7ba90d65d5b20))
+* add approval lifecycle primitives ([5a9422f](https://github.com/extra-org/extra/commit/5a9422ffa95576363b6a770da7d8ce991e05265f))
+* add data class for hidm ([6b0d71a](https://github.com/extra-org/extra/commit/6b0d71ad462132f9517fa3443115dc09a1e5bf4b))
+* add scoped session approval repository ([ad5d487](https://github.com/extra-org/extra/commit/ad5d48725df618da17b74199efe82fe38d2907be))
+* **approvals:** propagate identity and grant metadata through HITL ([3f46464](https://github.com/extra-org/extra/commit/3f464641a9b2e74ab0a6da02467d936f83e831da))
+* build first layer engine for hidm ([3fa3b49](https://github.com/extra-org/extra/commit/3fa3b49edcde02e2c3b410306ff2b35f5620cdf2))
+* **cli:** handle tool approvals in local chat ([03e26de](https://github.com/extra-org/extra/commit/03e26deef2d33d3de60fac300fee1bc7b141f362))
+* **cli:** share session approvals across application lifetime ([621d8c4](https://github.com/extra-org/extra/commit/621d8c415c72afee2cd6aa33950c8a0c4fe1d4c9))
+* **composition:** manage session approval repository lifetime ([db5b0e3](https://github.com/extra-org/extra/commit/db5b0e367019a789a332e919b82a14f4c6034ec7))
+* coordinate function that decide when to invoke tool or wait for approve ([be30aee](https://github.com/extra-org/extra/commit/be30aee9ea532bde9661e63f8335f1e1e2a50fcc))
+* enable auto mode in enterprise knowledge example ([62c1b87](https://github.com/extra-org/extra/commit/62c1b8752767647acca0e3d85bcf5d33c4876407))
+* **examples:** add deterministic approval demo ([a69ac63](https://github.com/extra-org/extra/commit/a69ac632c584a8dad2838a307f1d6aa0a281b8f5))
+* **examples:** add real LLM local MCP approval flow ([854cae2](https://github.com/extra-org/extra/commit/854cae2099116d423af713f4c30c7c625168bc71))
+* **examples:** demonstrate MCP session approvals ([4597748](https://github.com/extra-org/extra/commit/4597748406fb904bfe3428034cda81f8b077e267))
+* execute tool after approve ([c690438](https://github.com/extra-org/extra/commit/c690438f8418a5ea113b05f1f0c472cbf3023c63))
+* expose approval resume API ([e633f98](https://github.com/extra-org/extra/commit/e633f983e70cc1ad25707bee845750de57472eac))
+* fail startup validation on declared-but-unimplemented plugin stubs ([0b6ee39](https://github.com/extra-org/extra/commit/0b6ee39e1c1438e66df4bfcb342ab1b79a65639a))
+* scaffold missing prompt files during generate and validate them at startup ([#18](https://github.com/extra-org/extra/issues/18)) ([cdefacb](https://github.com/extra-org/extra/commit/cdefacbd3dc9122e9dd7682775f9a9a56e098db9))
+* startup validation fails on declared-but-unimplemented plugin stubs ([89355a1](https://github.com/extra-org/extra/commit/89355a1e24f507ee3214b23137f12e69c9761c32))
+* wire approvals into langgraph runtime ([2b325ed](https://github.com/extra-org/extra/commit/2b325ede090da696a15ff86503524f35e079d4df))
+
+
+### Bug Fixes
+
+* **approvals:** harden interrupted tool resumption ([4da978b](https://github.com/extra-org/extra/commit/4da978bb529fb7f95dcd0709296da8c6398b36ab))
+* change the pending object property to description ([9186999](https://github.com/extra-org/extra/commit/91869990102384f490b23ab36ae7831e94585d85))
+* **hooks:** log only meaningful hook actions ([25b25f2](https://github.com/extra-org/extra/commit/25b25f2026c6c598451a1263cb7a8e0f2858db35))
+* resolve pre-existing lint and mypy errors so CI lands green ([7976bdc](https://github.com/extra-org/extra/commit/7976bdc3cb8b81a0070b2131a0ce6347e8a976e4))
+* **runtime:** pass structured conversation history ([19f8281](https://github.com/extra-org/extra/commit/19f8281e36ebba7dfaef70adf8243c4de200d466))
+* support backward compatible for auto mode ([cb4b695](https://github.com/extra-org/extra/commit/cb4b69548b548af2455b2b8874c9666f773f2eb6))
+* use typing_extensions.TypedDict in local MCP tools for Python 3.11 ([98cd6c1](https://github.com/extra-org/extra/commit/98cd6c12caef2289d8a1c3f4b7d302f22171e3aa))
+
+
+### Documentation
+
+* add human-in-the-loop design ([d9d321b](https://github.com/extra-org/extra/commit/d9d321bee578e1e614d2a774c13d2ff695d1fee3))
+* **hitl:** document session approval scope and lifecycle ([a7dfedd](https://github.com/extra-org/extra/commit/a7dfedd39e4397c6768d4760e00c491df2accc64))
+* restore README docs paths ([a083a24](https://github.com/extra-org/extra/commit/a083a24ee80437c1e7a422fd54cc408e2950e0db))
+* **runtime:** document conversational MCP validation ([1e44ffe](https://github.com/extra-org/extra/commit/1e44ffeaa33b34e086567593230da2c622089330))
+* update hidm docs ([bf60f9e](https://github.com/extra-org/extra/commit/bf60f9eaf7d9e0fa51ea21fbba63645c83b7b58b))
+* update YAML and add auto property ([2e3d05e](https://github.com/extra-org/extra/commit/2e3d05e537c56dfcac5e2c7b90fcc2352467883e))
+
 ## [0.3.1](https://github.com/extra-org/extra/compare/agent-engine-v0.3.0...agent-engine-v0.3.1) (2026-07-12)
 
 
