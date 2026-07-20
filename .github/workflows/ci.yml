@@ -1,0 +1,42 @@
+# CI — the quality gate (issue #23).
+#
+# Runs `make check` (ruff + mypy + pytest) and `make validate` (offline
+# validation of the flagship example) on every pull request and on pushes
+# to main. Single Python version per pyproject.toml (requires-python >=3.11);
+# no matrix, no caching tuning — see the issue's non-goals.
+#
+# To make this a required status check, protect `main` in the repo settings
+# and require the "check" job (maintainer action, not part of this file).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs of the same PR/branch to save runner minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (editable + dev extras)
+        run: make install
+
+      - name: Quality gate (lint + typecheck + test)
+        run: make check
+
+      - name: Validate flagship example (offline)
+        run: make validate

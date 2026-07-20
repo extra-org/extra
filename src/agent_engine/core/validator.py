@@ -4,7 +4,7 @@ from pathlib import Path
 
 from agent_engine.core.errors import ValidationError
 from agent_engine.core.plugin_stubs import scan_unimplemented_plugins
-from agent_engine.core.spec import GraphNode, OrchestratorSpec, SystemSpec
+from agent_engine.core.spec import GraphNode, SystemSpec
 
 
 class SystemSpecValidator:

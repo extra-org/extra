@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from agent_engine.approvals.sanitization import REDACTED, mask_arguments, mask_sensitive
 
 
@@ -42,7 +44,7 @@ def test_recursive_masking_in_nested_structures() -> None:
 
 
 def test_original_arguments_unchanged() -> None:
-    args = {"password": "hunter2", "nested": {"token": "t"}}
+    args: dict[str, Any] = {"password": "hunter2", "nested": {"token": "t"}}
     mask_arguments(args)
     assert args["password"] == "hunter2"
     assert args["nested"]["token"] == "t"

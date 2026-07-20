@@ -5,7 +5,6 @@ from pathlib import Path
 
 from agent_engine.core.spec import AgentSpec, GraphNode, SystemSpec
 from agent_engine.generate.manifest import (
-    MANIFEST_NAME,
     ensure_plugins_manifest_exists,
     manifest_package,
     update_manifest,
@@ -42,7 +41,9 @@ class Generator:
         tools_dir = base_dir / "plugins" / "tools"
         tools_dir.mkdir(parents=True, exist_ok=True)
         for tool_id, description in tool_ids.items():
-            self._write(tools_dir / f"{tool_id}.py", _tool_stub(tool_id, description), result, base_dir)
+            self._write(
+                tools_dir / f"{tool_id}.py", _tool_stub(tool_id, description), result, base_dir
+            )
 
         resolvers_dir = base_dir / "plugins" / "resolvers"
         resolvers_dir.mkdir(parents=True, exist_ok=True)
