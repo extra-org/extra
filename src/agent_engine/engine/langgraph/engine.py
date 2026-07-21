@@ -32,7 +32,7 @@ from agent_engine.approvals.session_store import (
 )
 from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec, SystemSpec
-from agent_engine.core.spec import ModelConfig as NodeModelConfig
+from agent_engine.core.spec import BaseModelConfig, ModelConfig as NodeModelConfig
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.approval_provider import InterruptApprovalProvider
 from agent_engine.engine.langgraph.checkpointing import (
@@ -164,7 +164,7 @@ def _run_end_context(system_name: str, ctx: RunContext, result: RunResult) -> Ru
     )
 
 
-def _model_factory_kwargs(factory: ModelFactory, model: NodeModelConfig) -> dict[str, object]:
+def _model_factory_kwargs(factory: ModelFactory, model: BaseModelConfig) -> dict[str, object]:
     optional = {
         "region": model.region,
         "max_tokens": model.max_tokens,
@@ -765,7 +765,10 @@ class LangGraphEngine(Engine):
         assert isinstance(node.node, OrchestratorSpec)
         spec = node.node
         path = node_id(node, parent_path)
-        model = self._build_model_runnable(spec.model)
+        primary_model = self._build_model(spec.model)
+        fallback_model = (
+            self._build_model(spec.model.fallback) if spec.model.fallback is not None else None
+        )
 
         children: list[ChildEntry] = []
         for child in node.children:
@@ -786,10 +789,11 @@ class LangGraphEngine(Engine):
         return OrchestratorNode(
             spec=spec,
             node_path=path,
-            model=model,
+            model=primary_model,
             children=children,
             filters=self._filters,
             base_dir=self._base_dir,
+            fallback_model=fallback_model,
         )
 
     def _build_agent_node(self, spec: AgentSpec, node_path: str) -> AgentNode:
@@ -813,7 +817,7 @@ class LangGraphEngine(Engine):
             system_namespace=self._system_name,
         )
 
-    def _build_model(self, model: NodeModelConfig) -> BaseChatModel:
+    def _build_model(self, model: BaseModelConfig) -> BaseChatModel:
         return self._model_factory(
             model.provider,
             model.name,

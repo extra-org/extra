@@ -11,6 +11,7 @@ from agent_engine.core.errors import ValidationError
 from agent_engine.core.execution import EXECUTION_INT_FIELDS, ExecutionPolicy
 from agent_engine.core.spec import (
     AgentSpec,
+    BaseModelConfig,
     BasePromptSet,
     DefaultsConfig,
     GraphNode,
@@ -604,9 +605,19 @@ class YAMLParser(Parser):
             return defaults.model
         return ModelConfig(provider="", name="")
 
+    def _build_base_model(self, raw: dict[str, Any]) -> BaseModelConfig:
+        return BaseModelConfig(
+            provider=raw.get("provider", ""),
+            name=raw.get("name", ""),
+            temperature=raw.get("temperature"),
+            region=raw.get("region"),
+            max_tokens=raw.get("max_tokens"),
+            top_p=raw.get("top_p"),
+        )
+
     def _build_model(self, raw: dict[str, Any]) -> ModelConfig:
         fallback_raw = raw.get("fallback")
-        fallback = self._build_model(fallback_raw) if isinstance(fallback_raw, dict) else None
+        fallback = self._build_base_model(fallback_raw) if isinstance(fallback_raw, dict) else None
         return ModelConfig(
             provider=raw.get("provider", ""),
             name=raw.get("name", ""),

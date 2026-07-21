@@ -522,10 +522,12 @@ class OrchestratorNode:
         children: list[ChildEntry],
         filters: list[RouteFilter],
         base_dir: Path,
+        fallback_model: Any = None,
     ) -> None:
         self._spec = spec
         self._node_path = node_path
         self._model = model
+        self._fallback_model = fallback_model
         self._children = children
         self._filters = filters
         self._base_dir = base_dir
@@ -611,7 +613,18 @@ class OrchestratorNode:
 
         # Build tools here so they share the live `visited` / `used_tools` lists.
         tools = [self._make_tool(e, state, visited, used_tools) for e in candidates]
-        bound_model = self._model.bind_tools(tools) if tools else self._model
+        if tools:
+            bound_primary = self._model.bind_tools(tools)
+            if self._fallback_model is not None:
+                bound_fallback = self._fallback_model.bind_tools(tools)
+                bound_model = bound_primary.with_fallbacks([bound_fallback], exceptions_to_handle=(Exception,))
+            else:
+                bound_model = bound_primary
+        else:
+            if self._fallback_model is not None:
+                bound_model = self._model.with_fallbacks([self._fallback_model], exceptions_to_handle=(Exception,))
+            else:
+                bound_model = self._model
         tool_by_name = {t.name: t for t in tools}
 
         user_msg: str = state.get("message", "")

@@ -512,3 +512,29 @@ async def test_fallback_model_streaming(tmp_path: Path, model_factory: Any) -> N
         events = [e async for e in engine.stream("hello")]
 
     assert any(e.type == "answer_delta" and e.content == "recovered ok" for e in events)
+
+
+async def test_orchestrator_fallback_model_execution(tmp_path: Path, model_factory: Any) -> None:
+    fallback_model = ModelConfig(provider="fake", name="successful-fallback")
+    model = ModelConfig(
+        provider="fake",
+        name="failing-primary",
+        fallback=fallback_model,
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="orchestrator-fallback-test"),
+        defaults=None,
+        graph=GraphNode(
+            node=OrchestratorSpec(
+                id="root",
+                name="root",
+                description="root orchestrator",
+                model=model,
+                prompts=OrchestratorPromptSet(),
+            ),
+            children=(agent("child"),),
+        ),
+    )
+
+    result = await run_message(spec, tmp_path, model_factory, "hello child")
+    assert result.visited == ["root", "root/child"]
