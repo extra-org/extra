@@ -765,7 +765,7 @@ class LangGraphEngine(Engine):
         assert isinstance(node.node, OrchestratorSpec)
         spec = node.node
         path = node_id(node, parent_path)
-        model = self._build_model(spec.model)
+        model = self._build_model_runnable(spec.model)
 
         children: list[ChildEntry] = []
         for child in node.children:
@@ -797,7 +797,7 @@ class LangGraphEngine(Engine):
         assert self._resolver_loader is not None
         assert self._hook_manager is not None
         tools, mcp_names, server_by_tool = self._build_agent_tools(spec)
-        bound_model = self._build_model(spec.model, tools=tools)
+        bound_model = self._build_model_runnable(spec.model, tools=tools)
         return AgentNode(
             spec=spec,
             node_path=node_path,
@@ -813,18 +813,22 @@ class LangGraphEngine(Engine):
             system_namespace=self._system_name,
         )
 
-    def _build_model(
-        self, model: NodeModelConfig, tools: list[BaseTool] | None = None
-    ) -> BaseChatModel | Runnable:
-        primary_model = self._model_factory(
+    def _build_model(self, model: NodeModelConfig) -> BaseChatModel:
+        return self._model_factory(
             model.provider,
             model.name,
             model.temperature,
             **_model_factory_kwargs(self._model_factory, model),
         )
+
+    def _build_model_runnable(
+        self, model: NodeModelConfig, tools: list[BaseTool] | None = None
+    ) -> BaseChatModel | Runnable:
+        primary_model = self._build_model(model)
         bound_primary = primary_model.bind_tools(tools) if tools else primary_model
         if model.fallback is not None:
-            bound_fallback = self._build_model(model.fallback, tools=tools)
+            fallback_model = self._build_model(model.fallback)
+            bound_fallback = fallback_model.bind_tools(tools) if tools else fallback_model
             return bound_primary.with_fallbacks([bound_fallback], exceptions_to_handle=(Exception,))
         return bound_primary
 
