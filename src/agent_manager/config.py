@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     context_max_chars: int | None = None
     context_max_tokens: int | None = None
     snapshot_ttl_seconds: int = 86_400
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8100
     # Deny cross-origin by default; each deployment sets its own site(s),
     # e.g. CORS_ORIGINS=https://acmecorp.com,https://www.acmecorp.com

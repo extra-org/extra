@@ -1,0 +1,34 @@
+services:
+  engine:
+    build: .
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./examples:/workspace:ro
+    env_file:
+      - .env
+    command: ["serve", "--config", "/workspace/enterprise-knowledge-assistant/agents.yaml"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8090/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  manager:
+    build: .
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./examples:/workspace:ro
+      - manager-data:/workspace/data
+    env_file:
+      - .env
+    command: ["agent-manager", "--config", "/workspace/enterprise-knowledge-assistant/agents.yaml"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8100/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  manager-data:

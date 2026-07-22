@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir .
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+RUN useradd -r -s /bin/false agent && chown -R agent:agent /app /workspace
+USER agent
+
 WORKDIR /workspace
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serve", "--config", "/workspace/agents.yml"]
