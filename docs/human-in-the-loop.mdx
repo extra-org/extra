@@ -1,129 +1,54 @@
 ---
-title: Human-in-the-Loop Approvals
-description: Pause tool calls for human approval, resume safely, or opt trusted agents into auto mode.
+title: Human-in-the-Loop
+description: Review tool calls before they run, approve them, or deny them.
 ---
 
-## Overview
+Extra pauses local and MCP tool calls for approval by default. The tool does not
+run until a person chooses one of these actions:
 
-Extra places one approval boundary in front of every tool call, whether the
-tool is a local Python function or comes from an MCP server.
+- **Allow once** — run this call and ask again next time.
+- **Allow for session** — run this call and allow the same tool for the session.
+- **Deny** — do not run the tool.
 
-By default, an agent pauses before each tool call and waits for a person to
-choose what happens next. The tool has **not run** while approval is pending.
+## Configure approval behavior
 
-<CardGroup cols={3}>
-  <Card title="Allow once" icon="check">
-    Run this invocation, then ask again the next time the agent calls the tool.
-  </Card>
-  <Card title="Allow for session" icon="clock">
-    Run this invocation and allow the same tool for the rest of this session.
-  </Card>
-  <Card title="Deny" icon="ban">
-    Do not run the tool. Return a structured denial to the agent.
-  </Card>
-</CardGroup>
+The optional `auto` setting applies to every tool assigned to one agent:
 
-The policy is deterministic. Extra does not ask another model to classify a
-tool's risk:
-
-```text
-if agent.auto:
-    execute immediately
-elif tool is allowed for this session:
-    execute immediately
-else:
-    pause and ask for approval
-```
-
----
-
-## Configure an agent
-
-The `auto` flag is optional and defaults to `false`.
-
-<CodeGroup>
-```yaml Approval required
+```yaml
 agents:
   returns_agent:
-    description: "Creates and manages customer returns."
-    auto: false
-    tools:
-      - create_return
-      - send_return_label
-```
+    auto: false # Approval required (default)
+    tools: [create_return]
 
-```yaml Auto mode
-agents:
   catalog_agent:
-    description: "Reads the public product catalog."
-    auto: true
-    tools:
-      - search_catalog
-```
-</CodeGroup>
-
-| Setting | Behavior |
-|---|---|
-| `auto: false` or omitted | Tool calls require approval unless that tool is already allowed for the session. |
-| `auto: true` | Every tool exposed to this agent executes immediately without an approval prompt. |
-
-`auto` is evaluated per agent. Enabling it for `catalog_agent` does not enable
-automatic execution for any other agent in the graph.
-
-<Warning>
-  Use `auto: true` only when every local and MCP tool exposed to that agent is
-  trusted for automatic execution. Auto mode is agent-wide, not per-tool.
-</Warning>
-
----
-
-## Approval flow
-
-When an agent with approval enabled requests a tool:
-
-1. Extra creates a sanitized approval record.
-2. The run is checkpointed with status `pending_approval`.
-3. The caller receives the pending approval details. No tool side effect has
-   happened.
-4. A person allows or denies the request.
-5. Extra resumes the same run from its checkpoint.
-6. The approved tool result—or a structured denial—is returned to the agent so
-   it can finish its response.
-
-```text
-agent requests tool
-        ↓
-approval required?
-   ├── no  → execute tool → return result to agent
-   └── yes → checkpoint run → return pending approval
-                                  ↓
-                         human makes decision
-                                  ↓
-                         resume the same run
-                          ├── allow → execute tool
-                          └── deny  → do not execute
+    auto: true # No approval required
+    tools: [search_catalog]
 ```
 
-The graph is not restarted when you decide an approval. Extra resumes the
-checkpointed run and protects the tool execution with an idempotency ledger.
-
----
+Use `auto: true` only when every tool assigned to that agent is safe to run
+without review. It does not affect other agents.
 
 ## Handle approvals through the API
 
-### 1. Start a run
+`POST /invoke` includes three approval fields:
+
+| Field | Meaning |
+|---|---|
+| `run_id` | Identifies the run to continue. |
+| `status` | `completed` or `pending_approval`. |
+| `pending_approval` | The tool call awaiting a decision, or `null`. |
+
+Start a run with a stable session ID if you want to use **Allow for session**:
 
 ```bash
 curl -X POST http://localhost:8090/invoke \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: conv-123" \
-  -d '{
-    "message": "Create a return for order 1234"
-  }'
+  -d '{"message": "Create a return for order 1234"}'
 ```
 
-When the selected tool needs approval, the response has
-`status: "pending_approval"`:
+The relevant part of a paused response contains an empty `answer` and sanitized
+approval details:
 
 ```json
 {
@@ -131,117 +56,28 @@ When the selected tool needs approval, the response has
   "status": "pending_approval",
   "answer": "",
   "pending_approval": {
-    "run_id": "run-abc",
     "approval_id": "approval-xyz",
-    "agent_id": "returns_agent",
     "tool_name": "create_return",
-    "description": "Agent 'returns_agent' wants to call tool 'create_return'. It has NOT been executed yet and needs your approval.",
-    "provider": "local",
-    "server_id": null,
-    "arguments": {
-      "order_id": "1234"
-    }
+    "arguments": {"order_id": "1234"}
   }
 }
 ```
 
-Pending payloads contain masked arguments. Credentials, authorization headers,
-tokens, and other recognized secrets are not returned.
+Submit the decision with the returned `run_id` and `approval_id`:
 
-### 2. Submit a decision
-
-Use the decision endpoint for any of the three outcomes:
-
-<CodeGroup>
-```bash Allow once
+```bash
 curl -X POST \
   http://localhost:8090/runs/run-abc/approvals/approval-xyz/decision \
   -H "Content-Type: application/json" \
   -d '{"decision": "allow once"}'
 ```
 
-```bash Allow for session
-curl -X POST \
-  http://localhost:8090/runs/run-abc/approvals/approval-xyz/decision \
-  -H "Content-Type: application/json" \
-  -d '{"decision": "allow for this session"}'
-```
-
-```bash Deny
-curl -X POST \
-  http://localhost:8090/runs/run-abc/approvals/approval-xyz/decision \
-  -H "Content-Type: application/json" \
-  -d '{"decision": "deny"}'
-```
-</CodeGroup>
-
-The resumed request returns the final run result. Convenience endpoints are
-also available:
-
-| Endpoint | Decision |
-|---|---|
-| `POST /runs/{run_id}/approvals/{approval_id}/approve` | Allow once |
-| `POST /runs/{run_id}/approvals/{approval_id}/reject` | Deny |
-
-To inspect a run before deciding:
-
-```bash
-curl http://localhost:8090/runs/run-abc
-```
-
-<Note>
-  An invalid or missing decision never executes the tool. The runtime fails
-  closed, and the public decision endpoint returns a validation error.
-</Note>
-
----
+Supported decisions are `allow once`, `allow for this session`, and `deny`.
+Extra continues the run and returns its next result. An invalid decision returns
+a validation error and does not run the tool.
 
 ## Session approvals
 
-“Allow for session” applies to the exact tool identity and session scope. It
-does not approve every tool on an agent or every tool from the same MCP server.
-
-For example, allowing `mcp:crm:search_customer` does not allow
-`mcp:crm:delete_customer`, and it does not allow a tool with the same short name
-from another MCP server.
-
-The permission is scoped by:
-
-- system
-- organization and user identity, when available
-- session or conversation ID
-- agent
-- provider-namespaced tool identity
-
-Pass a stable session ID, such as `X-Session-Id`, across related runs. Without a
-session ID, Extra cannot store or reuse a session approval and will ask again on
-the next call.
-
-Current session approvals are stored in memory. They survive later runs in the
-same application process, but are lost when the process restarts.
-
----
-
-## Security and production notes
-
-- Approval is enforced at the tool-execution boundary, not through prompt text.
-- Local and MCP tools use the same approval path.
-- Denial is a normal result: the tool does not run, and the agent can explain
-  the denial or choose another action.
-- Approval records contain masked arguments and identifiers, never raw
-  credentials.
-- Concurrent attempts to decide the same approval are claimed atomically; only
-  one can resume it.
-- Replayed tool calls use a stable execution identity to reduce duplicate side
-  effects.
-
-For local development, checkpoints and session approvals can live in memory.
-In production, use a shared persistent checkpointer for resumable runs.
-Fully cross-instance approval handling also requires shared implementations of
-the approval, execution, and session repositories; those repositories are
-currently process-local.
-
-<Tip>
-  When an external service accepts an idempotency key, propagate Extra's
-  execution ID to that service for stronger duplicate protection.
-</Tip>
+**Allow for session** applies only to the same agent and exact tool when later
+requests use the same `X-Session-Id`. By default, approvals are stored in memory
+and are cleared when the application restarts.
