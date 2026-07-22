@@ -34,6 +34,7 @@ def build_chat_model(
     region: str | None = None,
     max_tokens: int | None = None,
     top_p: float | None = None,
+    cache_system_prompt: bool = True,
 ) -> BaseChatModel:
     """Construct a chat model from flat config fields.
 
@@ -59,6 +60,7 @@ def build_chat_model(
             temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
+            cache_system_prompt=cache_system_prompt,
         )
     if normalized_provider == "bedrock":
         return _build_bedrock_model(
@@ -94,6 +96,7 @@ def _build_anthropic_model(
     temperature: float | None,
     max_tokens: int | None,
     top_p: float | None,
+    cache_system_prompt: bool,
 ) -> BaseChatModel:
     kwargs = _without_none(
         {
@@ -103,6 +106,8 @@ def _build_anthropic_model(
             "top_p": top_p,
         }
     )
+    if cache_system_prompt:
+        kwargs["cache_control"] = {"type": "ephemeral"}
     return init_chat_model(name, **kwargs)
 
 

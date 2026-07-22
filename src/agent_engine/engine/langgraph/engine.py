@@ -169,6 +169,7 @@ def _model_factory_kwargs(factory: ModelFactory, model: NodeModelConfig) -> dict
         "region": model.region,
         "max_tokens": model.max_tokens,
         "top_p": model.top_p,
+        "cache_system_prompt": model.cache_system_prompt,
     }
     present: dict[str, object] = {
         key: value for key, value in optional.items() if value is not None

@@ -77,6 +77,35 @@ def test_anthropic_provider_still_uses_langchain_init_chat_model(
     assert calls == [
         (
             "claude-haiku-4-5",
+            {
+                "model_provider": "anthropic",
+                "temperature": 0.0,
+                "cache_control": {"type": "ephemeral"},
+            },
+        )
+    ]
+
+
+def test_anthropic_provider_disabled_cache_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    model = _FakeAnthropicModel()
+
+    def fake_init_chat_model(name: str, **kwargs: Any) -> _FakeAnthropicModel:
+        calls.append((name, kwargs))
+        return model
+
+    monkeypatch.setattr(factory_mod, "init_chat_model", fake_init_chat_model)
+
+    result = build_chat_model(
+        "anthropic", "claude-haiku-4-5", temperature=0.0, cache_system_prompt=False
+    )
+
+    assert result is model
+    assert calls == [
+        (
+            "claude-haiku-4-5",
             {"model_provider": "anthropic", "temperature": 0.0},
         )
     ]
