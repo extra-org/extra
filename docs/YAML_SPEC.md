@@ -372,6 +372,62 @@ For OpenAI, set `OPENAI_API_KEY` in your environment and install the provider
 extra with `pip install "agent-engine[openai]"`. Any OpenAI model your key can
 access may be used via `name`. Secrets must never be stored in YAML.
 
+### Any OpenAI-compatible endpoint
+
+The `openai` provider is not limited to `api.openai.com`. A handful of
+well-known OpenAI-compatible vendors are wired in as `provider` shorthand, so
+`base_url` and `api_key_env` resolve automatically:
+
+```yaml
+model:
+  provider: zai
+  name: glm-5.2
+  temperature: 0.2
+```
+
+| `provider` | Vendor     | `base_url`                              | `api_key_env`       |
+| ---------- | ---------- | ---------------------------------------- | -------------------- |
+| `zai`        | Z.AI (GLM) | `https://api.z.ai/api/coding/paas/v4`     | `ZAI_API_KEY`         |
+| `deepseek`   | DeepSeek   | `https://api.deepseek.com/v1`             | `DEEPSEEK_API_KEY`    |
+| `moonshot`   | Moonshot   | `https://api.moonshot.ai/v1`              | `MOONSHOT_API_KEY`    |
+| `groq`       | Groq       | `https://api.groq.com/openai/v1`          | `GROQ_API_KEY`        |
+| `xai`        | xAI (Grok) | `https://api.x.ai/v1`                     | `XAI_API_KEY`         |
+| `openrouter` | OpenRouter | `https://openrouter.ai/api/v1`            | `OPENROUTER_API_KEY`  |
+
+`name` must be a model ID that vendor's endpoint actually serves (`glm-5.2`
+for Z.AI, `deepseek-chat` for DeepSeek, and so on); it is passed through
+unmodified, no provider picks a default model on your behalf.
+
+For anything not in the table (a different vendor, a self-hosted Ollama or
+vLLM server, a proxy in front of one of the listed vendors), stay on
+`provider: openai` and set `base_url` and `api_key_env` directly:
+
+```yaml
+model:
+  provider: openai
+  name: llama3.1
+  base_url: http://localhost:11434/v1
+  api_key_env: OLLAMA_API_KEY
+```
+
+`api_key_env` names the environment variable holding the key, it is never
+the key itself, and secrets must never be stored in YAML. If a local server
+doesn't check the key at all, point `api_key_env` at any variable set to a
+placeholder value; the field is still required so the request always sends
+an `Authorization` header.
+
+`base_url`/`api_key_env` also override a listed vendor's preset when both a
+`provider` shorthand and one of these fields are set, useful for routing a
+known vendor through an internal proxy without giving up the shorthand:
+
+```yaml
+model:
+  provider: zai
+  name: glm-5.2
+  base_url: https://llm-proxy.internal.example.com/zai
+  api_key_env: INTERNAL_PROXY_KEY
+```
+
 ---
 
 ## Graph Topology

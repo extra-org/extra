@@ -14,6 +14,8 @@ class ModelConfig:
     region: str | None = None
     max_tokens: int | None = None
     top_p: float | None = None
+    base_url: str | None = None
+    api_key_env: str | None = None
 
 
 @dataclass(frozen=True)

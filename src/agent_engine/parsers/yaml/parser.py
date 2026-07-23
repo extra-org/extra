@@ -32,7 +32,7 @@ from agent_engine.parsers.parser import Parser
 from agent_engine.runtime.hooks.models import HOOK_POINTS
 
 _SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
-_SECRET_KEY_EXEMPTIONS = {"max_tokens"}
+_SECRET_KEY_EXEMPTIONS = {"max_tokens", "api_key_env"}
 
 # For *values*, a marker word alone is not evidence — ordinary prose like
 # "Handles password reset requests" must pass. Flag a string value only when it
@@ -50,6 +50,7 @@ _CREDENTIAL_SHAPES = re.compile(
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"  # PEM private keys
 )
 _SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock", "gemini", "openai")
+_FIXED_ENDPOINT_PROVIDERS = ("anthropic", "bedrock", "gemini")
 
 
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
@@ -349,6 +350,17 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
             )
         )
 
+    if provider in _FIXED_ENDPOINT_PROVIDERS:
+        for field_name in ("base_url", "api_key_env"):
+            if raw.get(field_name) is not None:
+                errors.append(
+                    ValidationError(
+                        f"{path}.{field_name}",
+                        f"Not supported for provider '{provider}'; only OpenAI-compatible "
+                        "providers accept a custom endpoint or key variable.",
+                    )
+                )
+
     name = raw.get("name")
     if not isinstance(name, str) or not name.strip():
         errors.append(ValidationError(f"{path}.name", "Required non-empty string"))
@@ -605,6 +617,8 @@ class YAMLParser(Parser):
             region=raw.get("region"),
             max_tokens=raw.get("max_tokens"),
             top_p=raw.get("top_p"),
+            base_url=raw.get("base_url"),
+            api_key_env=raw.get("api_key_env"),
         )
 
     def _build_resolvers(
