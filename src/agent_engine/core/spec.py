@@ -14,6 +14,7 @@ class ModelConfig:
     region: str | None = None
     max_tokens: int | None = None
     top_p: float | None = None
+    cache_system_prompt: bool = True
 
 
 @dataclass(frozen=True)

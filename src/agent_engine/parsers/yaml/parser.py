@@ -373,6 +373,9 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
     ):
         errors.append(ValidationError(f"{path}.top_p", "Must be between 0 and 1"))
 
+    cache_system_prompt = raw.get("cache_system_prompt")
+    if cache_system_prompt is not None and not isinstance(cache_system_prompt, bool):
+        errors.append(ValidationError(f"{path}.cache_system_prompt", "Must be a boolean"))
 
 def _validate_models(
     defaults: Any,
@@ -605,6 +608,7 @@ class YAMLParser(Parser):
             region=raw.get("region"),
             max_tokens=raw.get("max_tokens"),
             top_p=raw.get("top_p"),
+            cache_system_prompt=raw.get("cache_system_prompt", True),
         )
 
     def _build_resolvers(
