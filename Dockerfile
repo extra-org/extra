@@ -2,10 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir .
-
 COPY src/ ./src/
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir .
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
