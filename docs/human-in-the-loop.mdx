@@ -1,0 +1,83 @@
+---
+title: Human-in-the-Loop
+description: Review tool calls before they run, approve them, or deny them.
+---
+
+Extra pauses local and MCP tool calls for approval by default. The tool does not
+run until a person chooses one of these actions:
+
+- **Allow once** — run this call and ask again next time.
+- **Allow for session** — run this call and allow the same tool for the session.
+- **Deny** — do not run the tool.
+
+## Configure approval behavior
+
+The optional `auto` setting applies to every tool assigned to one agent:
+
+```yaml
+agents:
+  returns_agent:
+    auto: false # Approval required (default)
+    tools: [create_return]
+
+  catalog_agent:
+    auto: true # No approval required
+    tools: [search_catalog]
+```
+
+Use `auto: true` only when every tool assigned to that agent is safe to run
+without review. It does not affect other agents.
+
+## Handle approvals through the API
+
+`POST /invoke` includes three approval fields:
+
+| Field | Meaning |
+|---|---|
+| `run_id` | Identifies the run to continue. |
+| `status` | `completed` or `pending_approval`. |
+| `pending_approval` | The tool call awaiting a decision, or `null`. |
+
+Start a run with a stable session ID if you want to use **Allow for session**:
+
+```bash
+curl -X POST http://localhost:8090/invoke \
+  -H "Content-Type: application/json" \
+  -H "X-Session-Id: conv-123" \
+  -d '{"message": "Create a return for order 1234"}'
+```
+
+The relevant part of a paused response contains an empty `answer` and sanitized
+approval details:
+
+```json
+{
+  "run_id": "run-abc",
+  "status": "pending_approval",
+  "answer": "",
+  "pending_approval": {
+    "approval_id": "approval-xyz",
+    "tool_name": "create_return",
+    "arguments": {"order_id": "1234"}
+  }
+}
+```
+
+Submit the decision with the returned `run_id` and `approval_id`:
+
+```bash
+curl -X POST \
+  http://localhost:8090/runs/run-abc/approvals/approval-xyz/decision \
+  -H "Content-Type: application/json" \
+  -d '{"decision": "allow once"}'
+```
+
+Supported decisions are `allow once`, `allow for this session`, and `deny`.
+Extra continues the run and returns its next result. An invalid decision returns
+a validation error and does not run the tool.
+
+## Session approvals
+
+**Allow for session** applies only to the same agent and exact tool when later
+requests use the same `X-Session-Id`. By default, approvals are stored in memory
+and are cleared when the application restarts.
