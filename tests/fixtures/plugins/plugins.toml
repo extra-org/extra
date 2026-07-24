@@ -1,0 +1,12 @@
+# Auto-generated plugin manifest. Maps plugin refs to importable modules.
+[tools.echo_tool]
+module = "tools.echo_tool"
+callable = "echo_tool"
+
+[resolvers.shared]
+module = "resolvers.shared"
+class = "SharedResolver"
+
+[resolvers.greeting_agent]
+module = "resolvers.greeting_agent"
+class = "Resolver"
