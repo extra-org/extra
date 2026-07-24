@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -28,6 +29,7 @@ from agent_manager.application import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 Service = Annotated[ConversationService, Depends(get_service)]
 
@@ -61,6 +63,7 @@ async def send_message(
     except ConversationTokenBudgetExceeded:
         raise HTTPException(status_code=429, detail="conversation token budget exceeded") from None
     except Exception as exc:  # engine failure
+        logger.exception("send_message failed")
         raise HTTPException(status_code=500, detail="internal server error") from exc
     return SendMessageResponse(
         answer=result.answer,
@@ -112,6 +115,7 @@ async def stream_message(
                 payload = _to_stream_event(event).model_dump(exclude_none=True)
                 yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
         except Exception as exc:
+            logger.exception("stream_message failed")
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': 'internal server error'})}\n\n"
         finally:
             yield "event: done\ndata: [DONE]\n\n"

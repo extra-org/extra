@@ -1,15 +1,18 @@
+# Local development compose — exposes services on 127.0.0.1 only.
+# Not intended for production deployment.
+
 services:
   engine:
     build: .
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
       - ./examples:/workspace:ro
     env_file:
       - .env
-    command: ["serve", "--config", "/workspace/enterprise-knowledge-assistant/agents.yaml"]
+    command: ["serve", "--host", "0.0.0.0", "--config", "/workspace/enterprise-knowledge-assistant/agents.yaml"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8090/health')"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://127.0.0.1:8090/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -17,18 +20,14 @@ services:
   manager:
     build: .
     ports:
-      - "8100:8100"
+      - "127.0.0.1:8100:8100"
     volumes:
       - ./examples:/workspace:ro
-      - manager-data:/workspace/data
     env_file:
       - .env
-    command: ["agent-manager", "--config", "/workspace/enterprise-knowledge-assistant/agents.yaml"]
+    command: ["agent-manager", "--host", "0.0.0.0", "--config", "/workspace/enterprise-knowledge-assistant/agents.yaml"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8100/health')"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://127.0.0.1:8100/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-
-volumes:
-  manager-data:

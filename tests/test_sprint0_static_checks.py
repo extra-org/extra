@@ -1,17 +1,20 @@
-"""Sprint 0 e2e verification — validates all emergency fixes without importing the project.
+"""Sprint 0 static source checks — verifies emergency fixes at the source level.
 
-Runs on Python 3.10+ (no typing.Self dependency). Reads files directly.
+These are NOT end-to-end or integration tests. They parse source files directly
+and check that specific patterns exist (or are absent). They run on Python 3.10+
+without importing the project.
+
+To run:  python -m pytest tests/test_sprint0_static_checks.py -v
 """
 
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 
 
@@ -43,7 +46,6 @@ class TestGenericErrorResponses:
             if "def _map_approval_error" in line:
                 skip = True
             elif skip:
-                # Function body ends at first non-indented, non-blank line
                 if line.strip() and not line[0].isspace():
                     skip = False
             if not skip:
@@ -80,6 +82,17 @@ class TestDockerNonRoot:
         content = _read("Dockerfile")
         assert "USER agent" in content, "Dockerfile missing 'USER agent' directive"
 
+    def test_workspace_created_before_chown(self) -> None:
+        content = _read("Dockerfile")
+        # mkdir -p /workspace must appear before chown on the same line
+        for line in content.splitlines():
+            if "chown" in line and "mkdir" in line:
+                assert line.index("mkdir") < line.index("chown"), (
+                    "/workspace must be created before chown runs"
+                )
+                return
+        pytest.fail("no line with both mkdir and chown found in Dockerfile")
+
 
 # ── Task 3: Request size limits ────────────────────────────────────────────
 
@@ -92,7 +105,6 @@ class TestRequestSizeLimits:
                 for item in node.body:
                     if isinstance(item, ast.AnnAssign) and getattr(item.target, "id", None) == "message":
                         assert item.value is not None, "message field missing default value"
-                        # Check for Field(max_length=...)
                         call = item.value
                         if isinstance(call, ast.Call):
                             for kw in call.keywords:
@@ -133,21 +145,20 @@ class TestRequestSizeLimits:
         assert id_fields_found >= 3, f"expected at least 3 id fields with max_length, found {id_fields_found}"
 
 
-# ── Task 4: Default host 127.0.0.1 ────────────────────────────────────────
+# ── Task 4: Default host 0.0.0.0 (Docker network model) ──────────────────
 
 
 class TestDefaultHost:
     def test_agentctl_serve_default_host(self) -> None:
         content = _read_src("agentctl/main.py")
-        # The click option should default to 127.0.0.1
-        assert 'default="127.0.0.1"' in content or "default='127.0.0.1'" in content, (
-            "agentctl serve --host default should be 127.0.0.1"
+        assert 'default="0.0.0.0"' in content or "default='0.0.0.0'" in content, (
+            "agentctl serve --host default should be 0.0.0.0"
         )
 
     def test_agent_manager_config_default_host(self) -> None:
         content = _read_src("agent_manager/config.py")
-        assert 'host: str = "127.0.0.1"' in content or "host: str = '127.0.0.1'" in content, (
-            "agent_manager Settings.host default should be 127.0.0.1"
+        assert 'host: str = "0.0.0.0"' in content or "host: str = '0.0.0.0'" in content, (
+            "agent_manager Settings.host default should be 0.0.0.0"
         )
 
 
@@ -178,9 +189,18 @@ class TestDockerCompose:
         content = _read("docker-compose.yml")
         assert content.count("healthcheck:") >= 2
 
-    def test_sqlite_volume(self) -> None:
+    def test_host_bound_ports(self) -> None:
         content = _read("docker-compose.yml")
-        assert "manager-data:" in content
+        assert "127.0.0.1:8090:8090" in content, "engine port should be bound to 127.0.0.1"
+        assert "127.0.0.1:8100:8100" in content, "manager port should be bound to 127.0.0.1"
+
+    def test_no_sqlite_volume(self) -> None:
+        content = _read("docker-compose.yml")
+        assert "manager-data:" not in content, "SQLite volume should not be in docker-compose (not part of deployment model)"
+
+    def test_explicit_host_override(self) -> None:
+        content = _read("docker-compose.yml")
+        assert "--host" in content, "containers must override host to 0.0.0.0 explicitly"
 
 
 # ── Syntax validation ─────────────────────────────────────────────────────

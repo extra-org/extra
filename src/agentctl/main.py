@@ -187,7 +187,7 @@ async def _run_async(
 
 @cli.command()
 @click.option("--config", required=True, help="Path to agents.yml")
-@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to")
+@click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to")
 @click.option(
     "--port",
     envvar="PORT",
