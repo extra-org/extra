@@ -535,7 +535,13 @@ class OrchestratorNode:
 
     async def __call__(self, state: GraphState) -> dict[str, object]:
         candidates = self._filter_children(state)
-        base_prompt = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
+        system_content = load_file(self._base_dir, self._spec.prompts.system)
+        orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
+        if system_content or orchestrator_content:
+            parts = [p for p in [system_content, orchestrator_content] if p]
+            base_prompt = "\n\n".join(parts)
+        else:
+            base_prompt = self._spec.description
         system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
         return await self._run(system_prompt, candidates, state)
 
