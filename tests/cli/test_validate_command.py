@@ -202,6 +202,7 @@ def test_validate_rejects_unsupported_model_provider(tmp_path: Path) -> None:
 
 # -- failing specs -----------------------------------------------------------
 
+
 def test_validate_rejects_negative_temperature(tmp_path: Path) -> None:
     spec = _write(
         tmp_path,
@@ -226,6 +227,7 @@ def test_validate_rejects_non_numeric_temperature(tmp_path: Path) -> None:
     result = validate_spec(spec)
     assert not result.ok
     assert any("temperature" in e for e in result.errors)
+
 
 def test_validate_fails_on_invalid_tool_tags(tmp_path: Path) -> None:
     spec = _write(
@@ -285,3 +287,66 @@ def test_cli_validate_exit_nonzero_on_failure(tmp_path: Path) -> None:
     res = runner.invoke(cli, ["--log-level", "WARNING", "validate", spec])
     assert res.exit_code != 0
     assert "Validation failed" in res.output
+
+
+# -- fallback model validation -------------------------------------------------
+
+
+def test_validate_accepts_fallback_model(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults:\n"
+        "  model:\n"
+        "    provider: anthropic\n"
+        "    name: claude-sonnet-4-6\n"
+        "    fallback:\n"
+        "      provider: openai\n"
+        "      name: gpt-4o\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+    result = validate_spec(spec)
+    assert result.ok, result.errors
+
+
+def test_validate_rejects_nested_fallbacks(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults:\n"
+        "  model:\n"
+        "    provider: anthropic\n"
+        "    name: claude-sonnet-4-6\n"
+        "    fallback:\n"
+        "      provider: openai\n"
+        "      name: gpt-4o\n"
+        "      fallback:\n"
+        "        provider: gemini\n"
+        "        name: gemini-2.5-flash\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+    result = validate_spec(spec)
+    assert not result.ok
+    assert any("Nested fallbacks are not supported" in e for e in result.errors)
+
+
+def test_validate_rejects_invalid_fallback_fields(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "defaults:\n"
+        "  model:\n"
+        "    provider: anthropic\n"
+        "    name: claude-sonnet-4-6\n"
+        "    fallback:\n"
+        "      provider: openai\n"
+        "      name: gpt-4o\n"
+        "      temperature: -0.5\n"
+        "agents: {a: {description: d}}\n"
+        "graph: {a: }\n",
+    )
+    result = validate_spec(spec)
+    assert not result.ok
+    assert any("fallback.temperature" in e and "non-negative number" in e for e in result.errors)

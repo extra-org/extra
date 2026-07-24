@@ -128,3 +128,23 @@ def test_cli_inspect_missing_file_exits_nonzero() -> None:
 def test_cli_has_all_commands() -> None:
     # Regression: existing commands remain registered alongside validate/inspect.
     assert {"validate", "inspect", "run", "generate", "serve"} <= set(cli.commands)
+
+
+def test_inspect_shows_fallback_model(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path,
+        "system: {name: t}\n"
+        "agents:\n"
+        "  a:\n"
+        "    description: d\n"
+        "    model:\n"
+        "      provider: anthropic\n"
+        "      name: haiku\n"
+        "      fallback:\n"
+        "        provider: openai\n"
+        "        name: gpt-4o\n"
+        "graph: {a: }\n",
+    )
+    out = inspect_spec(spec)
+    assert "model: anthropic/haiku" in out
+    assert "fallback: openai/gpt-4o" in out
