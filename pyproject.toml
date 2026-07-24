@@ -51,12 +51,18 @@ dependencies = [
     "mcp>=1.27,<2",
     "langchain-mcp-adapters>=0.1",
     "python-dotenv>=1.0",
-    "langchain-anthropic (>=1.4.5,<2.0.0)",
-    "langchain-aws>=0.2",
+    "pydantic-settings>=2.0",
+    "click>=8.0",
     "sqlmodel>=0.0.16",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.19",
     "alembic>=1.13",
+    "langchain-anthropic>=1.4.5,<2.0.0",
+    "langchain-aws>=0.2",
+    "langchain-openai>=0.3",
+    "langchain-google-genai>=2.0",
+    "langfuse>=2.0",
+    "asyncpg>=0.29",
 ]
 
 [project.optional-dependencies]
@@ -72,16 +78,6 @@ dev = [
     # moves to 3.12+.
     "numpy<2.2",
 ]
-# Provider integrations are optional — install the one your YAML's
-# `model.provider` references. `init_chat_model` imports it lazily.
-anthropic = ["langchain-anthropic>=0.3"]
-openai = ["langchain-openai>=0.3"]
-bedrock = ["langchain-aws>=0.2"]
-gemini = ["langchain-google-genai>=2.0"]
-langfuse = ["langfuse>=2.0"]
-# PostgreSQL backend for agent_manager: pip install ".[postgres]" + set
-# DATABASE_URL=postgresql+asyncpg://...
-postgres = ["asyncpg>=0.29"]
 
 # CLI entrypoint. `agentctl` is the working CLI name used throughout the docs
 # (see docs/ARCHITECTURE.md and docs/ROADMAP.md); `agent-platform` is provided as
