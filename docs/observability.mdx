@@ -46,23 +46,9 @@ That's the entire integration. No YAML, no code, no flag. Both keys must be pres
   Using a self-hosted Langfuse instance instead of Langfuse Cloud? Add `LANGFUSE_HOST` alongside the two keys above — it's read by the underlying Langfuse SDK the same way.
 </Note>
 
-### Install the langfuse package
-
-The `langfuse` Python package is an **optional dependency** — it's not installed in the base image or the default `pip install` of the engine. Add it wherever your deployment installs dependencies:
-
-```text requirements.txt
-langfuse
-```
-
-The bundled Docker image installs `requirements.txt` automatically when running `serve` (see [Quickstart](/docs/quickstart)). For local development:
-
-```bash
-pip install "agent-engine[langfuse]"
-```
-
 ### What happens if it's misconfigured
 
-If the two keys are set but the `langfuse` package isn't installed, or the client fails to initialize for any reason, Extra logs a warning and **the engine keeps running without tracing** — a broken or missing Langfuse setup never breaks your agents.
+If the two keys are set but the Langfuse client fails to initialize for any reason, Extra logs a warning and **the engine keeps running without tracing** — a broken Langfuse setup never breaks your agents.
 
 <Note>
   This is the opposite failure mode from [runtime hooks](/docs/runtime-hooks), which are fail-closed by default for anything security-critical. Observability failing open is deliberate — losing traces is acceptable; losing service to your customers is not.
