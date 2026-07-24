@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_manager.domain import Role
 
 
 class CreateConversationRequest(BaseModel):
-    session_id: str | None = None
-    user_id: str | None = None
+    session_id: str | None = Field(default=None, max_length=128)
+    user_id: str | None = Field(default=None, max_length=128)
 
 
 class CreateConversationResponse(BaseModel):
@@ -30,8 +30,8 @@ class MessageOut(BaseModel):
 
 
 class SendMessageRequest(BaseModel):
-    message: str
-    user_id: str | None = None
+    message: str = Field(max_length=65536)
+    user_id: str | None = Field(default=None, max_length=128)
 
 
 class ToolRecord(BaseModel):
