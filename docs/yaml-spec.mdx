@@ -112,6 +112,23 @@ For OpenAI, set `OPENAI_API_KEY` in your environment (`export OPENAI_API_KEY="..
   Never put API keys in YAML. Extra reads provider credentials from environment variables at runtime.
 </Warning>
 
+### Fallback models
+
+To make agents resilient to LLM provider outages, rate limits, or transient network errors, you can configure a fallback backup model directly under any model configuration block:
+
+```yaml
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
+  temperature: 0.3
+  fallback:
+    provider: openai
+    name: gpt-4.1-mini
+    temperature: 0.2
+```
+
+Nested fallbacks (a fallback model configured under another fallback model) are not allowed and will fail spec validation.
+
 ---
 
 ## `tools`

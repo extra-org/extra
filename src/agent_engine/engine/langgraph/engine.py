@@ -31,8 +31,14 @@ from agent_engine.approvals.session_store import (
     SessionApprovalStore,
 )
 from agent_engine.core.execution import ExecutionPolicy
-from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec, SystemSpec
-from agent_engine.core.spec import BaseModelConfig, ModelConfig as NodeModelConfig
+from agent_engine.core.spec import (
+    AgentSpec,
+    BaseModelConfig,
+    GraphNode,
+    OrchestratorSpec,
+    SystemSpec,
+)
+from agent_engine.core.spec import ModelConfig as NodeModelConfig
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.approval_provider import InterruptApprovalProvider
 from agent_engine.engine.langgraph.checkpointing import (
@@ -765,10 +771,9 @@ class LangGraphEngine(Engine):
         assert isinstance(node.node, OrchestratorSpec)
         spec = node.node
         path = node_id(node, parent_path)
-        primary_model = self._build_model(spec.model)
-        fallback_model = (
-            self._build_model(spec.model.fallback) if spec.model.fallback is not None else None
-        )
+        model = self._build_model(spec.model)
+        fb = spec.model.fallback
+        fallback_model = self._build_model(fb) if fb is not None else None
 
         children: list[ChildEntry] = []
         for child in node.children:
@@ -789,7 +794,7 @@ class LangGraphEngine(Engine):
         return OrchestratorNode(
             spec=spec,
             node_path=path,
-            model=primary_model,
+            model=model,
             children=children,
             filters=self._filters,
             base_dir=self._base_dir,

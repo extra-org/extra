@@ -372,6 +372,23 @@ For OpenAI, set `OPENAI_API_KEY` in your environment and install the provider
 extra with `pip install "agent-engine[openai]"`. Any OpenAI model your key can
 access may be used via `name`. Secrets must never be stored in YAML.
 
+### Fallback Models
+
+To make agents resilient to LLM provider outages, rate limits, or transient network errors, you can configure a fallback backup model directly under any model configuration block:
+
+```yaml
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
+  temperature: 0.3
+  fallback:
+    provider: openai
+    name: gpt-4.1-mini
+    temperature: 0.2
+```
+
+Note that nested fallbacks (configuring a fallback under a fallback model) are not allowed and will fail spec validation.
+
 ---
 
 ## Graph Topology
