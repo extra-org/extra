@@ -374,6 +374,7 @@ agents:
 | `tools` | No | Tool ids this agent is allowed to call. |
 | `mcps` | No | MCP server ids this agent has access to. |
 | `protected` | No | `true` to gate this node behind [access control](#access-control). |
+| `auto` | No | `true` skips human approval for this agent's tool calls (default `false`, every call requires approval). [Human-in-the-Loop](/docs/human-in-the-loop). |
 
 An agent only ever sees the tools, MCP servers, and resolvers it explicitly lists — nothing is shared by default.
 
