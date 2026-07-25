@@ -4,18 +4,24 @@ The example to read first. A small bank assistant that uses every part of the
 platform, with logic simple enough that nothing distracts from the wiring.
 
 Everything is fake — two accounts, five transactions, no database, no internet.
-One API key is the only thing you need.
+It runs against a local Ollama model by default, so it needs no paid API key at
+all.
 
 ## Run it
 
-From the repository root:
-
 ```bash
-make up EXAMPLE=examples/starter
+ollama pull qwen2.5:14b
 ```
 
-First run creates `.env` from `.env.example` and stops so you can add your key.
-Then:
+Then from the repository root:
+
+```bash
+make up
+```
+
+First run creates `.env` from `.env.example` and stops so you can check it —
+the defaults already point at Ollama, so you can usually run `make up` straight
+again. Then:
 
 ```bash
 agentctl chat --url http://localhost:8090
@@ -33,8 +39,8 @@ agentctl chat --config examples/starter/agents.yaml
 Offline checks need no key and no MCP:
 
 ```bash
-make validate EXAMPLE=examples/starter
-make inspect  EXAMPLE=examples/starter
+make validate    # every example, offline
+make inspect     # agents, MCPs, hooks, tools
 ```
 
 ## Try these
@@ -83,23 +89,27 @@ documents the routing policy for whoever reads the repo — keep the two in step
 ## Switching model
 
 Change `defaults.model` in `agents.yaml` and set the matching key in `.env`.
-Nothing else references a provider, so it's one edit:
+Nothing else in the YAML names a provider, so it's one edit. The default is a
+local Ollama model through the OpenAI-compatible API:
 
 ```yaml
 defaults:
   model:
-    provider: anthropic       # anthropic | openai | gemini | bedrock
-    name: claude-haiku-4-5
+    provider: openai          # anthropic | openai | gemini | bedrock
+    name: qwen2.5:14b
     temperature: 0.0
 ```
 
-A local OpenAI-compatible server works too — set `provider: openai`, the model
-name Ollama reports, and in `.env`:
-
 ```
 OPENAI_API_KEY=ollama
-OPENAI_BASE_URL=http://127.0.0.1:11434/v1
+OPENAI_BASE_URL=http://host.docker.internal:11434/v1
 ```
+
+`host.docker.internal` is how a container reaches Ollama on your machine, which
+is what `make up` does. Running without Docker, use `127.0.0.1` instead.
+
+For a hosted provider, set `provider` and `name`, drop `OPENAI_BASE_URL`, and
+put the real key in `.env`.
 
 ## Approvals
 

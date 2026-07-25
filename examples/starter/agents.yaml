@@ -1,22 +1,15 @@
-# Starter example — a small bank concierge.
-#
-# Everything here is fake: three accounts, five transactions, no database and no
-# internet. The point is the wiring, not the banking. Read it top to bottom and
-# you have seen every part of a system definition.
-
 system:
   name: Bank Concierge
 
-# The model is declared once, here. Every orchestrator and agent inherits it,
-# so switching provider is a single edit. Any node may override it by adding its
-# own `model:` block.
+# Switch provider here and set the matching key in .env — nothing else in this
+# file names a vendor. Defaults to a local Ollama model so the example runs
+# without a paid API key.
 defaults:
   model:
-    provider: anthropic
-    name: claude-haiku-4-5
+    provider: openai
+    name: qwen2.5:14b
     temperature: 0.0
 
-# Guard rails for a single request. Without these a confused model can loop.
 execution:
   max_iterations: 12
   max_tool_calls: 8
@@ -24,22 +17,22 @@ execution:
   max_child_agent_calls: 4
   allow_duplicate_tool_calls: false
 
-# Tools served over MCP. This one ships with the example (see mcps/bank) and
-# speaks the same Streamable HTTP protocol a remote MCP would.
 mcps:
+  # Bundled with the example (see mcps/bank) so it runs offline, but it speaks
+  # the same Streamable HTTP protocol as a hosted server — in production this is
+  # where you point at https://mcp.yourcompany.com/mcp, and a before_mcp_request
+  # hook attaches the credential.
   bank_core:
     url: "http://127.0.0.1:8765/mcp"
 
-# Tools implemented in Python, in plugins/tools/<name>.py. Each takes one dict
-# and returns a string. The description is what the model sees when deciding
-# whether to call it — write it for the model, not for you.
 tools:
+  # Python running in-process, for what an MCP would be overkill for: calling
+  # your own service, writing to a queue, hitting a database. The description is
+  # what the model reads when deciding to call it, so write it for the model.
   block_card:
     description: Block a bank card and issue a replacement. Needs the last four digits.
 
-# Values injected into prompts as {{name}}. `shared` resolvers are defined once
-# in plugins/resolvers/shared.py; `agent` scope means the value is resolved per
-# agent, so two agents can see different values for the same name.
+# Injected into prompts as {{name}}. Implemented in plugins/resolvers/.
 resolvers:
   customer_name:
     scope: shared
@@ -48,15 +41,12 @@ resolvers:
   today:
     scope: shared
 
-# Where Python plugins are imported from, relative to this file.
 plugins:
   import_roots: ["."]
 
-# Hooks run at fixed points in the request lifecycle. These only log, so you can
-# watch the sequence in the terminal and see where your own code would go.
-#
-# failure_policy: warn  -> a raising hook is logged and the run continues.
-# (default)      fail   -> a raising hook fails the run. Use it for real checks.
+# These only log, so you can watch the sequence and see where real audit,
+# redaction or tracing code would go. `failure_policy: warn` stops a raising
+# hook from failing the request; the default is to fail.
 hooks:
   on_run_start:
     - plugin: lifecycle
@@ -75,9 +65,6 @@ hooks:
       method: run_failed
       failure_policy: warn
 
-# Orchestrators route. They never answer the user themselves — they pick a child
-# and pass the work down. `orchestrator` is the routing prompt, `system` is the
-# persona.
 orchestrators:
   concierge:
     name: Concierge
@@ -100,8 +87,6 @@ orchestrators:
       orchestrator: prompts/accounts_router/orchestrator.md
       system: prompts/accounts_router/system.md
 
-# Agents do the work. Each has a prompt, and optionally tools, MCP servers and
-# resolvers.
 agents:
   faq_agent:
     name: FAQ
@@ -109,9 +94,6 @@ agents:
     prompts:
       system: prompts/faq_agent/system.md
     resolvers: [bank_name]
-    # auto: true means this agent's tool calls run without a human approval
-    # prompt. Only set it when every tool it can reach is safe to run
-    # unattended — this one has no tools at all.
     auto: true
 
   card_agent:
@@ -122,9 +104,9 @@ agents:
     resolvers: [customer_name]
     tools: [block_card]
 
-  # Both account agents only read. Reading is safe to do unattended, so they
-  # set auto: true. card_agent above changes something, so it deliberately does
-  # not — watch the difference when you ask to block a card.
+  # auto: true runs tool calls without a human approval prompt. Set it only when
+  # every tool the agent can reach is safe unattended — these two only read.
+  # card_agent above changes something, so it deliberately does not.
   balance_agent:
     name: Balances
     description: Reports current account balances.
@@ -143,8 +125,7 @@ agents:
     mcps: [bank_core]
     auto: true
 
-# The graph. Indentation is the hierarchy: a node's children are the only nodes
-# it can route to. The root is the entry point for every request.
+# Indentation is the hierarchy: a node can only route to its own children.
 graph:
   concierge:
     support_router:
