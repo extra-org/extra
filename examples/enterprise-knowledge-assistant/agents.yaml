@@ -19,6 +19,12 @@ mcps:
   local_knowledge_mcp:
     url: "http://127.0.0.1:8765/mcp"
 
+  deepwiki:
+    url: "https://mcp.deepwiki.com/mcp"
+
+  context7:
+    url: "https://mcp.context7.com/mcp"
+
 
 tools:
 
@@ -58,7 +64,7 @@ hooks:
 
   before_mcp_request:
     - plugin: research_hooks
-      method: inject_mcp_auth
+      method: inject_context7_auth
 
   after_tool_call:
     - plugin: research_hooks
@@ -139,7 +145,7 @@ agents:
       - preferred_language
 
     mcps:
-      - local_knowledge_mcp
+      - deepwiki
 
   documentation_agent:
 
@@ -156,7 +162,7 @@ agents:
       - preferred_language
 
     mcps:
-      - local_knowledge_mcp
+      - context7
 
   enterprise_docs_agent:
 
@@ -170,6 +176,7 @@ agents:
       system: prompts/enterprise_docs_agent/system.md
 
     mcps:
+      - context7
       - local_knowledge_mcp
 
     protected: true

@@ -5,12 +5,12 @@ writing secrets into YAML or leaking credentials into logs or the LLM:
 
 * ``on_engine_start``    → ``validate_environment``: fail fast at build time if a
   required credential is missing.
-* ``before_mcp_request`` → ``inject_mcp_auth``: attach an auth header — and
-  **only** for servers that declare one. Servers absent from the map stay
+* ``before_mcp_request`` → ``inject_context7_auth``: attach Context7's auth header
+  — and **only** for the ``context7`` server. DeepWiki is public and stays
   unauthenticated.
 * ``after_tool_call``    → ``audit_tool_call``: best-effort audit of *safe* tool
   metadata (declared ``failure_policy: warn`` in YAML).
-* ``transform_tool_result`` → ``truncate_tool_result``: cap oversized MCP
+* ``transform_tool_result`` → ``truncate_tool_result``: cap oversized DeepWiki
   results before they enter the agent conversation.
 * ``on_run_error``       → ``record_run_failure``: record a run failure by type.
 
@@ -36,24 +36,20 @@ from agent_engine.runtime.hooks import (
 
 logger = logging.getLogger("research_hooks")
 
-# Cap large MCP results before they are appended to the agent conversation, to
-# keep prompts from blowing up.
-_KNOWLEDGE_SERVER = "local_knowledge_mcp"
+# Cap large DeepWiki MCP results before they are appended to the agent
+# conversation, to keep prompts from blowing up.
+_DEEPWIKI_SERVER = "deepwiki"
 _MAX_MCP_RESULT_CHARS = 8000
 
 # Environment variable NAMES the system needs. These are names, not secrets;
-# the values are read from os.environ only at runtime and never logged. Keep
-# this in step with `defaults.model.provider` in agents.yaml.
-_REQUIRED_ENV: tuple[str, ...] = ("ANTHROPIC_API_KEY",)
+# the values are read from os.environ only at runtime and never logged.
+_REQUIRED_ENV: tuple[str, ...] = ("ANTHROPIC_API_KEY", "CONTEXT7_API_KEY")
 
-# MCP servers that get an auth header, and where each credential comes from.
-# Servers absent from this map stay unauthenticated. The local knowledge server
-# needs no credential, so its token is optional: set LOCAL_MCP_TOKEN to watch
-# the header get attached, leave it unset and the request passes through.
-_MCP_AUTH: dict[str, tuple[str, str]] = {
-    # server_id: (env var holding the credential, header to send it in)
-    _KNOWLEDGE_SERVER: ("LOCAL_MCP_TOKEN", "Authorization"),
-}
+# The single authenticated MCP server, its credential env var, and Context7's
+# documented header name. DeepWiki is public and intentionally absent here.
+_CONTEXT7_SERVER = "context7"
+_CONTEXT7_KEY_ENV = "CONTEXT7_API_KEY"
+_CONTEXT7_HEADER = "CONTEXT7_API_KEY"  # Context7 reads the key from this header
 
 
 class ResearchHooksHook:
@@ -77,22 +73,21 @@ class ResearchHooksHook:
             raise RuntimeError("Missing required environment variables: " + ", ".join(missing))
 
     # -- before_mcp_request -------------------------------------------------
-    async def inject_mcp_auth(self, event: HookInvocation) -> McpRequestContext:
-        """Attach an auth header — only for servers that declare one.
+    async def inject_context7_auth(self, event: HookInvocation) -> McpRequestContext:
+        """Attach Context7's auth header — only for the context7 server.
 
-        The hook runs for every MCP server, so we gate on ``server_id``: servers
-        absent from ``_MCP_AUTH`` pass through untouched. Credentials come from
-        the environment, never from YAML.
+        The hook runs for every MCP server, so we gate on ``server_id``: DeepWiki
+        (public) passes through untouched; context7 gets its key from the
+        environment, never from YAML.
         """
         request = event.payload_as(McpRequestContext)
-        auth = _MCP_AUTH.get(request.server_id)
-        if auth is None:
-            return request  # public server — leave unauthenticated
-        key_env, header_name = auth
-        credential = os.environ.get(key_env)
-        if not credential:
-            return request  # optional credential, not configured
-        return request.with_headers({header_name: credential})
+        if request.server_id != _CONTEXT7_SERVER:
+            return request  # e.g. deepwiki — leave unauthenticated
+        api_key = os.environ.get(_CONTEXT7_KEY_ENV)
+        if not api_key:
+            # on_engine_start already validated this; stay safe if it changed.
+            return request
+        return request.with_headers({_CONTEXT7_HEADER: api_key})
 
     # -- after_tool_call (failure_policy: warn) -----------------------------
     async def audit_tool_call(self, event: HookInvocation) -> None:
@@ -119,8 +114,8 @@ class ResearchHooksHook:
     async def truncate_tool_result(self, event: HookInvocation) -> ToolResultContext:
         """Cap oversized MCP results before they reach the agent conversation.
 
-        Knowledge documents can be very large and blow up the prompt. We
-        truncate oversized results from that MCP server and log only **safe
+        DeepWiki pages can be very large and blow up the prompt. We truncate
+        oversized results from the ``deepwiki`` MCP server and log only **safe
         metadata** (sizes, names, ids) — never the result content. Other MCP
         servers, local tools, and small results pass through unchanged.
         Returning the (possibly modified) context is what the engine appends to
@@ -130,10 +125,10 @@ class ResearchHooksHook:
         text = result.result
         if (
             result.provider != "mcp"
-            or result.server_id != _KNOWLEDGE_SERVER
+            or result.server_id != _DEEPWIKI_SERVER
             or len(text) <= _MAX_MCP_RESULT_CHARS
         ):
-            return result  # other tools / small results: unchanged
+            return result  # non-DeepWiki tools / small DeepWiki results: unchanged
         run_id = event.run_context.run_id if event.run_context else None
         logger.info(
             "tool_result truncated run_id=%s tool=%s server=%s original_chars=%d kept_chars=%d",

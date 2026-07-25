@@ -7,9 +7,15 @@
 PYTHON ?= python3
 SRC := src
 TESTS := tests
-EXAMPLE := examples/enterprise-knowledge-assistant
+# Which example the local stack runs. The starter example is the default
+# because it needs one API key and no internet:
+#   make up EXAMPLE=examples/enterprise-knowledge-assistant
+EXAMPLE ?= examples/starter
 CONFIG ?= agents.yaml
 FLAGSHIP := $(EXAMPLE)/$(CONFIG)
+
+# Every example must stay offline-valid — `make validate` checks them all.
+EXAMPLES := examples/starter examples/enterprise-knowledge-assistant
 
 IMAGE := extra:local
 COMPOSE := CONFIG=$(CONFIG) docker compose -f $(EXAMPLE)/docker-compose.yml
@@ -50,16 +56,18 @@ check: lint typecheck test generate-check ## Quality gate: lint + typecheck + te
 # Compares the example tree before and after `generate` rather than against
 # HEAD, so an unrelated work-in-progress diff cannot make this fail.
 generate-check: ## Fail if `agentctl generate` would write anything (stale stubs).
-	@before=$$(find $(EXAMPLE) -type f -not -path '*/__pycache__/*' | sort | xargs shasum | shasum); \
-	agentctl generate --config $(FLAGSHIP) >/dev/null; \
-	after=$$(find $(EXAMPLE) -type f -not -path '*/__pycache__/*' | sort | xargs shasum | shasum); \
-	if [ "$$before" != "$$after" ]; then \
-		echo "Generated stubs are stale — run 'agentctl generate --config $(FLAGSHIP)' and commit."; \
-		exit 1; \
-	fi
+	@for ex in $(EXAMPLES); do \
+		before=$$(find $$ex -type f -not -path '*/__pycache__/*' | sort | xargs shasum | shasum); \
+		agentctl generate --config $$ex/agents.yaml >/dev/null; \
+		after=$$(find $$ex -type f -not -path '*/__pycache__/*' | sort | xargs shasum | shasum); \
+		if [ "$$before" != "$$after" ]; then \
+			echo "Stale stubs in $$ex — run 'agentctl generate --config $$ex/agents.yaml' and commit."; \
+			exit 1; \
+		fi; \
+	done
 
-validate: ## Validate the flagship example offline (no LLM calls, no network, no API keys).
-	agentctl validate $(FLAGSHIP)
+validate: ## Validate every example offline (no LLM calls, no network, no API keys).
+	@for ex in $(EXAMPLES); do agentctl validate $$ex/agents.yaml || exit 1; done
 
 inspect: ## Inspect the flagship example offline (agents, MCPs, hooks, plugins, tags).
 	agentctl inspect $(FLAGSHIP)

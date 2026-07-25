@@ -44,19 +44,19 @@ def _load_research_hooks() -> ModuleType:
     return module
 
 
-async def test_research_hook_truncates_large_knowledge_results(
+async def test_research_hook_truncates_large_deepwiki_results(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     module = _load_research_hooks()
     hook = module.ResearchHooksHook()
-    raw_result = "Knowledge body " + ("X" * 9000)
+    raw_result = "DeepWiki body " + ("X" * 9000)
     event = HookInvocation(
         hook_point="transform_tool_result",
         payload=ToolResultContext(
             agent_id="repository_agent",
-            tool_name="search_internal_documents",
+            tool_name="ask_question",
             provider="mcp",
-            server_id="local_knowledge_mcp",
+            server_id="deepwiki",
             result=raw_result,
         ),
         run_context=RunContext(run_id="run-1"),
@@ -70,17 +70,17 @@ async def test_research_hook_truncates_large_knowledge_results(
     assert "[truncated to 8000" in transformed.result
     assert "original_chars=" in caplog.text
     assert "kept_chars=8000" in caplog.text
-    assert "Knowledge body" not in caplog.text
+    assert "DeepWiki body" not in caplog.text
     assert "XXXXX" not in caplog.text
 
 
-async def test_research_hook_leaves_other_results_unchanged() -> None:
+async def test_research_hook_leaves_non_deepwiki_results_unchanged() -> None:
     module = _load_research_hooks()
     hook = module.ResearchHooksHook()
     result = "Z" * 9000
 
     cases: tuple[tuple[Literal["mcp", "local"], str | None], ...] = (
-        ("mcp", "some_other_mcp"),
+        ("mcp", "context7"),
         ("local", None),
     )
     for provider, server_id in cases:
@@ -98,23 +98,23 @@ async def test_research_hook_leaves_other_results_unchanged() -> None:
         assert transformed is original
 
 
-async def test_mcp_auth_logs_only_when_header_is_attached(
+async def test_context7_auth_logs_only_when_header_is_attached(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_research_hooks()
     hook = module.ResearchHooksHook()
-    credential = "secret-local-mcp-token"
-    monkeypatch.setenv("LOCAL_MCP_TOKEN", credential)
+    api_key = "secret-context7-key"
+    monkeypatch.setenv("CONTEXT7_API_KEY", api_key)
     manager = HookManager(
         {
             "before_mcp_request": [
                 LoadedHook(
                     point="before_mcp_request",
-                    ref="research_hooks:inject_mcp_auth",
-                    func=hook.inject_mcp_auth,
+                    ref="research_hooks:inject_context7_auth",
+                    func=hook.inject_context7_auth,
                     plugin="research_hooks",
-                    method="inject_mcp_auth",
+                    method="inject_context7_auth",
                     event_mode=True,
                 )
             ]
@@ -123,33 +123,19 @@ async def test_mcp_auth_logs_only_when_header_is_attached(
     caplog.clear()
 
     with caplog.at_level(logging.DEBUG, logger="agent_engine.runtime.hooks.manager"):
-        public = McpRequestContext(server_id="public_mcp", url="https://public.test/mcp")
-        unchanged = await manager.run_before_mcp_request(None, public)
+        deepwiki = McpRequestContext(server_id="deepwiki", url="https://deepwiki.test/mcp")
+        unchanged = await manager.run_before_mcp_request(None, deepwiki)
 
-    assert unchanged is public
+    assert unchanged is deepwiki
     assert caplog.text == ""
 
     with caplog.at_level(logging.INFO, logger="agent_engine.runtime.hooks.manager"):
-        knowledge = McpRequestContext(
-            server_id="local_knowledge_mcp", url="http://127.0.0.1:8765/mcp"
-        )
-        updated = await manager.run_before_mcp_request(None, knowledge)
+        context7 = McpRequestContext(server_id="context7", url="https://context7.test/mcp")
+        updated = await manager.run_before_mcp_request(None, context7)
 
-    assert updated.headers["Authorization"] == credential
-    assert "hook applied point=before_mcp_request ref=research_hooks:inject_mcp_auth" in caplog.text
-    assert credential not in caplog.text
-
-
-async def test_mcp_auth_passes_through_when_credential_is_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The local knowledge server needs no credential, so an unset token is not
-    an error — the request goes out unauthenticated."""
-    module = _load_research_hooks()
-    hook = module.ResearchHooksHook()
-    monkeypatch.delenv("LOCAL_MCP_TOKEN", raising=False)
-
-    request = McpRequestContext(server_id="local_knowledge_mcp", url="http://127.0.0.1:8765/mcp")
-    event = HookInvocation(hook_point="before_mcp_request", payload=request)
-
-    assert await hook.inject_mcp_auth(event) is request
+    assert updated.headers["CONTEXT7_API_KEY"] == api_key
+    assert (
+        "hook applied point=before_mcp_request ref=research_hooks:inject_context7_auth"
+        in caplog.text
+    )
+    assert api_key not in caplog.text
