@@ -1,0 +1,155 @@
+# Starter example — a small bank concierge.
+#
+# Everything here is fake: three accounts, five transactions, no database and no
+# internet. The point is the wiring, not the banking. Read it top to bottom and
+# you have seen every part of a system definition.
+
+system:
+  name: Bank Concierge
+
+# The model is declared once, here. Every orchestrator and agent inherits it,
+# so switching provider is a single edit. Any node may override it by adding its
+# own `model:` block.
+defaults:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5
+    temperature: 0.0
+
+# Guard rails for a single request. Without these a confused model can loop.
+execution:
+  max_iterations: 12
+  max_tool_calls: 8
+  max_tool_calls_per_agent: 3
+  max_child_agent_calls: 4
+  allow_duplicate_tool_calls: false
+
+# Tools served over MCP. This one ships with the example (see mcps/bank) and
+# speaks the same Streamable HTTP protocol a remote MCP would.
+mcps:
+  bank_core:
+    url: "http://127.0.0.1:8765/mcp"
+
+# Tools implemented in Python, in plugins/tools/<name>.py. Each takes one dict
+# and returns a string. The description is what the model sees when deciding
+# whether to call it — write it for the model, not for you.
+tools:
+  block_card:
+    description: Block a bank card and issue a replacement. Needs the last four digits.
+
+# Values injected into prompts as {{name}}. `shared` resolvers are defined once
+# in plugins/resolvers/shared.py; `agent` scope means the value is resolved per
+# agent, so two agents can see different values for the same name.
+resolvers:
+  customer_name:
+    scope: shared
+  bank_name:
+    scope: shared
+  today:
+    scope: shared
+
+# Where Python plugins are imported from, relative to this file.
+plugins:
+  import_roots: ["."]
+
+# Hooks run at fixed points in the request lifecycle. These only log, so you can
+# watch the sequence in the terminal and see where your own code would go.
+#
+# failure_policy: warn  -> a raising hook is logged and the run continues.
+# (default)      fail   -> a raising hook fails the run. Use it for real checks.
+hooks:
+  on_run_start:
+    - plugin: lifecycle
+      method: run_started
+      failure_policy: warn
+  after_tool_call:
+    - plugin: lifecycle
+      method: tool_finished
+      failure_policy: warn
+  transform_tool_result:
+    - plugin: lifecycle
+      method: shorten_result
+      failure_policy: warn
+  on_run_error:
+    - plugin: lifecycle
+      method: run_failed
+      failure_policy: warn
+
+# Orchestrators route. They never answer the user themselves — they pick a child
+# and pass the work down. `orchestrator` is the routing prompt, `system` is the
+# persona.
+orchestrators:
+  concierge:
+    name: Concierge
+    description: Front desk. Decides whether a request is about support or accounts.
+    prompts:
+      orchestrator: prompts/concierge/orchestrator.md
+      system: prompts/concierge/system.md
+
+  support_router:
+    name: Support
+    description: Handles general questions and card problems.
+    prompts:
+      orchestrator: prompts/support_router/orchestrator.md
+      system: prompts/support_router/system.md
+
+  accounts_router:
+    name: Accounts
+    description: Handles balances and transaction history.
+    prompts:
+      orchestrator: prompts/accounts_router/orchestrator.md
+      system: prompts/accounts_router/system.md
+
+# Agents do the work. Each has a prompt, and optionally tools, MCP servers and
+# resolvers.
+agents:
+  faq_agent:
+    name: FAQ
+    description: Answers general questions about hours, fees and branches.
+    prompts:
+      system: prompts/faq_agent/system.md
+    resolvers: [bank_name]
+    # auto: true means this agent's tool calls run without a human approval
+    # prompt. Only set it when every tool it can reach is safe to run
+    # unattended — this one has no tools at all.
+    auto: true
+
+  card_agent:
+    name: Cards
+    description: Blocks lost or stolen cards and orders replacements.
+    prompts:
+      system: prompts/card_agent/system.md
+    resolvers: [customer_name]
+    tools: [block_card]
+
+  # Both account agents only read. Reading is safe to do unattended, so they
+  # set auto: true. card_agent above changes something, so it deliberately does
+  # not — watch the difference when you ask to block a card.
+  balance_agent:
+    name: Balances
+    description: Reports current account balances.
+    prompts:
+      system: prompts/balance_agent/system.md
+    resolvers: [customer_name]
+    mcps: [bank_core]
+    auto: true
+
+  transactions_agent:
+    name: Transactions
+    description: Lists and explains recent transactions.
+    prompts:
+      system: prompts/transactions_agent/system.md
+    resolvers: [customer_name, today]
+    mcps: [bank_core]
+    auto: true
+
+# The graph. Indentation is the hierarchy: a node's children are the only nodes
+# it can route to. The root is the entry point for every request.
+graph:
+  concierge:
+    support_router:
+      faq_agent:
+      card_agent:
+    accounts_router:
+      balance_agent:
+      transactions_agent:
