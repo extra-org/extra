@@ -44,10 +44,11 @@ export function Message({
   children,
   from,
   typing = false,
-}: PropsWithChildren<{ from: "user" | "assistant"; typing?: boolean }>) {
+  error = false,
+}: PropsWithChildren<{ from: "user" | "assistant"; typing?: boolean; error?: boolean }>) {
   return (
     <div
-      className={cn("msg", from === "user" ? "user" : "ai", typing && "typing")}
+      className={cn("msg", from === "user" ? "user" : "ai", typing && "typing", error && "msg-error")}
       role={typing ? "status" : undefined}
       aria-label={typing ? "Assistant is typing" : undefined}
     >
@@ -55,6 +56,7 @@ export function Message({
     </div>
   );
 }
+
 
 export function MessageContent({ children }: PropsWithChildren) {
   return <div className="message-content">{children}</div>;

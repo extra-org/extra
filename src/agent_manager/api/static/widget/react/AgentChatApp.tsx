@@ -32,6 +32,8 @@ type MessageEntry = {
   typing?: boolean;
   route?: string[];
   tools?: ToolRecord[];
+  /** When true the message represents a permanent error (e.g. budget exceeded). */
+  error?: boolean;
 };
 
 let nextMessageCounter = 0;
@@ -150,6 +152,9 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     setEntries((prev) => prev.map((entry) => (entry.id === id ? update(entry) : entry)));
   }, []);
 
+  const BUDGET_EXCEEDED_MESSAGE =
+    "This conversation has reached its context limit. Please start a new chat to continue.";
+
   const submit = useCallback(
     async (text: string) => {
       const assistantId = nextMessageId("ai");
@@ -167,6 +172,16 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         patchEntry(assistantId, (entry) => ({ ...entry, typing: false }));
         onAnswer(finalDetail);
       } catch (error) {
+        if (error instanceof AgentChatHttpError && error.status === 429) {
+          patchEntry(assistantId, () => ({
+            id: assistantId,
+            role: "ai",
+            text: BUDGET_EXCEEDED_MESSAGE,
+            error: true,
+          }));
+          setSending(false);
+          return;
+        }
         try {
           const data = await sendToAgent(text);
           patchEntry(assistantId, () => ({
@@ -181,10 +196,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
           patchEntry(assistantId, () => ({
             id: assistantId,
             role: "ai",
-            text:
-              error instanceof Error && error.message
-                ? `Something went wrong. Please try again.`
-                : "Something went wrong. Please try again.",
+            text: "Something went wrong. Please try again.",
           }));
         }
       } finally {
@@ -256,6 +268,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
                   key={entry.id}
                   from={entry.role === "user" ? "user" : "assistant"}
                   typing={entry.typing}
+                  error={entry.error}
                 >
                   {entry.typing ? (
                     "..."

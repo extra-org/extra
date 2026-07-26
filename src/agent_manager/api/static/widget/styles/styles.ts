@@ -44,6 +44,8 @@ export function styles(config: AgentChatConfig): string {
     .msg { font-size: 14.5px; line-height: 1.55; word-wrap: break-word; white-space: pre-wrap; }
     .msg.ai { color: #18181b; max-width: 100%; }
     .msg.ai.typing { color: #a1a1aa; letter-spacing: 1px; }
+    .msg.ai.msg-error { color: #991b1b; background: #fff5f5; border: 1px solid #fecaca;
+      border-radius: 10px; padding: 8px 12px; }
     .msg.user { background: #f4f4f5; color: #18181b; border-radius: 18px;
       padding: 10px 14px; margin-left: auto; max-width: 88%; }
     .message-content { min-width: 0; }

@@ -165,3 +165,41 @@ def test_create_accepts_stable_session_and_send_accepts_user(client: TestClient)
     sent = client.post("/conversations/sess-1/messages", json={"message": "hello", "user_id": "u1"})
 
     assert sent.status_code == 200
+
+
+def test_send_returns_429_when_token_budget_exceeded() -> None:
+    """send_message returns 429 when the conversation token budget is exhausted."""
+    app = FastAPI()
+    # max_tokens=1 means the budget is treated as exceeded as soon as any token is recorded.
+    # To trigger the guard we first send a real message (consumes tokens), then send a second one.
+    service = ConversationService(RecordingEngine(), MemoryRepository(), max_tokens=1)
+    app.state.service = service
+    app.include_router(router)
+    client = TestClient(app)
+
+    cid = client.post("/conversations").json()["conversation_id"]
+    # First message succeeds and records token usage in the repository.
+    client.post(f"/conversations/{cid}/messages", json={"message": "first"})
+    # Second message should be rejected because the budget is now exhausted.
+    response = client.post(f"/conversations/{cid}/messages", json={"message": "second"})
+
+    assert response.status_code == 429
+    assert "budget" in response.json()["detail"]
+
+
+def test_stream_returns_429_when_token_budget_exceeded() -> None:
+    """stream_message returns 429 when the conversation token budget is exhausted."""
+    app = FastAPI()
+    service = ConversationService(RecordingEngine(), MemoryRepository(), max_tokens=1)
+    app.state.service = service
+    app.include_router(router)
+    client = TestClient(app)
+
+    cid = client.post("/conversations").json()["conversation_id"]
+    # Consume the budget with a non-streaming send first.
+    client.post(f"/conversations/{cid}/messages", json={"message": "first"})
+    # The streaming endpoint should now return 429.
+    response = client.post(f"/conversations/{cid}/messages/stream", json={"message": "second"})
+
+    assert response.status_code == 429
+    assert "budget" in response.json()["detail"]
