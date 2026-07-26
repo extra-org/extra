@@ -6,12 +6,13 @@ import {
   removeStoredConversationId,
   setStoredConversationId,
 } from "../storage/conversationStorage";
-import type { ChatMessage, SendMessageResponse, StreamEvent } from "../types";
+import type { ChatMessage, ContextUsage, SendMessageResponse, StreamEvent } from "../types";
 
 export interface Conversation {
   send(text: string): Promise<SendMessageResponse>;
   stream(text: string): AsyncGenerator<StreamEvent>;
   loadHistory(): Promise<ChatMessage[]>;
+  loadUsage(): Promise<ContextUsage | null>;
 }
 
 const isMissingConversation = (error: unknown): boolean =>
@@ -69,5 +70,18 @@ export function useConversation(client: AgentChatClient, endpoint: string): Conv
     }
   }, [client, endpoint]);
 
-  return useMemo(() => ({ send, stream, loadHistory }), [send, stream, loadHistory]);
+  const loadUsage = useCallback(async () => {
+    const stored = getStoredConversationId(endpoint);
+    if (!stored) return null;
+    try {
+      return await client.getUsage(stored);
+    } catch {
+      return null;
+    }
+  }, [client, endpoint]);
+
+  return useMemo(
+    () => ({ send, stream, loadHistory, loadUsage }),
+    [send, stream, loadHistory, loadUsage],
+  );
 }

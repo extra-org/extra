@@ -137,6 +137,34 @@ export function styles(config: AgentChatConfig): string {
     .prompt-footer { grid-column: 1 / -1; display: flex; align-items: center;
       justify-content: space-between; gap: 10px; color: #a1a1aa; font-size: 11.5px; }
     .prompt-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .footer-start { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .context-meter { position: relative; display: inline-flex; align-items: center; gap: 5px;
+      flex: 0 0 auto; color: #71717a; font-size: 11.5px; cursor: default; outline: none; }
+    .context-ring { transform: rotate(-90deg); }
+    .context-ring-track { stroke: #e4e4e7; }
+    .context-ring-value { stroke: #3f3f46;
+      transition: stroke-dashoffset .3s ease, stroke .3s ease; }
+    .context-percent { font-variant-numeric: tabular-nums; }
+    .context-meter.warning .context-ring-value { stroke: #f59e0b; }
+    .context-meter.warning .context-percent { color: #b45309; }
+    .context-meter.critical .context-ring-value { stroke: #ef4444; }
+    .context-meter.critical .context-percent { color: #b91c1c; }
+    .context-popover { position: absolute; bottom: calc(100% + 8px); left: 0; width: 200px;
+      background: #fff; color: #18181b; border: 1px solid #e4e4e7; border-radius: 10px;
+      padding: 10px 12px; box-shadow: 0 10px 25px rgba(0,0,0,.12);
+      opacity: 0; transform: translateY(4px); pointer-events: none;
+      transition: opacity .15s ease, transform .15s ease; z-index: 5; }
+    .context-meter:hover .context-popover, .context-meter:focus-visible .context-popover {
+      opacity: 1; transform: none; }
+    .context-popover-head { display: flex; align-items: baseline; justify-content: space-between;
+      gap: 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .context-popover-count { color: #71717a; font-weight: 400; font-variant-numeric: tabular-nums; }
+    .context-bar { display: block; margin-top: 8px; height: 4px; background: #f4f4f5;
+      border-radius: 999px; overflow: hidden; }
+    .context-bar-fill { display: block; height: 100%; background: #3f3f46;
+      border-radius: 999px; transition: width .3s ease; }
+    .context-meter.warning .context-bar-fill { background: #f59e0b; }
+    .context-meter.critical .context-bar-fill { background: #ef4444; }
     .powered { text-align: center; padding: 0 14px 10px; color: #a1a1aa;
       font-size: 11px; letter-spacing: .01em; }
     @media (prefers-reduced-motion: reduce) {
@@ -151,6 +179,7 @@ export function styles(config: AgentChatConfig): string {
       .panel.open .composer { animation: none; }
       .welcome { animation: none; }
       .msg-action svg { animation: none; }
+      .context-ring-value, .context-bar-fill, .context-popover { transition: none; }
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;

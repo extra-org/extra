@@ -52141,6 +52141,19 @@ var AgentChatClient = class {
       used_tools: Array.isArray(data.used_tools) ? data.used_tools : void 0
     };
   }
+  async getUsage(conversationId) {
+    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/usage`);
+    if (!response.ok) {
+      throw new AgentChatHttpError(response.status);
+    }
+    const data = await response.json();
+    return {
+      used_tokens: Number(data.used_tokens) || 0,
+      max_tokens: data.max_tokens == null ? null : Number(data.max_tokens),
+      percent: Number(data.percent) || 0,
+      severity: data.severity ?? "normal"
+    };
+  }
   async *streamMessage(conversationId, message) {
     const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages/stream`, {
       method: "POST",
@@ -53051,7 +53064,19 @@ function useConversation(client, endpoint) {
       return [];
     }
   }, [client, endpoint]);
-  return (0, import_react9.useMemo)(() => ({ send, stream, loadHistory }), [send, stream, loadHistory]);
+  const loadUsage = (0, import_react9.useCallback)(async () => {
+    const stored = getStoredConversationId(endpoint);
+    if (!stored) return null;
+    try {
+      return await client.getUsage(stored);
+    } catch {
+      return null;
+    }
+  }, [client, endpoint]);
+  return (0, import_react9.useMemo)(
+    () => ({ send, stream, loadHistory, loadUsage }),
+    [send, stream, loadHistory, loadUsage]
+  );
 }
 
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
@@ -53072,14 +53097,19 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
   const [sending, setSending] = (0, import_react10.useState)(false);
   const [entries, setEntries] = (0, import_react10.useState)([]);
+  const [usage, setUsage] = (0, import_react10.useState)(null);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
+  const refreshUsage = (0, import_react10.useCallback)(async () => {
+    setUsage(await conversation.loadUsage());
+  }, [conversation]);
   const loadHistory = (0, import_react10.useCallback)(async () => {
     if (loaded) return;
     setLoaded(true);
     const history = await conversation.loadHistory();
     if (history.length) setEntries(history.map(toEntry));
-  }, [conversation, loaded]);
+    await refreshUsage();
+  }, [conversation, loaded, refreshUsage]);
   (0, import_react10.useEffect)(() => {
     if (inline) void loadHistory();
   }, [inline, loadHistory]);
@@ -53134,9 +53164,10 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
         await sendWithoutStreaming(text10, pending.id);
       } finally {
         setSending(false);
+        void refreshUsage();
       }
     },
-    [conversation, onAnswer, replaceEntry, sendWithoutStreaming]
+    [conversation, onAnswer, refreshUsage, replaceEntry, sendWithoutStreaming]
   );
   const toggle = () => void (open ? closeChat() : openChat());
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
@@ -53184,7 +53215,10 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
                     }
                   ),
                   /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInputFooter, { children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "footer-start", children: [
+                      usage ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ContextMeter, { usage }) : null,
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" })
+                    ] }),
                     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending })
                   ] })
                 ] }),
@@ -53279,6 +53313,71 @@ function Welcome({ title }) {
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "welcome-avatar", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Bot, { "aria-hidden": true }) }),
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "welcome-title", children: title })
   ] });
+}
+var RING_SIZE = 18;
+var RING_STROKE = 2.5;
+var RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+var RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+function ContextMeter({ usage }) {
+  const { used_tokens: used, max_tokens: max, percent, severity } = usage;
+  if (!max) return null;
+  const center = RING_SIZE / 2;
+  const ring = { cx: center, cy: center, r: RING_RADIUS, fill: "none", strokeWidth: RING_STROKE };
+  const rounded = Math.round(percent);
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+    "span",
+    {
+      className: `context-meter ${severity}`,
+      role: "img",
+      "aria-label": `Context ${rounded}% used`,
+      tabIndex: 0,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+          "svg",
+          {
+            className: "context-ring",
+            width: RING_SIZE,
+            height: RING_SIZE,
+            viewBox: `0 0 ${RING_SIZE} ${RING_SIZE}`,
+            "aria-hidden": true,
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("circle", { className: "context-ring-track", ...ring }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                "circle",
+                {
+                  className: "context-ring-value",
+                  ...ring,
+                  strokeLinecap: "round",
+                  strokeDasharray: RING_CIRCUMFERENCE,
+                  strokeDashoffset: RING_CIRCUMFERENCE * (1 - percent / 100)
+                }
+              )
+            ]
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "context-percent", children: [
+          rounded,
+          "%"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "context-popover", role: "tooltip", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "context-popover-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Context usage" }),
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "context-popover-count", children: [
+              formatTokens(Math.min(used, max)),
+              " of ",
+              formatTokens(max)
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "context-bar", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "context-bar-fill", style: { width: `${percent}%` } }) })
+        ] })
+      ]
+    }
+  );
+}
+function formatTokens(tokens) {
+  if (tokens >= 1e6) return `${(tokens / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+  if (tokens >= 1e3) return `${(tokens / 1e3).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${tokens}`;
 }
 function avatarStyle(avatar) {
   if (!avatar) return void 0;
@@ -53428,6 +53527,34 @@ function styles(config) {
     .prompt-footer { grid-column: 1 / -1; display: flex; align-items: center;
       justify-content: space-between; gap: 10px; color: #a1a1aa; font-size: 11.5px; }
     .prompt-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .footer-start { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .context-meter { position: relative; display: inline-flex; align-items: center; gap: 5px;
+      flex: 0 0 auto; color: #71717a; font-size: 11.5px; cursor: default; outline: none; }
+    .context-ring { transform: rotate(-90deg); }
+    .context-ring-track { stroke: #e4e4e7; }
+    .context-ring-value { stroke: #3f3f46;
+      transition: stroke-dashoffset .3s ease, stroke .3s ease; }
+    .context-percent { font-variant-numeric: tabular-nums; }
+    .context-meter.warning .context-ring-value { stroke: #f59e0b; }
+    .context-meter.warning .context-percent { color: #b45309; }
+    .context-meter.critical .context-ring-value { stroke: #ef4444; }
+    .context-meter.critical .context-percent { color: #b91c1c; }
+    .context-popover { position: absolute; bottom: calc(100% + 8px); left: 0; width: 200px;
+      background: #fff; color: #18181b; border: 1px solid #e4e4e7; border-radius: 10px;
+      padding: 10px 12px; box-shadow: 0 10px 25px rgba(0,0,0,.12);
+      opacity: 0; transform: translateY(4px); pointer-events: none;
+      transition: opacity .15s ease, transform .15s ease; z-index: 5; }
+    .context-meter:hover .context-popover, .context-meter:focus-visible .context-popover {
+      opacity: 1; transform: none; }
+    .context-popover-head { display: flex; align-items: baseline; justify-content: space-between;
+      gap: 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .context-popover-count { color: #71717a; font-weight: 400; font-variant-numeric: tabular-nums; }
+    .context-bar { display: block; margin-top: 8px; height: 4px; background: #f4f4f5;
+      border-radius: 999px; overflow: hidden; }
+    .context-bar-fill { display: block; height: 100%; background: #3f3f46;
+      border-radius: 999px; transition: width .3s ease; }
+    .context-meter.warning .context-bar-fill { background: #f59e0b; }
+    .context-meter.critical .context-bar-fill { background: #ef4444; }
     .powered { text-align: center; padding: 0 14px 10px; color: #a1a1aa;
       font-size: 11px; letter-spacing: .01em; }
     @media (prefers-reduced-motion: reduce) {
@@ -53442,6 +53569,7 @@ function styles(config) {
       .panel.open .composer { animation: none; }
       .welcome { animation: none; }
       .msg-action svg { animation: none; }
+      .context-ring-value, .context-bar-fill, .context-popover { transition: none; }
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;

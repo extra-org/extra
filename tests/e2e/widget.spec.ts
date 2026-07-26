@@ -432,6 +432,50 @@ test("backend error renders a user-friendly message", async ({ page }) => {
   await expect.poll(() => shadowText(page, ".messages")).toContain("Something went wrong. Please try again.");
 });
 
+test("context meter shows token usage against the budget after a turn", async ({ page }) => {
+  await mockConversationApi(page);
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        used_tokens: 900,
+        max_tokens: 1000,
+        percent: 90,
+        severity: "critical",
+      }),
+    });
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+
+  await shadowFill(page, ".input", "hello");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello");
+  await expect.poll(() => shadowExists(page, ".context-meter")).toBe(true);
+  await expect.poll(() => shadowText(page, ".context-percent")).toBe("90%");
+  await expect.poll(() => shadowClassContains(page, ".context-meter", "critical")).toBe(true);
+});
+
+test("context meter stays hidden when no budget is configured", async ({ page }) => {
+  await mockConversationApi(page);
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello");
+  await expect.poll(() => shadowExists(page, ".context-meter")).toBe(false);
+});
+
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
   const calls = await mockConversationApiWithStaleConversation(page);
   await page.goto("/widget-demo.html");

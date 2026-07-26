@@ -14,6 +14,7 @@ from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
+from agent_manager.domain import ContextUsage
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
 
@@ -43,6 +44,60 @@ def test_create_send_history_round_trip(client: TestClient) -> None:
 def test_unknown_conversation_returns_404(client: TestClient) -> None:
     assert client.get("/conversations/nope/messages").status_code == 404
     assert client.post("/conversations/nope/messages", json={"message": "x"}).status_code == 404
+    assert client.get("/conversations/nope/usage").status_code == 404
+
+
+def test_usage_reports_null_budget_when_unset(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    assert client.get(f"/conversations/{cid}/usage").json() == {
+        "used_tokens": 0,
+        "max_tokens": None,
+        "percent": 0.0,
+        "severity": "normal",
+    }
+
+
+def test_usage_reports_accumulated_tokens_and_severity_against_budget() -> None:
+    class TokenEngine(RecordingEngine):
+        async def run(
+            self,
+            message: str,
+            *,
+            history: Sequence[ChatMessage] = (),
+            context: RunContext | None = None,
+        ) -> RunResult:
+            return RunResult(
+                system_name="stub",
+                visited=["agent"],
+                answer="ok",
+                input_tokens=600,
+                output_tokens=100,
+            )
+
+    app = FastAPI()
+    app.state.service = ConversationService(
+        TokenEngine(), MemoryRepository(), max_tokens=1000
+    )
+    app.include_router(router)
+    client = TestClient(app)
+
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"})
+
+    body = client.get(f"/conversations/{cid}/usage").json()
+    assert body["used_tokens"] == 700
+    assert body["max_tokens"] == 1000
+    assert body["percent"] == pytest.approx(70.0)
+    assert body["severity"] == "warning"
+
+
+def test_context_usage_severity_thresholds() -> None:
+    assert ContextUsage.from_totals(0, None).severity == "normal"
+    assert ContextUsage.from_totals(640, 1000).severity == "normal"
+    assert ContextUsage.from_totals(650, 1000).severity == "warning"
+    assert ContextUsage.from_totals(850, 1000).severity == "warning"
+    assert ContextUsage.from_totals(851, 1000).severity == "critical"
+    assert ContextUsage.from_totals(5000, 1000).percent == 100.0
 
 
 class _SubAgentEngine(Engine):

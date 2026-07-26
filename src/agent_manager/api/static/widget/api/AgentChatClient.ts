@@ -1,4 +1,4 @@
-import type { ChatMessage, SendMessageResponse, StreamEvent } from "../types";
+import type { ChatMessage, ContextUsage, SendMessageResponse, StreamEvent } from "../types";
 
 export class AgentChatHttpError extends Error {
   constructor(readonly status: number) {
@@ -41,6 +41,20 @@ export class AgentChatClient {
       answer: String(data.answer || ""),
       visited: Array.isArray(data.visited) ? (data.visited as string[]) : undefined,
       used_tools: Array.isArray(data.used_tools) ? data.used_tools : undefined,
+    };
+  }
+
+  async getUsage(conversationId: string): Promise<ContextUsage> {
+    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/usage`);
+    if (!response.ok) {
+      throw new AgentChatHttpError(response.status);
+    }
+    const data = await response.json();
+    return {
+      used_tokens: Number(data.used_tokens) || 0,
+      max_tokens: data.max_tokens == null ? null : Number(data.max_tokens),
+      percent: Number(data.percent) || 0,
+      severity: data.severity ?? "normal",
     };
   }
 

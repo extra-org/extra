@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.deps import get_service
 from agent_manager.api.schemas import (
+    ContextUsageResponse,
     CreateConversationRequest,
     CreateConversationResponse,
     MessageOut,
@@ -48,6 +49,20 @@ async def list_messages(conversation_id: str, service: Service) -> list[MessageO
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
+
+
+@router.get("/conversations/{conversation_id}/usage", response_model=ContextUsageResponse)
+async def get_usage(conversation_id: str, service: Service) -> ContextUsageResponse:
+    try:
+        usage = await service.usage(conversation_id)
+    except ConversationNotFound as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    return ContextUsageResponse(
+        used_tokens=usage.used_tokens,
+        max_tokens=usage.max_tokens,
+        percent=usage.percent,
+        severity=usage.severity,
+    )
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=SendMessageResponse)

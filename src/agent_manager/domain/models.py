@@ -7,6 +7,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+CONTEXT_WARNING_PERCENT = 65.0
+CONTEXT_CRITICAL_PERCENT = 85.0
+
 
 class Role(StrEnum):
     USER = "user"
@@ -94,3 +97,30 @@ class ConversationContext:
     message_count: int
     source: str
     snapshot: ConversationSnapshot | None = None
+
+
+class ContextSeverity(StrEnum):
+    NORMAL = "normal"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+@dataclass(frozen=True)
+class ContextUsage:
+    used_tokens: int
+    max_tokens: int | None
+    percent: float
+    severity: ContextSeverity
+
+    @classmethod
+    def from_totals(cls, used_tokens: int, max_tokens: int | None) -> ContextUsage:
+        if not max_tokens:
+            return cls(used_tokens, max_tokens, 0.0, ContextSeverity.NORMAL)
+        percent = min(used_tokens / max_tokens * 100, 100.0)
+        if percent > CONTEXT_CRITICAL_PERCENT:
+            severity = ContextSeverity.CRITICAL
+        elif percent >= CONTEXT_WARNING_PERCENT:
+            severity = ContextSeverity.WARNING
+        else:
+            severity = ContextSeverity.NORMAL
+        return cls(used_tokens, max_tokens, percent, severity)

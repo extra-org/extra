@@ -28,6 +28,15 @@ export interface ChatMessage {
   created_at?: string;
 }
 
+export type ContextSeverity = "normal" | "warning" | "critical";
+
+export interface ContextUsage {
+  used_tokens: number;
+  max_tokens: number | null;
+  percent: number;
+  severity: ContextSeverity;
+}
+
 export interface MessageEntry {
   id: string;
   role: "user" | "ai";

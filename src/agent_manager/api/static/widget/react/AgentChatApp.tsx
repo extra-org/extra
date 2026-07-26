@@ -6,6 +6,7 @@ import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
   ChatMessage,
+  ContextUsage,
   MessageEntry,
   ToolRecord,
 } from "../types";
@@ -55,15 +56,21 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
   const [entries, setEntries] = useState<MessageEntry[]>([]);
+  const [usage, setUsage] = useState<ContextUsage | null>(null);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const refreshUsage = useCallback(async () => {
+    setUsage(await conversation.loadUsage());
+  }, [conversation]);
 
   const loadHistory = useCallback(async () => {
     if (loaded) return;
     setLoaded(true);
     const history = await conversation.loadHistory();
     if (history.length) setEntries(history.map(toEntry));
-  }, [conversation, loaded]);
+    await refreshUsage();
+  }, [conversation, loaded, refreshUsage]);
 
   useEffect(() => {
     if (inline) void loadHistory();
@@ -125,9 +132,10 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         await sendWithoutStreaming(text, pending.id);
       } finally {
         setSending(false);
+        void refreshUsage();
       }
     },
-    [conversation, onAnswer, replaceEntry, sendWithoutStreaming],
+    [conversation, onAnswer, refreshUsage, replaceEntry, sendWithoutStreaming],
   );
 
   const toggle = () => void (open ? closeChat() : openChat());
@@ -187,7 +195,10 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
               placeholder="Message..."
             />
             <PromptInputFooter>
-              <span className="prompt-hint">Enter to send · Shift+Enter for a new line</span>
+              <div className="footer-start">
+                {usage ? <ContextMeter usage={usage} /> : null}
+                <span className="prompt-hint">Enter to send · Shift+Enter for a new line</span>
+              </div>
               <PromptInputSubmit disabled={sending} />
             </PromptInputFooter>
           </PromptInput>
@@ -335,6 +346,64 @@ function Welcome({ title }: { title: string }) {
       <p className="welcome-title">{title}</p>
     </div>
   );
+}
+
+const RING_SIZE = 18;
+const RING_STROKE = 2.5;
+const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+function ContextMeter({ usage }: { usage: ContextUsage }) {
+  const { used_tokens: used, max_tokens: max, percent, severity } = usage;
+  if (!max) return null;
+
+  const center = RING_SIZE / 2;
+  const ring = { cx: center, cy: center, r: RING_RADIUS, fill: "none", strokeWidth: RING_STROKE };
+  const rounded = Math.round(percent);
+
+  return (
+    <span
+      className={`context-meter ${severity}`}
+      role="img"
+      aria-label={`Context ${rounded}% used`}
+      tabIndex={0}
+    >
+      <svg
+        className="context-ring"
+        width={RING_SIZE}
+        height={RING_SIZE}
+        viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+        aria-hidden
+      >
+        <circle className="context-ring-track" {...ring} />
+        <circle
+          className="context-ring-value"
+          {...ring}
+          strokeLinecap="round"
+          strokeDasharray={RING_CIRCUMFERENCE}
+          strokeDashoffset={RING_CIRCUMFERENCE * (1 - percent / 100)}
+        />
+      </svg>
+      <span className="context-percent">{rounded}%</span>
+      <span className="context-popover" role="tooltip">
+        <span className="context-popover-head">
+          <span>Context usage</span>
+          <span className="context-popover-count">
+            {formatTokens(Math.min(used, max))} of {formatTokens(max)}
+          </span>
+        </span>
+        <span className="context-bar">
+          <span className="context-bar-fill" style={{ width: `${percent}%` }} />
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${tokens}`;
 }
 
 function avatarStyle(avatar: string) {

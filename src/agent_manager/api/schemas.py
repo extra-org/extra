@@ -10,7 +10,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from agent_manager.domain import Role
+from agent_manager.domain import ContextSeverity, Role
 
 
 class CreateConversationRequest(BaseModel):
@@ -47,6 +47,13 @@ class SendMessageResponse(BaseModel):
     answer: str
     visited: list[str]
     used_tools: list[ToolRecord]
+
+
+class ContextUsageResponse(BaseModel):
+    used_tokens: int
+    max_tokens: int | None = None
+    percent: float = 0.0
+    severity: ContextSeverity = ContextSeverity.NORMAL
 
 
 class StreamEventOut(BaseModel):

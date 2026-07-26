@@ -17,7 +17,13 @@ from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.application.context import build_history
-from agent_manager.domain import ConversationMessage, Message, Repository, Role
+from agent_manager.domain import (
+    ContextUsage,
+    ConversationMessage,
+    Message,
+    Repository,
+    Role,
+)
 
 
 class ConversationNotFound(Exception):
@@ -75,6 +81,11 @@ class ConversationService:
     async def history(self, conversation_id: str) -> list[Message]:
         await self._require(conversation_id)
         return await self._repository.list_messages(conversation_id)
+
+    async def usage(self, conversation_id: str) -> ContextUsage:
+        await self._require(conversation_id)
+        used = await self._repository.get_token_usage(conversation_id)
+        return ContextUsage.from_totals(used, self._max_tokens)
 
     async def send(
         self, conversation_id: str, text: str, *, user_id: str | None = None
