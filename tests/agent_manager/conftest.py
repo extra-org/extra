@@ -30,7 +30,13 @@ class RecordingEngine(Engine):
         self.prompts.append(message)
         self.histories.append(tuple(history))
         self.contexts.append(context)
-        return RunResult(system_name="stub", visited=["agent"], answer=f"answer:{message}")
+        return RunResult(
+            system_name="stub",
+            visited=["agent"],
+            answer=f"answer:{message}",
+            input_tokens=5,
+            output_tokens=5,
+        )
 
     async def stream(
         self,
