@@ -52922,6 +52922,7 @@ function statusLabel(state) {
 
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+var TOKEN_BUDGET_EXCEEDED_MESSAGE = "This conversation has reached its context limit. Start a new chat to continue.";
 var nextMessageCounter = 0;
 function nextMessageId(role) {
   nextMessageCounter += 1;
@@ -53033,23 +53034,27 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
         }
         patchEntry(assistantId, (entry) => ({ ...entry, typing: false }));
         onAnswer(finalDetail);
-      } catch (error) {
-        try {
-          const data = await sendToAgent(text10);
-          patchEntry(assistantId, () => ({
-            id: assistantId,
-            role: "ai",
-            text: data.answer,
-            route: data.visited,
-            tools: data.used_tools
-          }));
-          onAnswer({ visited: data.visited ?? [], used_tools: data.used_tools ?? [] });
-        } catch {
-          patchEntry(assistantId, () => ({
-            id: assistantId,
-            role: "ai",
-            text: error instanceof Error && error.message ? `Something went wrong. Please try again.` : "Something went wrong. Please try again."
-          }));
+      } catch (streamError) {
+        if (streamError instanceof AgentChatHttpError && streamError.status === 429) {
+          patchEntry(assistantId, () => ({ id: assistantId, role: "ai", text: TOKEN_BUDGET_EXCEEDED_MESSAGE }));
+        } else {
+          try {
+            const data = await sendToAgent(text10);
+            patchEntry(assistantId, () => ({
+              id: assistantId,
+              role: "ai",
+              text: data.answer,
+              route: data.visited,
+              tools: data.used_tools
+            }));
+            onAnswer({ visited: data.visited ?? [], used_tools: data.used_tools ?? [] });
+          } catch (sendError) {
+            patchEntry(assistantId, () => ({
+              id: assistantId,
+              role: "ai",
+              text: sendError instanceof AgentChatHttpError && sendError.status === 429 ? TOKEN_BUDGET_EXCEEDED_MESSAGE : "Something went wrong. Please try again."
+            }));
+          }
         }
       } finally {
         setSending(false);
