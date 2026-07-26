@@ -1,0 +1,136 @@
+system:
+  name: Bank Concierge
+
+# Switch provider here and set the matching key in .env — nothing else in this
+# file names a vendor. Defaults to a local Ollama model so the example runs
+# without a paid API key.
+defaults:
+  model:
+    provider: openai
+    name: qwen2.5:14b
+    temperature: 0.0
+
+execution:
+  max_iterations: 12
+  max_tool_calls: 8
+  max_tool_calls_per_agent: 3
+  max_child_agent_calls: 4
+  allow_duplicate_tool_calls: false
+
+mcps:
+  # Bundled with the example (see mcps/bank) so it runs offline, but it speaks
+  # the same Streamable HTTP protocol as a hosted server — in production this is
+  # where you point at https://mcp.yourcompany.com/mcp, and a before_mcp_request
+  # hook attaches the credential.
+  bank_core:
+    url: "http://127.0.0.1:8765/mcp"
+
+tools:
+  # Python running in-process, for what an MCP would be overkill for: calling
+  # your own service, writing to a queue, hitting a database. The description is
+  # what the model reads when deciding to call it, so write it for the model.
+  block_card:
+    description: Block a bank card and issue a replacement. Needs the last four digits.
+
+# Injected into prompts as {{name}}. Implemented in plugins/resolvers/.
+resolvers:
+  customer_name:
+    scope: shared
+  bank_name:
+    scope: shared
+  today:
+    scope: shared
+
+plugins:
+  import_roots: ["."]
+
+# These only log, so you can watch the sequence and see where real audit,
+# redaction or tracing code would go. `failure_policy: warn` stops a raising
+# hook from failing the request; the default is to fail.
+hooks:
+  on_run_start:
+    - plugin: lifecycle
+      method: run_started
+      failure_policy: warn
+  after_tool_call:
+    - plugin: lifecycle
+      method: tool_finished
+      failure_policy: warn
+  transform_tool_result:
+    - plugin: lifecycle
+      method: shorten_result
+      failure_policy: warn
+  on_run_error:
+    - plugin: lifecycle
+      method: run_failed
+      failure_policy: warn
+
+orchestrators:
+  concierge:
+    name: Concierge
+    description: Front desk. Decides whether a request is about support or accounts.
+    prompts:
+      orchestrator: prompts/concierge/orchestrator.md
+      system: prompts/concierge/system.md
+
+  support_router:
+    name: Support
+    description: Handles general questions and card problems.
+    prompts:
+      orchestrator: prompts/support_router/orchestrator.md
+      system: prompts/support_router/system.md
+
+  accounts_router:
+    name: Accounts
+    description: Handles balances and transaction history.
+    prompts:
+      orchestrator: prompts/accounts_router/orchestrator.md
+      system: prompts/accounts_router/system.md
+
+agents:
+  faq_agent:
+    name: FAQ
+    description: Answers general questions about hours, fees and branches.
+    prompts:
+      system: prompts/faq_agent/system.md
+    resolvers: [bank_name]
+    auto: true
+
+  card_agent:
+    name: Cards
+    description: Blocks lost or stolen cards and orders replacements.
+    prompts:
+      system: prompts/card_agent/system.md
+    resolvers: [customer_name]
+    tools: [block_card]
+
+  # auto: true runs tool calls without a human approval prompt. Set it only when
+  # every tool the agent can reach is safe unattended — these two only read.
+  # card_agent above changes something, so it deliberately does not.
+  balance_agent:
+    name: Balances
+    description: Reports current account balances.
+    prompts:
+      system: prompts/balance_agent/system.md
+    resolvers: [customer_name]
+    mcps: [bank_core]
+    auto: true
+
+  transactions_agent:
+    name: Transactions
+    description: Lists and explains recent transactions.
+    prompts:
+      system: prompts/transactions_agent/system.md
+    resolvers: [customer_name, today]
+    mcps: [bank_core]
+    auto: true
+
+# Indentation is the hierarchy: a node can only route to its own children.
+graph:
+  concierge:
+    support_router:
+      faq_agent:
+      card_agent:
+    accounts_router:
+      balance_agent:
+      transactions_agent:

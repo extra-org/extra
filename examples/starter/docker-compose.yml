@@ -1,0 +1,33 @@
+services:
+  mcp:
+    image: extra:local
+    entrypoint: ["python", "-m", "mcps.bank.server"]
+    volumes:
+      - .:/workspace
+    ports:
+      - "8090:8090"
+      - "8100:8100"
+
+  engine:
+    image: extra:local
+    profiles: ["engine"]
+    command: ["serve", "--config", "/workspace/${CONFIG:-agents.yaml}", "--host", "0.0.0.0", "--port", "8090"]
+    volumes:
+      - .:/workspace
+    env_file:
+      - .env
+    network_mode: "service:mcp"
+    depends_on:
+      - mcp
+
+  manager:
+    image: extra:local
+    profiles: ["ui"]
+    command: ["agent-manager", "--config", "/workspace/${CONFIG:-agents.yaml}", "--host", "0.0.0.0", "--port", "8100"]
+    volumes:
+      - .:/workspace
+    env_file:
+      - .env
+    network_mode: "service:mcp"
+    depends_on:
+      - mcp
