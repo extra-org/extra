@@ -69,7 +69,9 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
-  const [entries, setEntries] = useState<MessageEntry[]>([]);
+  const [entriesById, setEntriesById] = useState<Record<string, MessageEntry[]>>({});
+  const [activeId, setActiveId] = useState("");
+  const entries = entriesById[activeId] ?? [];
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsOpen, setThreadsOpen] = useState(false);
@@ -80,13 +82,29 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     setUsage(await conversation.loadUsage());
   }, [conversation]);
 
+  const putEntries = useCallback(
+    (cid: string, update: (prev: MessageEntry[]) => MessageEntry[]) =>
+      setEntriesById((prev) => ({ ...prev, [cid]: update(prev[cid] ?? []) })),
+    [],
+  );
+
+  const loadThread = useCallback(
+    async (cid: string) => {
+      const history = await conversation.loadHistory();
+      putEntries(cid, () => history.map(toEntry));
+    },
+    [conversation, putEntries],
+  );
+
   const loadHistory = useCallback(async () => {
     if (loaded) return;
     setLoaded(true);
-    const history = await conversation.loadHistory();
-    if (history.length) setEntries(history.map(toEntry));
+    const cid = conversation.peekId();
+    if (!cid) return;
+    setActiveId(cid);
+    await loadThread(cid);
     await refreshUsage();
-  }, [conversation, loaded, refreshUsage]);
+  }, [conversation, loaded, loadThread, refreshUsage]);
 
   useEffect(() => {
     if (inline) void loadHistory();
@@ -117,31 +135,34 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     async (conversationId: string) => {
       conversation.switchTo(conversationId);
       setThreadsOpen(false);
-      const history = await conversation.loadHistory();
-      setEntries(history.map(toEntry));
+      setActiveId(conversationId);
+      // ponytail: in-session map owns in-flight streams, so only cold-load a thread we haven't opened yet.
+      if (!(conversationId in entriesById)) await loadThread(conversationId);
       await refreshUsage();
       inputRef.current?.focus({ preventScroll: true });
     },
-    [conversation, refreshUsage],
+    [conversation, entriesById, loadThread, refreshUsage],
   );
 
   const startNewThread = useCallback(() => {
     conversation.startNew();
     setThreadsOpen(false);
-    setEntries([]);
+    setActiveId("");
     setUsage(null);
     inputRef.current?.focus({ preventScroll: true });
   }, [conversation]);
 
-  const replaceEntry = useCallback((id: string, entry: MessageEntry) => {
-    setEntries((prev) => prev.map((current) => (current.id === id ? entry : current)));
-  }, []);
+  const replaceEntry = useCallback(
+    (cid: string, id: string, entry: MessageEntry) =>
+      putEntries(cid, (prev) => prev.map((current) => (current.id === id ? entry : current))),
+    [putEntries],
+  );
 
   const sendWithoutStreaming = useCallback(
-    async (text: string, entryId: string) => {
+    async (cid: string, text: string, entryId: string) => {
       try {
         const answer = await conversation.send(text);
-        replaceEntry(entryId, {
+        replaceEntry(cid, entryId, {
           id: entryId,
           role: "ai",
           text: answer.answer,
@@ -150,7 +171,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
       } catch {
-        replaceEntry(entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
       }
     },
     [conversation, onAnswer, replaceEntry],
@@ -158,25 +179,27 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
 
   const submit = useCallback(
     async (text: string) => {
+      const cid = await conversation.ensureId();
+      setActiveId(cid);
       const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
-      setEntries((prev) => [...prev, { id: newId(), role: "user", text }, pending]);
+      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text }, pending]);
       setSending(true);
       try {
         let entry = pending;
         for await (const event of conversation.stream(text)) {
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(pending.id, entry);
+          replaceEntry(cid, pending.id, entry);
         }
-        replaceEntry(pending.id, { ...entry, typing: false });
+        replaceEntry(cid, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
       } catch {
-        await sendWithoutStreaming(text, pending.id);
+        await sendWithoutStreaming(cid, text, pending.id);
       } finally {
         setSending(false);
         void refreshUsage();
       }
     },
-    [conversation, onAnswer, refreshUsage, replaceEntry, sendWithoutStreaming],
+    [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming],
   );
 
   const toggle = () => void (open ? closeChat() : openChat());
@@ -310,14 +333,6 @@ function Launcher({
 function ChatMessage({ entry }: { entry: MessageEntry }) {
   const from = entry.role === "user" ? "user" : "assistant";
 
-  if (entry.typing) {
-    return (
-      <Message from={from} typing>
-        ...
-      </Message>
-    );
-  }
-
   if (entry.error) {
     return (
       <Message from={from}>
@@ -336,14 +351,32 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
     );
   }
 
+  const thinking = Boolean(entry.typing) && !entry.text.trim();
+
   return (
-    <Message from="assistant">
+    <Message from="assistant" typing={thinking}>
       <AgentActivity route={entry.route} tools={entry.tools} />
-      <MessageContent>
-        <MessageResponse>{entry.text}</MessageResponse>
-      </MessageContent>
-      {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+      {thinking ? (
+        <ThinkingDots />
+      ) : (
+        <>
+          <MessageContent>
+            <MessageResponse>{entry.text}</MessageResponse>
+          </MessageContent>
+          {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+        </>
+      )}
     </Message>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <span className="thinking" aria-hidden>
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+    </span>
   );
 }
 

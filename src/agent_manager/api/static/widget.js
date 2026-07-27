@@ -53027,20 +53027,19 @@ var TOOL_STATUS = {
 function reduceStreamEvent(entry, event) {
   switch (event.type) {
     case "answer_delta":
-      return { ...entry, text: entry.text + (event.content ?? ""), typing: false };
+      return { ...entry, text: entry.text + (event.content ?? "") };
     case "route":
-      return { ...entry, route: event.route ?? entry.route, typing: false };
+      return { ...entry, route: event.route ?? entry.route };
     case "tool_started":
     case "tool_succeeded":
     case "tool_failed":
-      return { ...entry, tools: upsertTool(entry.tools ?? [], toToolRecord(event)), typing: false };
+      return { ...entry, tools: upsertTool(entry.tools ?? [], toToolRecord(event)) };
     case "final":
       return {
         ...entry,
         text: event.content ?? entry.text,
         route: event.route ?? entry.route,
-        tools: event.used_tools ?? entry.tools,
-        typing: false
+        tools: event.used_tools ?? entry.tools
       };
     case "error":
       throw new Error(event.error || "stream failed");
@@ -53072,6 +53071,7 @@ function useConversation(client, endpoint, userId) {
     setStoredConversationId(endpoint, created);
     return created;
   }, [client, endpoint, userId]);
+  const peekId = (0, import_react9.useCallback)(() => getStoredConversationId(endpoint), [endpoint]);
   const ensureId = (0, import_react9.useCallback)(
     async () => getStoredConversationId(endpoint) ?? startConversation(),
     [endpoint, startConversation]
@@ -53131,8 +53131,18 @@ function useConversation(client, endpoint, userId) {
   );
   const startNew = (0, import_react9.useCallback)(() => removeStoredConversationId(endpoint), [endpoint]);
   return (0, import_react9.useMemo)(
-    () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),
-    [send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
+    () => ({
+      peekId,
+      ensureId,
+      send,
+      stream,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew
+    }),
+    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
   );
 }
 
@@ -53157,7 +53167,9 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
   const [open, setOpen] = (0, import_react10.useState)(inline);
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
   const [sending, setSending] = (0, import_react10.useState)(false);
-  const [entries, setEntries] = (0, import_react10.useState)([]);
+  const [entriesById, setEntriesById] = (0, import_react10.useState)({});
+  const [activeId, setActiveId] = (0, import_react10.useState)("");
+  const entries = entriesById[activeId] ?? [];
   const [usage, setUsage] = (0, import_react10.useState)(null);
   const [threads, setThreads] = (0, import_react10.useState)([]);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
@@ -53166,13 +53178,26 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
   const refreshUsage = (0, import_react10.useCallback)(async () => {
     setUsage(await conversation.loadUsage());
   }, [conversation]);
+  const putEntries = (0, import_react10.useCallback)(
+    (cid, update) => setEntriesById((prev) => ({ ...prev, [cid]: update(prev[cid] ?? []) })),
+    []
+  );
+  const loadThread = (0, import_react10.useCallback)(
+    async (cid) => {
+      const history = await conversation.loadHistory();
+      putEntries(cid, () => history.map(toEntry));
+    },
+    [conversation, putEntries]
+  );
   const loadHistory = (0, import_react10.useCallback)(async () => {
     if (loaded) return;
     setLoaded(true);
-    const history = await conversation.loadHistory();
-    if (history.length) setEntries(history.map(toEntry));
+    const cid = conversation.peekId();
+    if (!cid) return;
+    setActiveId(cid);
+    await loadThread(cid);
     await refreshUsage();
-  }, [conversation, loaded, refreshUsage]);
+  }, [conversation, loaded, loadThread, refreshUsage]);
   (0, import_react10.useEffect)(() => {
     if (inline) void loadHistory();
   }, [inline, loadHistory]);
@@ -53197,28 +53222,29 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
     async (conversationId) => {
       conversation.switchTo(conversationId);
       setThreadsOpen(false);
-      const history = await conversation.loadHistory();
-      setEntries(history.map(toEntry));
+      setActiveId(conversationId);
+      if (!(conversationId in entriesById)) await loadThread(conversationId);
       await refreshUsage();
       inputRef.current?.focus({ preventScroll: true });
     },
-    [conversation, refreshUsage]
+    [conversation, entriesById, loadThread, refreshUsage]
   );
   const startNewThread = (0, import_react10.useCallback)(() => {
     conversation.startNew();
     setThreadsOpen(false);
-    setEntries([]);
+    setActiveId("");
     setUsage(null);
     inputRef.current?.focus({ preventScroll: true });
   }, [conversation]);
-  const replaceEntry = (0, import_react10.useCallback)((id, entry) => {
-    setEntries((prev) => prev.map((current) => current.id === id ? entry : current));
-  }, []);
+  const replaceEntry = (0, import_react10.useCallback)(
+    (cid, id, entry) => putEntries(cid, (prev) => prev.map((current) => current.id === id ? entry : current)),
+    [putEntries]
+  );
   const sendWithoutStreaming = (0, import_react10.useCallback)(
-    async (text10, entryId) => {
+    async (cid, text10, entryId) => {
       try {
         const answer = await conversation.send(text10);
-        replaceEntry(entryId, {
+        replaceEntry(cid, entryId, {
           id: entryId,
           role: "ai",
           text: answer.answer,
@@ -53227,32 +53253,34 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
       } catch {
-        replaceEntry(entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
       }
     },
     [conversation, onAnswer, replaceEntry]
   );
   const submit = (0, import_react10.useCallback)(
     async (text10) => {
+      const cid = await conversation.ensureId();
+      setActiveId(cid);
       const pending = { id: newId(), role: "ai", text: "", typing: true };
-      setEntries((prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
+      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
       setSending(true);
       try {
         let entry = pending;
         for await (const event of conversation.stream(text10)) {
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(pending.id, entry);
+          replaceEntry(cid, pending.id, entry);
         }
-        replaceEntry(pending.id, { ...entry, typing: false });
+        replaceEntry(cid, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
       } catch {
-        await sendWithoutStreaming(text10, pending.id);
+        await sendWithoutStreaming(cid, text10, pending.id);
       } finally {
         setSending(false);
         void refreshUsage();
       }
     },
-    [conversation, onAnswer, refreshUsage, replaceEntry, sendWithoutStreaming]
+    [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming]
   );
   const toggle = () => void (open ? closeChat() : openChat());
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
@@ -53378,19 +53406,26 @@ function Launcher({
 }
 function ChatMessage({ entry }) {
   const from = entry.role === "user" ? "user" : "assistant";
-  if (entry.typing) {
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from, typing: true, children: "..." });
-  }
   if (entry.error) {
     return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from, children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-error", role: "alert", children: entry.text }) });
   }
   if (entry.role === "user") {
     return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from: "user", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: entry.text }) });
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "assistant", children: [
+  const thinking = Boolean(entry.typing) && !entry.text.trim();
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "assistant", typing: thinking, children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(AgentActivity, { route: entry.route, tools: entry.tools }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }),
-    entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
+    thinking ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ThinkingDots, {}) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }),
+      entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
+    ] })
+  ] });
+}
+function ThinkingDots() {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "thinking", "aria-hidden": true, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" })
   ] });
 }
 function MessageActions({ text: text10 }) {
@@ -53681,6 +53716,15 @@ function styles(config) {
       color: #b91c1c; border-radius: 8px; padding: 10px 12px; font-size: 13.5px;
       line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2;
       -webkit-box-orient: vertical; overflow: hidden; }
+    .thinking { display: inline-flex; gap: 4px; color: #a1a1aa; }
+    .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+      animation: aui-dot 1.4s ease-in-out infinite; }
+    .thinking-dot:nth-child(2) { animation-delay: .2s; }
+    .thinking-dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes aui-dot {
+      0%, 100% { transform: scale(.8); opacity: .5; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
     .composer { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px;
       padding: 12px 14px; border-top: 1px solid #f0f0f1; }
     .input-wrap { min-width: 0; display: flex; border-radius: 20px; background: #fff;
@@ -53750,6 +53794,7 @@ function styles(config) {
       .msg-action svg { animation: none; }
       .context-ring-value, .context-bar-fill, .context-popover { transition: none; }
       .thread-drawer { transition: none; }
+      .thinking-dot { animation: none; }
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;
