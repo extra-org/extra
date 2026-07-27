@@ -241,3 +241,24 @@ def test_create_accepts_stable_session_and_send_accepts_user(client: TestClient)
     sent = client.post("/conversations/sess-1/messages", json={"message": "hello", "user_id": "u1"})
 
     assert sent.status_code == 200
+
+
+def test_feedback_endpoint_records_and_returns_feedback(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    send_resp = client.post(f"/conversations/{cid}/messages", json={"message": "hello"}).json()
+    assert "message_id" in send_resp
+    msg_id = send_resp["message_id"]
+    assert msg_id is not None
+
+    # Submit feedback
+    fb_resp = client.post(
+        f"/conversations/{cid}/messages/{msg_id}/feedback",
+        json={"feedback": "thumbs_up"},
+    )
+    assert fb_resp.status_code == 200
+    assert fb_resp.json() == {"message_id": msg_id, "feedback": "thumbs_up"}
+
+    # Retrieve messages and verify feedback is included
+    history = client.get(f"/conversations/{cid}/messages").json()
+    assistant_msg = next(m for m in history if m["message_id"] == msg_id)
+    assert assistant_msg["feedback"] == "thumbs_up"

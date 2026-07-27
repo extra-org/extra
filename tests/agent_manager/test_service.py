@@ -130,3 +130,21 @@ async def test_concurrent_sessions_do_not_leak_history() -> None:
         "second private context",
         "answer:second private context",
     )
+
+
+async def test_record_feedback_updates_message() -> None:
+    service, _ = _service()
+    cid = await service.create()
+    await service.send(cid, "hello")
+
+    msgs = await service.history(cid)
+    assistant_msg = next(m for m in msgs if m.role == Role.ASSISTANT)
+    assert assistant_msg.message_id is not None
+
+    updated = await service.record_feedback(cid, assistant_msg.message_id, "thumbs_down")
+    assert updated.feedback == "thumbs_down"
+
+    history = await service.history(cid)
+    updated_in_history = next(m for m in history if m.message_id == assistant_msg.message_id)
+    assert updated_in_history.feedback == "thumbs_down"
+

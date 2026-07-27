@@ -190,6 +190,29 @@ async def test_different_run_ids_can_share_one_session(repo: Repository) -> None
     assert [m.run_id for m in messages] == ["run-1", "run-2"]
 
 
+async def test_update_message_feedback(repo: Repository) -> None:
+    await repo.create_session("sess-1")
+    msg = _message("sess-1", Role.ASSISTANT, "answer")
+    await repo.append_message(msg)
+
+    # Initially no feedback
+    msgs = await repo.list_messages("sess-1")
+    assert msgs[0].feedback is None
+
+    # Record positive feedback
+    updated = await repo.update_message_feedback("sess-1", msg.message_id, "thumbs_up")
+    assert updated is not None
+    assert updated.feedback == "thumbs_up"
+
+    msgs = await repo.list_messages("sess-1")
+    assert msgs[0].feedback == "thumbs_up"
+
+    # Reset feedback to None
+    updated_reset = await repo.update_message_feedback("sess-1", msg.message_id, None)
+    assert updated_reset is not None
+    assert updated_reset.feedback is None
+
+
 async def test_sql_schema_has_cold_and_snapshot_rows() -> None:
     engine = create_db_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:

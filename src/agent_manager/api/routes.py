@@ -17,6 +17,8 @@ from agent_manager.api.schemas import (
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
+    FeedbackRequest,
+    FeedbackResponse,
     MessageOut,
     SendMessageRequest,
     SendMessageResponse,
@@ -27,7 +29,9 @@ from agent_manager.application import (
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
+    MessageNotFound,
 )
+from agent_manager.domain import Role
 
 router = APIRouter()
 
@@ -62,7 +66,16 @@ async def list_messages(conversation_id: str, service: Service) -> list[MessageO
         msgs = await service.history(conversation_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
-    return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
+    return [
+        MessageOut(
+            message_id=m.message_id,
+            role=m.role,
+            content=m.content,
+            created_at=m.created_at,
+            feedback=m.feedback,
+        )
+        for m in msgs
+    ]
 
 
 @router.get("/conversations/{conversation_id}/usage", response_model=ContextUsageResponse)
@@ -85,6 +98,8 @@ async def send_message(
 ) -> SendMessageResponse:
     try:
         result = await service.send(conversation_id, body.message, user_id=body.user_id)
+        msgs = await service.history(conversation_id)
+        last_msg = msgs[-1] if msgs and msgs[-1].role == Role.ASSISTANT else None
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except ConversationTokenBudgetExceeded:
@@ -95,7 +110,27 @@ async def send_message(
         answer=result.answer,
         visited=list(result.visited),
         used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
+        message_id=last_msg.message_id if last_msg else None,
     )
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/feedback",
+    response_model=FeedbackResponse,
+)
+async def record_feedback(
+    conversation_id: str,
+    message_id: str,
+    body: FeedbackRequest,
+    service: Service,
+) -> FeedbackResponse:
+    try:
+        msg = await service.record_feedback(conversation_id, message_id, body.feedback)
+    except ConversationNotFound as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except MessageNotFound as exc:
+        raise HTTPException(status_code=404, detail="message not found") from exc
+    return FeedbackResponse(message_id=msg.message_id, feedback=msg.feedback)
 
 
 def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
@@ -114,6 +149,7 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
             if event.used_tools
             else None
         ),
+        message_id=event.message_id,
     )
 
 

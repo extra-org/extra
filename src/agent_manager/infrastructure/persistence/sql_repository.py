@@ -190,6 +190,23 @@ class SqlRepository(Repository):
             assert snapshot is not None
             return snapshot
 
+    async def update_message_feedback(
+        self, session_id: str, message_id: str, feedback: str | None
+    ) -> ConversationMessage | None:
+        async with self._sessions() as session, session.begin():
+            stmt = select(ConversationMessageRow).where(
+                ConversationMessageRow.session_id == session_id,
+                ConversationMessageRow.message_id == message_id,
+            )
+            result = await session.exec(stmt)
+            row = result.first()
+            if row is None:
+                return None
+            row.feedback = feedback
+            await session.flush()
+            await self._rebuild_snapshot_in_session(session, session_id, snapshot_ttl_seconds=None)
+            return _message(row)
+
     async def list_conversation_messages(
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:
@@ -200,7 +217,14 @@ class SqlRepository(Repository):
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
         rows = await self.list_conversation_messages(conversation_id, limit)
         return [
-            Message(role=row.role, content=row.content, created_at=row.created_at) for row in rows
+            Message(
+                role=row.role,
+                content=row.content,
+                created_at=row.created_at,
+                message_id=row.message_id,
+                feedback=row.feedback,
+            )
+            for row in rows
         ]
 
     async def get_snapshot(self, session_id: str) -> ConversationSnapshot | None:
@@ -356,6 +380,7 @@ def _message_row(message: ConversationMessage) -> ConversationMessageRow:
         status=message.status,
         error_type=message.error_type,
         metadata_json=dict(message.metadata),
+        feedback=message.feedback,
         created_at=message.created_at,
     )
 
@@ -382,6 +407,7 @@ def _message(row: ConversationMessageRow) -> ConversationMessage:
         status=row.status,
         error_type=row.error_type,
         metadata=dict(row.metadata_json or {}),
+        feedback=row.feedback,
         created_at=_utc(row.created_at) or row.created_at,
     )
 
@@ -398,6 +424,7 @@ def _message_json(row: ConversationMessageRow) -> dict[str, Any]:
         "tool_name": row.tool_name,
         "provider": row.provider,
         "status": row.status,
+        "feedback": row.feedback,
         "created_at": (_utc(row.created_at) or row.created_at).isoformat(),
         "metadata": dict(row.metadata_json or {}),
     }

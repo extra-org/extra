@@ -1,4 +1,12 @@
-import { CheckCircleIcon, CircleIcon, SendIcon, WrenchIcon, XCircleIcon } from "lucide-react";
+import {
+  CheckCircleIcon,
+  CircleIcon,
+  SendIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
+  WrenchIcon,
+  XCircleIcon,
+} from "lucide-react";
 import type {
   ComponentProps,
   FormEvent,
@@ -70,6 +78,37 @@ export const MessageResponse = memo(function MessageResponse({
 }: MessageResponseProps) {
   return <Streamdown className={cn("message-response", className)} {...props} />;
 });
+
+export function MessageFeedback({
+  feedback,
+  onFeedback,
+}: {
+  feedback?: "thumbs_up" | "thumbs_down" | null;
+  onFeedback: (nextFeedback: "thumbs_up" | "thumbs_down" | null) => void;
+}) {
+  return (
+    <div className="feedback-actions" role="group" aria-label="Was this response helpful?">
+      <button
+        aria-label="Thumbs up"
+        aria-pressed={feedback === "thumbs_up"}
+        className={cn("feedback-btn", feedback === "thumbs_up" && "active")}
+        onClick={() => onFeedback(feedback === "thumbs_up" ? null : "thumbs_up")}
+        type="button"
+      >
+        <ThumbsUpIcon aria-hidden="true" />
+      </button>
+      <button
+        aria-label="Thumbs down"
+        aria-pressed={feedback === "thumbs_down"}
+        className={cn("feedback-btn", feedback === "thumbs_down" && "active")}
+        onClick={() => onFeedback(feedback === "thumbs_down" ? null : "thumbs_down")}
+        type="button"
+      >
+        <ThumbsDownIcon aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
 
 export interface PromptInputMessage {
   text: string;

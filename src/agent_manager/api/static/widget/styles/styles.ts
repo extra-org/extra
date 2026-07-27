@@ -111,7 +111,7 @@ export function styles(config: AgentChatConfig): string {
     .msg code { background: #f4f4f5; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
     .msg pre { background: #f4f4f5; border-radius: 10px; padding: 10px 12px; overflow-x: auto; margin: 0; }
     .msg pre code { background: none; padding: 0; white-space: pre-wrap; }
-    .msg-actions { display: flex; gap: 4px; margin-top: 6px;
+    .msg-actions { display: flex; align-items: center; gap: 4px; margin-top: 6px;
       opacity: 0; transition: opacity .15s ease; }
     .msg.ai:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
     .msg-action { display: inline-flex; align-items: center; justify-content: center;
@@ -119,6 +119,13 @@ export function styles(config: AgentChatConfig): string {
       color: #71717a; cursor: pointer; transition: background .12s, color .12s; }
     .msg-action:hover { background: #f4f4f5; color: #18181b; }
     .msg-action svg { width: 15px; height: 15px; animation: aui-icon-in .15s ease; }
+    .feedback-actions { display: flex; align-items: center; gap: 2px; }
+    .feedback-btn { background: transparent; border: 0; color: #a1a1aa; cursor: pointer;
+      padding: 3px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+      transition: color .12s, background .12s; }
+    .feedback-btn:hover { color: #52525b; background: #f4f4f5; }
+    .feedback-btn.active { color: ${config.color}; background: #f4f4f5; }
+    .feedback-btn svg { width: 14px; height: 14px; }
     @keyframes aui-icon-in { from { opacity: 0; transform: scale(.75); } }
     .tool-list { margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
     .agent-meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; color: #71717a;

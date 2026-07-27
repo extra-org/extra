@@ -30,9 +30,20 @@ class ConversationSummary(BaseModel):
 
 
 class MessageOut(BaseModel):
+    message_id: str | None = None
     role: Role
     content: str
     created_at: datetime
+    feedback: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    feedback: str | None = None
+
+
+class FeedbackResponse(BaseModel):
+    message_id: str
+    feedback: str | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -53,6 +64,7 @@ class SendMessageResponse(BaseModel):
     answer: str
     visited: list[str]
     used_tools: list[ToolRecord]
+    message_id: str | None = None
 
 
 class ContextUsageResponse(BaseModel):
@@ -73,3 +85,4 @@ class StreamEventOut(BaseModel):
     error: str | None = None
     system_name: str | None = None
     used_tools: list[ToolRecord] | None = None
+    message_id: str | None = None

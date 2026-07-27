@@ -25,6 +25,8 @@ class Message:
     role: Role
     content: str
     created_at: datetime
+    message_id: str | None = None
+    feedback: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,7 @@ class ConversationMessage:
     status: str = "succeeded"
     error_type: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    feedback: str | None = None
 
 
 @dataclass(frozen=True)

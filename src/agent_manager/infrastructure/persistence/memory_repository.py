@@ -152,6 +152,43 @@ class MemoryRepository(Repository):
             )
         )
 
+    async def update_message_feedback(
+        self, session_id: str, message_id: str, feedback: str | None
+    ) -> ConversationMessage | None:
+        msgs = self._messages.get(session_id)
+        if not msgs:
+            return None
+        for i, msg in enumerate(msgs):
+            if msg.message_id == message_id:
+                updated = ConversationMessage(
+                    message_id=msg.message_id,
+                    session_id=msg.session_id,
+                    role=msg.role,
+                    content=msg.content,
+                    created_at=msg.created_at,
+                    run_id=msg.run_id,
+                    user_id=msg.user_id,
+                    node_id=msg.node_id,
+                    agent_id=msg.agent_id,
+                    parent_message_id=msg.parent_message_id,
+                    content_type=msg.content_type,
+                    tool_name=msg.tool_name,
+                    provider=msg.provider,
+                    model_provider=msg.model_provider,
+                    model_name=msg.model_name,
+                    input_tokens=msg.input_tokens,
+                    output_tokens=msg.output_tokens,
+                    latency_ms=msg.latency_ms,
+                    status=msg.status,
+                    error_type=msg.error_type,
+                    metadata=msg.metadata,
+                    feedback=feedback,
+                )
+                msgs[i] = updated
+                self._snapshots[session_id] = self._build_snapshot(session_id, None)
+                return updated
+        return None
+
     async def list_conversation_messages(
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:
@@ -160,7 +197,16 @@ class MemoryRepository(Repository):
 
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
         msgs = await self.list_conversation_messages(conversation_id, limit)
-        return [Message(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
+        return [
+            Message(
+                role=m.role,
+                content=m.content,
+                created_at=m.created_at,
+                message_id=m.message_id,
+                feedback=m.feedback,
+            )
+            for m in msgs
+        ]
 
     async def get_snapshot(self, session_id: str) -> ConversationSnapshot | None:
         return self._snapshots.get(session_id)
@@ -228,6 +274,7 @@ class MemoryRepository(Repository):
                     "role": msg.role.value,
                     "content": msg.content,
                     "content_type": msg.content_type,
+                    "feedback": msg.feedback,
                     "created_at": msg.created_at.isoformat(),
                     "metadata": deepcopy(msg.metadata),
                 }

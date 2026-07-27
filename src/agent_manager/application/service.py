@@ -32,6 +32,10 @@ class ConversationNotFound(Exception):
     """Raised when an operation targets a conversation id that does not exist."""
 
 
+class MessageNotFound(Exception):
+    """Raised when an operation targets a message id that does not exist in a session."""
+
+
 class ConversationTokenBudgetExceeded(Exception):
     """Raised when a conversation's lifetime token budget is exhausted."""
 
@@ -163,28 +167,30 @@ class ConversationService:
         self,
         turn: PreparedConversationTurn,
         result: RunResult,
-    ) -> None:
+    ) -> ConversationMessage:
         """Persist the final assistant response after any approval resumes finish."""
         if result.pending_approval is not None:
             raise ValueError("cannot complete a conversation turn while approval is pending")
+        msg = ConversationMessage(
+            message_id=uuid.uuid4().hex,
+            session_id=turn.session_id,
+            run_id=turn.run_id,
+            user_id=turn.user_id,
+            role=Role.ASSISTANT,
+            content=result.answer,
+            created_at=datetime.now(UTC),
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            metadata={
+                "visited": list(result.visited),
+                "used_tools": [dataclasses.asdict(tool) for tool in result.used_tools],
+            },
+        )
         await self._repository.append_message(
-            ConversationMessage(
-                message_id=uuid.uuid4().hex,
-                session_id=turn.session_id,
-                run_id=turn.run_id,
-                user_id=turn.user_id,
-                role=Role.ASSISTANT,
-                content=result.answer,
-                created_at=datetime.now(UTC),
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                metadata={
-                    "visited": list(result.visited),
-                    "used_tools": [dataclasses.asdict(tool) for tool in result.used_tools],
-                },
-            ),
+            msg,
             snapshot_ttl_seconds=self._snapshot_ttl_seconds,
         )
+        return msg
 
     async def stream(
         self, conversation_id: str, text: str, *, user_id: str | None = None
@@ -210,24 +216,38 @@ class ConversationService:
                 raise
 
         if final is not None:
+            msg = ConversationMessage(
+                message_id=uuid.uuid4().hex,
+                session_id=turn.session_id,
+                run_id=turn.run_id,
+                user_id=turn.user_id,
+                role=Role.ASSISTANT,
+                content=final.content or "",
+                created_at=datetime.now(UTC),
+                input_tokens=final.input_tokens,
+                output_tokens=final.output_tokens,
+                metadata={
+                    "visited": list(final.route or ()),
+                    "used_tools": [dataclasses.asdict(tool) for tool in final.used_tools],
+                },
+            )
             await self._repository.append_message(
-                ConversationMessage(
-                    message_id=uuid.uuid4().hex,
-                    session_id=turn.session_id,
-                    run_id=turn.run_id,
-                    user_id=turn.user_id,
-                    role=Role.ASSISTANT,
-                    content=final.content or "",
-                    created_at=datetime.now(UTC),
-                    input_tokens=final.input_tokens,
-                    output_tokens=final.output_tokens,
-                    metadata={
-                        "visited": list(final.route or ()),
-                        "used_tools": [dataclasses.asdict(tool) for tool in final.used_tools],
-                    },
-                ),
+                msg,
                 snapshot_ttl_seconds=self._snapshot_ttl_seconds,
             )
+            yield dataclasses.replace(final, message_id=msg.message_id)
+
+    async def record_feedback(
+        self, conversation_id: str, message_id: str, feedback: str | None
+    ) -> ConversationMessage:
+        """Record user feedback ('thumbs_up', 'thumbs_down', or None) on a message."""
+        await self._require(conversation_id)
+        msg = await self._repository.update_message_feedback(conversation_id, message_id, feedback)
+        if msg is None:
+            raise MessageNotFound(
+                f"message '{message_id}' not found in conversation '{conversation_id}'"
+            )
+        return msg
 
     async def _require(self, conversation_id: str) -> None:
         if not await self._repository.conversation_exists(conversation_id):

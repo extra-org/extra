@@ -59,3 +59,4 @@ class RunStreamEvent:
     approval_id: str | None = None
     agent_id: str | None = None
     description: str | None = None
+    message_id: str | None = None
