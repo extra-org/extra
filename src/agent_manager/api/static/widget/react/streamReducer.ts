@@ -9,20 +9,19 @@ const TOOL_STATUS: Record<string, string> = {
 export function reduceStreamEvent(entry: MessageEntry, event: StreamEvent): MessageEntry {
   switch (event.type) {
     case "answer_delta":
-      return { ...entry, text: entry.text + (event.content ?? ""), typing: false };
+      return { ...entry, text: entry.text + (event.content ?? "") };
     case "route":
-      return { ...entry, route: event.route ?? entry.route, typing: false };
+      return { ...entry, route: event.route ?? entry.route };
     case "tool_started":
     case "tool_succeeded":
     case "tool_failed":
-      return { ...entry, tools: upsertTool(entry.tools ?? [], toToolRecord(event)), typing: false };
+      return { ...entry, tools: upsertTool(entry.tools ?? [], toToolRecord(event)) };
     case "final":
       return {
         ...entry,
         text: event.content ?? entry.text,
         route: event.route ?? entry.route,
         tools: event.used_tools ?? entry.tools,
-        typing: false,
       };
     case "error":
       throw new Error(event.error || "stream failed");

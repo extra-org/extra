@@ -266,6 +266,17 @@ async function shadowClick(page: Page, selector: string, index = 0) {
   }, selector);
 }
 
+async function shadowClickText(page: Page, selector: string, text: string, index = 0) {
+  const handle = await widget(page, index);
+  await handle.evaluate(
+    (element, { selector, text }) => {
+      const targets = Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>(selector) ?? []);
+      targets.find((node) => node.textContent?.includes(text))?.click();
+    },
+    { selector, text },
+  );
+}
+
 async function shadowFocus(page: Page, selector: string, index = 0) {
   const handle = await widget(page, index);
   await handle.evaluate((element, selector) => {
@@ -555,6 +566,57 @@ test("a stored conversation owned by another caller is replaced, not retried for
     .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
     .toBe("conv-fresh");
   expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
+});
+
+test("thinking dots persist when switching away from an in-flight thread and back", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "done", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Current chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  release();
+  await expect.poll(() => shadowText(page, ".messages")).toContain("done");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
 });
 
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
