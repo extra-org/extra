@@ -31,7 +31,6 @@ from agent_manager.application import (
     ConversationTokenBudgetExceeded,
     MessageNotFound,
 )
-from agent_manager.domain import Role
 
 router = APIRouter()
 
@@ -97,9 +96,7 @@ async def send_message(
     conversation_id: str, body: SendMessageRequest, service: Service
 ) -> SendMessageResponse:
     try:
-        result = await service.send(conversation_id, body.message, user_id=body.user_id)
-        msgs = await service.history(conversation_id)
-        last_msg = msgs[-1] if msgs and msgs[-1].role == Role.ASSISTANT else None
+        result, msg = await service.send(conversation_id, body.message, user_id=body.user_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except ConversationTokenBudgetExceeded:
@@ -110,7 +107,7 @@ async def send_message(
         answer=result.answer,
         visited=list(result.visited),
         used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
-        message_id=last_msg.message_id if last_msg else None,
+        message_id=msg.message_id if msg else None,
     )
 
 

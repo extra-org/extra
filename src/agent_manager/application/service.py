@@ -100,7 +100,7 @@ class ConversationService:
 
     async def send(
         self, conversation_id: str, text: str, *, user_id: str | None = None
-    ) -> RunResult:
+    ) -> tuple[RunResult, ConversationMessage | None]:
         turn = await self.prepare_turn(conversation_id, text, user_id=user_id)
         result = await self._engine.run(
             turn.message,
@@ -111,9 +111,10 @@ class ConversationService:
                 user_id=turn.user_id,
             ),
         )
+        msg: ConversationMessage | None = None
         if result.pending_approval is None:
-            await self.complete_turn(turn, result)
-        return result
+            msg = await self.complete_turn(turn, result)
+        return result, msg
 
     async def prepare_turn(
         self,
