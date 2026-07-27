@@ -17,3 +17,13 @@ export function setStoredConversationId(
 export function removeStoredConversationId(endpoint: string, storage: Storage = localStorage): void {
   storage.removeItem(conversationStorageKey(endpoint));
 }
+
+export function getOrCreateUserId(endpoint: string, storage: Storage = localStorage): string {
+  const key = `agent-chat:user:${endpoint}`;
+  let id = storage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    storage.setItem(key, id);
+  }
+  return id;
+}

@@ -1,13 +1,23 @@
-import { BotIcon, CheckIcon, ChevronDownIcon, CopyIcon, XIcon } from "lucide-react";
-import { type Ref, useCallback, useEffect, useRef, useState } from "react";
+import {
+  BotIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  HistoryIcon,
+  SquarePenIcon,
+  XIcon,
+} from "lucide-react";
+import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentChatClient } from "../api/AgentChatClient";
+import { getOrCreateUserId, getStoredConversationId } from "../storage/conversationStorage";
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
   ChatMessage,
   ContextUsage,
   MessageEntry,
+  ThreadSummary,
   ToolRecord,
 } from "../types";
 import {
@@ -51,12 +61,18 @@ export interface AgentChatAppProps {
 
 export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: AgentChatAppProps) {
   const inline = config.mode === "inline";
-  const conversation = useConversation(client, config.endpoint);
+  const userId = useMemo(
+    () => config.user || getOrCreateUserId(config.endpoint),
+    [config.user, config.endpoint],
+  );
+  const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
   const [entries, setEntries] = useState<MessageEntry[]>([]);
   const [usage, setUsage] = useState<ContextUsage | null>(null);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -91,6 +107,31 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     setOpen(false);
     launcherRef.current?.focus({ preventScroll: true });
   }, [inline]);
+
+  const openThreads = useCallback(async () => {
+    setThreads(await conversation.listThreads());
+    setThreadsOpen(true);
+  }, [conversation]);
+
+  const openThread = useCallback(
+    async (conversationId: string) => {
+      conversation.switchTo(conversationId);
+      setThreadsOpen(false);
+      const history = await conversation.loadHistory();
+      setEntries(history.map(toEntry));
+      await refreshUsage();
+      inputRef.current?.focus({ preventScroll: true });
+    },
+    [conversation, refreshUsage],
+  );
+
+  const startNewThread = useCallback(() => {
+    conversation.startNew();
+    setThreadsOpen(false);
+    setEntries([]);
+    setUsage(null);
+    inputRef.current?.focus({ preventScroll: true });
+  }, [conversation]);
 
   const replaceEntry = useCallback((id: string, entry: MessageEntry) => {
     setEntries((prev) => prev.map((current) => (current.id === id ? entry : current)));
@@ -164,10 +205,26 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         role={inline ? "region" : "dialog"}
       >
         <header className="header">
+          <button
+            aria-label="Conversations"
+            className="header-btn"
+            onClick={() => void openThreads()}
+            type="button"
+          >
+            <HistoryIcon aria-hidden />
+          </button>
           <span className="dot" style={avatarStyle(config.avatar)} />
           <span className="title" id={titleId}>
             {config.title}
           </span>
+          <button
+            aria-label="New chat"
+            className="header-btn"
+            onClick={startNewThread}
+            type="button"
+          >
+            <SquarePenIcon aria-hidden />
+          </button>
           {!inline ? (
             <button aria-label="Close chat" className="close" onClick={closeChat} type="button">
               <XIcon aria-hidden />
@@ -176,6 +233,14 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         </header>
 
         <div className="body">
+          <ThreadDrawer
+            open={threadsOpen}
+            threads={threads}
+            activeId={getStoredConversationId(config.endpoint)}
+            onSelect={openThread}
+            onNew={startNewThread}
+            onClose={() => setThreadsOpen(false)}
+          />
           <Conversation>
             <ConversationContent>
               {entries.length === 0 ? (
@@ -344,6 +409,51 @@ function Welcome({ title }: { title: string }) {
         <BotIcon aria-hidden />
       </span>
       <p className="welcome-title">{title}</p>
+    </div>
+  );
+}
+
+function ThreadDrawer({
+  open,
+  threads,
+  activeId,
+  onSelect,
+  onNew,
+  onClose,
+}: {
+  open: boolean;
+  threads: ThreadSummary[];
+  activeId: string | null;
+  onSelect: (conversationId: string) => void;
+  onNew: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className={`thread-drawer${open ? " open" : ""}`} inert={!open}>
+      <div className="thread-drawer-head">
+        <span>Chats</span>
+        <button aria-label="Close conversations" className="header-btn" onClick={onClose} type="button">
+          <XIcon aria-hidden />
+        </button>
+      </div>
+      <button className="thread-new" onClick={onNew} type="button">
+        <SquarePenIcon aria-hidden />
+        New chat
+      </button>
+      <div className="thread-list">
+        {threads.map((thread) => (
+          <button
+            key={thread.conversation_id}
+            className={`thread-item${thread.conversation_id === activeId ? " active" : ""}`}
+            aria-current={thread.conversation_id === activeId}
+            onClick={() => onSelect(thread.conversation_id)}
+            type="button"
+          >
+            {thread.title || "New chat"}
+          </button>
+        ))}
+        {threads.length === 0 ? <p className="thread-empty">No conversations yet</p> : null}
+      </div>
     </div>
   );
 }

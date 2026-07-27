@@ -123,6 +123,27 @@ class SqlRepository(Repository):
             row = await session.get(ConversationSessionRow, session_id)
         return _session(row) if row else None
 
+    async def list_sessions(
+        self, user_id: str, *, limit: int = 50
+    ) -> list[ConversationSession]:
+        stmt = (
+            select(ConversationSessionRow)
+            .where(ConversationSessionRow.user_id == user_id)
+            .order_by(col(ConversationSessionRow.last_message_at).desc())
+            .limit(limit)
+        )
+        async with self._sessions() as session:
+            rows = (await session.exec(stmt)).all()
+        return [_session(row) for row in rows]
+
+    async def rename_session(self, session_id: str, title: str) -> None:
+        async with self._sessions() as session:
+            row = await session.get(ConversationSessionRow, session_id)
+            if row is not None:
+                row.title = title
+                session.add(row)
+                await session.commit()
+
     # `create_conversation`/`add_message` are not overridden here: the
     # `Repository` base class already provides them as thin aliases over
     # `create_session`/`append_message` (see domain/repository.py), which is

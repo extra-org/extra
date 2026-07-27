@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,6 +18,8 @@ from agent_manager.domain import (
     Role,
     User,
 )
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 class MemoryRepository(Repository):
@@ -93,6 +96,18 @@ class MemoryRepository(Repository):
 
     async def get_session(self, session_id: str) -> ConversationSession | None:
         return self._sessions.get(session_id)
+
+    async def list_sessions(
+        self, user_id: str, *, limit: int = 50
+    ) -> list[ConversationSession]:
+        sessions = [s for s in self._sessions.values() if s.user_id == user_id]
+        sessions.sort(key=lambda s: s.last_message_at or s.created_at or _EPOCH, reverse=True)
+        return sessions[:limit]
+
+    async def rename_session(self, session_id: str, title: str) -> None:
+        session = self._sessions.get(session_id)
+        if session is not None:
+            self._sessions[session_id] = replace(session, title=title)
 
     async def create_conversation(self) -> str:
         return (await self.create_session()).session_id

@@ -52060,7 +52060,8 @@ var DEFAULT_CONFIG = {
   greeting: "",
   position: "bottom-right",
   avatar: "",
-  mode: "floating"
+  mode: "floating",
+  user: ""
 };
 var HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function normalizeEndpoint(value) {
@@ -52084,7 +52085,8 @@ function parseConfig(element7, scriptOrigin) {
     greeting: element7.getAttribute("greeting") || DEFAULT_CONFIG.greeting,
     position: safePosition(element7.getAttribute("position")),
     avatar: element7.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
-    mode: safeMode(element7.getAttribute("mode"))
+    mode: safeMode(element7.getAttribute("mode")),
+    user: element7.getAttribute("user") || DEFAULT_CONFIG.user
   };
 }
 function applyConfigAttributes(element7, config) {
@@ -52110,13 +52112,31 @@ var AgentChatClient = class {
   constructor(endpoint) {
     this.endpoint = endpoint;
   }
-  async createConversation() {
-    const response = await fetch(`${this.endpoint}/conversations`, { method: "POST" });
+  async createConversation(userId) {
+    const response = await fetch(`${this.endpoint}/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId })
+    });
     if (!response.ok) {
       throw new AgentChatHttpError(response.status);
     }
     const data = await response.json();
     return String(data.conversation_id);
+  }
+  async listConversations(userId) {
+    const url = `${this.endpoint}/conversations?user_id=${encodeURIComponent(userId)}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new AgentChatHttpError(response.status);
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) return [];
+    return data.map((thread) => ({
+      conversation_id: String(thread.conversation_id),
+      title: thread.title ?? null,
+      last_message_at: thread.last_message_at ?? null
+    }));
   }
   async getMessages(conversationId) {
     const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`);
@@ -52346,8 +52366,16 @@ var __iconNode7 = [
 ];
 var Copy = createLucideIcon("copy", __iconNode7);
 
-// node_modules/lucide-react/dist/esm/icons/send.mjs
+// node_modules/lucide-react/dist/esm/icons/history.mjs
 var __iconNode8 = [
+  ["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", key: "1357e3" }],
+  ["path", { d: "M3 3v5h5", key: "1xhq8a" }],
+  ["path", { d: "M12 7v5l4 2", key: "1fdv2h" }]
+];
+var History = createLucideIcon("history", __iconNode8);
+
+// node_modules/lucide-react/dist/esm/icons/send.mjs
+var __iconNode9 = [
   [
     "path",
     {
@@ -52357,10 +52385,23 @@ var __iconNode8 = [
   ],
   ["path", { d: "m21.854 2.147-10.94 10.939", key: "12cjpa" }]
 ];
-var Send = createLucideIcon("send", __iconNode8);
+var Send = createLucideIcon("send", __iconNode9);
+
+// node_modules/lucide-react/dist/esm/icons/square-pen.mjs
+var __iconNode10 = [
+  ["path", { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7", key: "1m0v6g" }],
+  [
+    "path",
+    {
+      d: "M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z",
+      key: "ohrbg2"
+    }
+  ]
+];
+var SquarePen = createLucideIcon("square-pen", __iconNode10);
 
 // node_modules/lucide-react/dist/esm/icons/wrench.mjs
-var __iconNode9 = [
+var __iconNode11 = [
   [
     "path",
     {
@@ -52369,17 +52410,40 @@ var __iconNode9 = [
     }
   ]
 ];
-var Wrench = createLucideIcon("wrench", __iconNode9);
+var Wrench = createLucideIcon("wrench", __iconNode11);
 
 // node_modules/lucide-react/dist/esm/icons/x.mjs
-var __iconNode10 = [
+var __iconNode12 = [
   ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
   ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
 ];
-var X = createLucideIcon("x", __iconNode10);
+var X = createLucideIcon("x", __iconNode12);
 
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_react10 = __toESM(require_react(), 1);
+
+// src/agent_manager/api/static/widget/storage/conversationStorage.ts
+function conversationStorageKey(endpoint) {
+  return `agent-chat:${endpoint}`;
+}
+function getStoredConversationId(endpoint, storage = localStorage) {
+  return storage.getItem(conversationStorageKey(endpoint));
+}
+function setStoredConversationId(endpoint, conversationId, storage = localStorage) {
+  storage.setItem(conversationStorageKey(endpoint), conversationId);
+}
+function removeStoredConversationId(endpoint, storage = localStorage) {
+  storage.removeItem(conversationStorageKey(endpoint));
+}
+function getOrCreateUserId(endpoint, storage = localStorage) {
+  const key = `agent-chat:user:${endpoint}`;
+  let id = storage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    storage.setItem(key, id);
+  }
+  return id;
+}
 
 // src/agent_manager/api/static/widget/react/shadcnAiElements.tsx
 var import_react8 = __toESM(require_react(), 1);
@@ -53001,29 +53065,13 @@ function upsertTool(tools, next2) {
 
 // src/agent_manager/api/static/widget/react/useConversation.ts
 var import_react9 = __toESM(require_react(), 1);
-
-// src/agent_manager/api/static/widget/storage/conversationStorage.ts
-function conversationStorageKey(endpoint) {
-  return `agent-chat:${endpoint}`;
-}
-function getStoredConversationId(endpoint, storage = localStorage) {
-  return storage.getItem(conversationStorageKey(endpoint));
-}
-function setStoredConversationId(endpoint, conversationId, storage = localStorage) {
-  storage.setItem(conversationStorageKey(endpoint), conversationId);
-}
-function removeStoredConversationId(endpoint, storage = localStorage) {
-  storage.removeItem(conversationStorageKey(endpoint));
-}
-
-// src/agent_manager/api/static/widget/react/useConversation.ts
 var isMissingConversation = (error) => error instanceof AgentChatHttpError && error.status === 404;
-function useConversation(client, endpoint) {
+function useConversation(client, endpoint, userId) {
   const startConversation = (0, import_react9.useCallback)(async () => {
-    const created = await client.createConversation();
+    const created = await client.createConversation(userId);
     setStoredConversationId(endpoint, created);
     return created;
-  }, [client, endpoint]);
+  }, [client, endpoint, userId]);
   const ensureId = (0, import_react9.useCallback)(
     async () => getStoredConversationId(endpoint) ?? startConversation(),
     [endpoint, startConversation]
@@ -53073,9 +53121,18 @@ function useConversation(client, endpoint) {
       return null;
     }
   }, [client, endpoint]);
+  const listThreads = (0, import_react9.useCallback)(
+    () => client.listConversations(userId).catch(() => []),
+    [client, userId]
+  );
+  const switchTo = (0, import_react9.useCallback)(
+    (conversationId) => setStoredConversationId(endpoint, conversationId),
+    [endpoint]
+  );
+  const startNew = (0, import_react9.useCallback)(() => removeStoredConversationId(endpoint), [endpoint]);
   return (0, import_react9.useMemo)(
-    () => ({ send, stream, loadHistory, loadUsage }),
-    [send, stream, loadHistory, loadUsage]
+    () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),
+    [send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
   );
 }
 
@@ -53092,12 +53149,18 @@ var toEntry = (message) => ({
 });
 function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
   const inline = config.mode === "inline";
-  const conversation = useConversation(client, config.endpoint);
+  const userId = (0, import_react10.useMemo)(
+    () => config.user || getOrCreateUserId(config.endpoint),
+    [config.user, config.endpoint]
+  );
+  const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = (0, import_react10.useState)(inline);
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
   const [sending, setSending] = (0, import_react10.useState)(false);
   const [entries, setEntries] = (0, import_react10.useState)([]);
   const [usage, setUsage] = (0, import_react10.useState)(null);
+  const [threads, setThreads] = (0, import_react10.useState)([]);
+  const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
   const refreshUsage = (0, import_react10.useCallback)(async () => {
@@ -53126,6 +53189,28 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
     setOpen(false);
     launcherRef.current?.focus({ preventScroll: true });
   }, [inline]);
+  const openThreads = (0, import_react10.useCallback)(async () => {
+    setThreads(await conversation.listThreads());
+    setThreadsOpen(true);
+  }, [conversation]);
+  const openThread = (0, import_react10.useCallback)(
+    async (conversationId) => {
+      conversation.switchTo(conversationId);
+      setThreadsOpen(false);
+      const history = await conversation.loadHistory();
+      setEntries(history.map(toEntry));
+      await refreshUsage();
+      inputRef.current?.focus({ preventScroll: true });
+    },
+    [conversation, refreshUsage]
+  );
+  const startNewThread = (0, import_react10.useCallback)(() => {
+    conversation.startNew();
+    setThreadsOpen(false);
+    setEntries([]);
+    setUsage(null);
+    inputRef.current?.focus({ preventScroll: true });
+  }, [conversation]);
   const replaceEntry = (0, import_react10.useCallback)((id, entry) => {
     setEntries((prev) => prev.map((current) => current.id === id ? entry : current));
   }, []);
@@ -53194,11 +53279,42 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
             role: inline ? "region" : "dialog",
             children: [
               /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("header", { className: "header", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                  "button",
+                  {
+                    "aria-label": "Conversations",
+                    className: "header-btn",
+                    onClick: () => void openThreads(),
+                    type: "button",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(History, { "aria-hidden": true })
+                  }
+                ),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "dot", style: avatarStyle(config.avatar) }),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "title", id: titleId, children: config.title }),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                  "button",
+                  {
+                    "aria-label": "New chat",
+                    className: "header-btn",
+                    onClick: startNewThread,
+                    type: "button",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SquarePen, { "aria-hidden": true })
+                  }
+                ),
                 !inline ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { "aria-label": "Close chat", className: "close", onClick: closeChat, type: "button", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(X, { "aria-hidden": true }) }) : null
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "body", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                  ThreadDrawer,
+                  {
+                    open: threadsOpen,
+                    threads,
+                    activeId: getStoredConversationId(config.endpoint),
+                    onSelect: openThread,
+                    onNew: startNewThread,
+                    onClose: () => setThreadsOpen(false)
+                  }
+                ),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Conversation, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(ConversationContent, { children: [
                   entries.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Welcome, { title: config.greeting || DEFAULT_GREETING }) : null,
                   entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ChatMessage, { entry }, entry.id))
@@ -53312,6 +53428,39 @@ function Welcome({ title }) {
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "welcome", children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "welcome-avatar", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Bot, { "aria-hidden": true }) }),
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "welcome-title", children: title })
+  ] });
+}
+function ThreadDrawer({
+  open,
+  threads,
+  activeId,
+  onSelect,
+  onNew,
+  onClose
+}) {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: `thread-drawer${open ? " open" : ""}`, inert: !open, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-drawer-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Chats" }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { "aria-label": "Close conversations", className: "header-btn", onClick: onClose, type: "button", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(X, { "aria-hidden": true }) })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("button", { className: "thread-new", onClick: onNew, type: "button", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SquarePen, { "aria-hidden": true }),
+      "New chat"
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-list", children: [
+      threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        "button",
+        {
+          className: `thread-item${thread.conversation_id === activeId ? " active" : ""}`,
+          "aria-current": thread.conversation_id === activeId,
+          onClick: () => onSelect(thread.conversation_id),
+          type: "button",
+          children: thread.title || "New chat"
+        },
+        thread.conversation_id
+      )),
+      threads.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "No conversations yet" }) : null
+    ] })
   ] });
 }
 var RING_SIZE = 18;
@@ -53431,18 +53580,48 @@ function styles(config) {
       from { opacity: 0; transform: translateY(8px); } }
     .panel.inline { position: static; opacity: 1; transform: none; pointer-events: auto;
       box-shadow: 0 4px 18px rgba(0,0,0,.12); }
-    .header { background: #fff; color: #18181b; padding: 14px 18px; font-weight: 600;
-      font-size: 14px; display: flex; align-items: center; gap: 10px;
+    .header { background: #fff; color: #18181b; padding: 12px 12px 12px 14px; font-weight: 600;
+      font-size: 14px; display: flex; align-items: center; gap: 6px;
       border-bottom: 1px solid #f0f0f1; }
     .header .dot { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;
       background: ${config.color}; background-size: cover; background-position: center; }
     .header .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .header-btn { background: transparent; border: 0; color: #71717a; cursor: pointer;
+      padding: 0; width: 30px; height: 30px; border-radius: 8px; flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .12s, color .12s; }
+    .header-btn:hover { background: #f4f4f5; color: #18181b; }
+    .header-btn svg { width: 17px; height: 17px; }
     .close { background: transparent; border: 0; color: #71717a; cursor: pointer;
       padding: 0; width: 30px; height: 30px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center; transition: background .12s; }
     .close:hover { background: #f4f4f5; color: #18181b; }
     .close svg { width: 16px; height: 16px; }
-    .body { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #fff; }
+    .body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; background: #fff; }
+    .thread-drawer { position: absolute; inset: 0; z-index: 3; background: #fff;
+      display: flex; flex-direction: column; transform: translateX(-100%);
+      opacity: 0; pointer-events: none;
+      transition: transform .25s cubic-bezier(.32,.72,0,1), opacity .25s ease; }
+    .thread-drawer.open { transform: none; opacity: 1; pointer-events: auto; }
+    .thread-drawer-head { display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px 10px 18px; font-weight: 600; font-size: 14px; color: #18181b;
+      border-bottom: 1px solid #f0f0f1; }
+    .thread-new { display: flex; align-items: center; gap: 8px; margin: 12px 14px 4px;
+      padding: 10px 14px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff;
+      color: #18181b; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: background .12s; }
+    .thread-new:hover { background: #f4f4f5; }
+    .thread-new svg { width: 16px; height: 16px; flex: 0 0 auto; }
+    .thread-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 14px;
+      display: flex; flex-direction: column; gap: 2px;
+      scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
+    .thread-item { text-align: left; border: 0; background: transparent; cursor: pointer;
+      padding: 10px 12px; border-radius: 10px; font-size: 13.5px; color: #3f3f46;
+      font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: background .12s; }
+    .thread-item:hover { background: #f4f4f5; }
+    .thread-item.active { background: #f4f4f5; color: #18181b; font-weight: 600; }
+    .thread-empty { color: #a1a1aa; font-size: 13px; text-align: center; padding: 24px 12px; margin: 0; }
     .messages { flex: 1; min-height: 0; overflow-y: auto;
       scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
     .messages::-webkit-scrollbar { width: 10px; }
@@ -53570,6 +53749,7 @@ function styles(config) {
       .welcome { animation: none; }
       .msg-action svg { animation: none; }
       .context-ring-value, .context-bar-fill, .context-popover { transition: none; }
+      .thread-drawer { transition: none; }
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;
@@ -53592,7 +53772,7 @@ var AgentChatElement = class extends HTMLElement {
     this.titleId = `${this.widgetId}-title`;
   }
   static get observedAttributes() {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode"];
+    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "user"];
   }
   connectedCallback() {
     if (this.connected) return;
@@ -53913,7 +54093,23 @@ lucide-react/dist/esm/icons/copy.mjs:
    * See the LICENSE file in the root directory of this source tree.
    *)
 
+lucide-react/dist/esm/icons/history.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
 lucide-react/dist/esm/icons/send.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/square-pen.mjs:
   (**
    * @license lucide-react v1.22.0 - ISC
    *

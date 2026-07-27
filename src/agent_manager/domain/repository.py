@@ -49,6 +49,15 @@ class Repository(ABC):
     async def get_session(self, session_id: str) -> ConversationSession | None: ...
 
     @abstractmethod
+    async def list_sessions(
+        self, user_id: str, *, limit: int = 50
+    ) -> list[ConversationSession]:
+        """A user's sessions, most-recently-active first."""
+
+    @abstractmethod
+    async def rename_session(self, session_id: str, title: str) -> None: ...
+
+    @abstractmethod
     async def append_message(
         self,
         message: ConversationMessage,

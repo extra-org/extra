@@ -14,7 +14,7 @@ from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
-from agent_manager.domain import ContextUsage
+from agent_manager.domain import ContextUsage, thread_title
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
 
@@ -39,6 +39,27 @@ def test_create_send_history_round_trip(client: TestClient) -> None:
         ("user", "hello"),
         ("assistant", "answer:hello"),
     ]
+
+
+def test_list_conversations_returns_titled_threads_scoped_to_user(client: TestClient) -> None:
+    a = client.post("/conversations", json={"user_id": "u1"}).json()["conversation_id"]
+    client.post(f"/conversations/{a}/messages", json={"message": "first thread"})
+    b = client.post("/conversations", json={"user_id": "u1"}).json()["conversation_id"]
+    client.post(f"/conversations/{b}/messages", json={"message": "second thread"})
+
+    threads = client.get("/conversations", params={"user_id": "u1"}).json()
+    assert {t["conversation_id"]: t["title"] for t in threads} == {
+        a: "first thread",
+        b: "second thread",
+    }
+    assert client.get("/conversations", params={"user_id": "u2"}).json() == []
+
+
+def test_thread_title_collapses_whitespace_and_truncates() -> None:
+    assert thread_title("  hi   there  ") == "hi there"
+    assert thread_title("") == "New chat"
+    truncated = thread_title("x" * 60)
+    assert len(truncated) == 48 and truncated.endswith("…")
 
 
 def test_unknown_conversation_returns_404(client: TestClient) -> None:

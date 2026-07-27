@@ -41,18 +41,48 @@ export function styles(config: AgentChatConfig): string {
       from { opacity: 0; transform: translateY(8px); } }
     .panel.inline { position: static; opacity: 1; transform: none; pointer-events: auto;
       box-shadow: 0 4px 18px rgba(0,0,0,.12); }
-    .header { background: #fff; color: #18181b; padding: 14px 18px; font-weight: 600;
-      font-size: 14px; display: flex; align-items: center; gap: 10px;
+    .header { background: #fff; color: #18181b; padding: 12px 12px 12px 14px; font-weight: 600;
+      font-size: 14px; display: flex; align-items: center; gap: 6px;
       border-bottom: 1px solid #f0f0f1; }
     .header .dot { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;
       background: ${config.color}; background-size: cover; background-position: center; }
     .header .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .header-btn { background: transparent; border: 0; color: #71717a; cursor: pointer;
+      padding: 0; width: 30px; height: 30px; border-radius: 8px; flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .12s, color .12s; }
+    .header-btn:hover { background: #f4f4f5; color: #18181b; }
+    .header-btn svg { width: 17px; height: 17px; }
     .close { background: transparent; border: 0; color: #71717a; cursor: pointer;
       padding: 0; width: 30px; height: 30px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center; transition: background .12s; }
     .close:hover { background: #f4f4f5; color: #18181b; }
     .close svg { width: 16px; height: 16px; }
-    .body { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #fff; }
+    .body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; background: #fff; }
+    .thread-drawer { position: absolute; inset: 0; z-index: 3; background: #fff;
+      display: flex; flex-direction: column; transform: translateX(-100%);
+      opacity: 0; pointer-events: none;
+      transition: transform .25s cubic-bezier(.32,.72,0,1), opacity .25s ease; }
+    .thread-drawer.open { transform: none; opacity: 1; pointer-events: auto; }
+    .thread-drawer-head { display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px 10px 18px; font-weight: 600; font-size: 14px; color: #18181b;
+      border-bottom: 1px solid #f0f0f1; }
+    .thread-new { display: flex; align-items: center; gap: 8px; margin: 12px 14px 4px;
+      padding: 10px 14px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff;
+      color: #18181b; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: background .12s; }
+    .thread-new:hover { background: #f4f4f5; }
+    .thread-new svg { width: 16px; height: 16px; flex: 0 0 auto; }
+    .thread-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 14px;
+      display: flex; flex-direction: column; gap: 2px;
+      scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
+    .thread-item { text-align: left; border: 0; background: transparent; cursor: pointer;
+      padding: 10px 12px; border-radius: 10px; font-size: 13.5px; color: #3f3f46;
+      font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: background .12s; }
+    .thread-item:hover { background: #f4f4f5; }
+    .thread-item.active { background: #f4f4f5; color: #18181b; font-weight: 600; }
+    .thread-empty { color: #a1a1aa; font-size: 13px; text-align: center; padding: 24px 12px; margin: 0; }
     .messages { flex: 1; min-height: 0; overflow-y: auto;
       scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
     .messages::-webkit-scrollbar { width: 10px; }
@@ -180,6 +210,7 @@ export function styles(config: AgentChatConfig): string {
       .welcome { animation: none; }
       .msg-action svg { animation: none; }
       .context-ring-value, .context-bar-fill, .context-popover { transition: none; }
+      .thread-drawer { transition: none; }
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;

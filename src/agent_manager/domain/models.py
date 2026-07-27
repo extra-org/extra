@@ -99,6 +99,13 @@ class ConversationContext:
     snapshot: ConversationSnapshot | None = None
 
 
+def thread_title(content: str, *, limit: int = 48) -> str:
+    text = " ".join(content.split())
+    if not text:
+        return "New chat"
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 class ContextSeverity(StrEnum):
     NORMAL = "normal"
     WARNING = "warning"

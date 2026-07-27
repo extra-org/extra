@@ -2,8 +2,23 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const history: Record<string, Array<{ role: string; content: string; created_at: string }>> = {};
 
-async function mockConversationApi(page: Page, options: { failSend?: boolean } = {}) {
+async function mockConversationApi(
+  page: Page,
+  options: {
+    failSend?: boolean;
+    threads?: Array<{ conversation_id: string; title: string | null; last_message_at: string | null }>;
+  } = {},
+) {
   const calls: string[] = [];
+
+  await page.route(/\/conversations\?/, async (route) => {
+    calls.push(`GET ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(options.threads ?? []),
+    });
+  });
 
   await page.route("**/conversations", async (route) => {
     calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
@@ -474,6 +489,39 @@ test("context meter stays hidden when no budget is configured", async ({ page })
 
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello");
   await expect.poll(() => shadowExists(page, ".context-meter")).toBe(false);
+});
+
+test("thread drawer lists conversations, switches to one, and starts a new chat", async ({ page }) => {
+  await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-old", title: "Older chat", last_message_at: "2026-06-01T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/conv-old/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { role: "user", content: "old question", created_at: "2026-06-01T00:00:00Z" },
+        { role: "assistant", content: "old answer", created_at: "2026-06-01T00:00:00Z" },
+      ]),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await expect.poll(() => shadowClassContains(page, ".thread-drawer", "open")).toBe(true);
+  await expect.poll(() => shadowText(page, ".thread-item")).toContain("Older chat");
+
+  await shadowClick(page, ".thread-item");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("old answer");
+  await expect.poll(() => shadowClassContains(page, ".thread-drawer", "open")).toBe(false);
+
+  await shadowClick(page, '.header-btn[aria-label="New chat"]');
+  await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
 });
 
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {

@@ -6,24 +6,37 @@ import {
   removeStoredConversationId,
   setStoredConversationId,
 } from "../storage/conversationStorage";
-import type { ChatMessage, ContextUsage, SendMessageResponse, StreamEvent } from "../types";
+import type {
+  ChatMessage,
+  ContextUsage,
+  SendMessageResponse,
+  StreamEvent,
+  ThreadSummary,
+} from "../types";
 
 export interface Conversation {
   send(text: string): Promise<SendMessageResponse>;
   stream(text: string): AsyncGenerator<StreamEvent>;
   loadHistory(): Promise<ChatMessage[]>;
   loadUsage(): Promise<ContextUsage | null>;
+  listThreads(): Promise<ThreadSummary[]>;
+  switchTo(conversationId: string): void;
+  startNew(): void;
 }
 
 const isMissingConversation = (error: unknown): boolean =>
   error instanceof AgentChatHttpError && error.status === 404;
 
-export function useConversation(client: AgentChatClient, endpoint: string): Conversation {
+export function useConversation(
+  client: AgentChatClient,
+  endpoint: string,
+  userId: string,
+): Conversation {
   const startConversation = useCallback(async () => {
-    const created = await client.createConversation();
+    const created = await client.createConversation(userId);
     setStoredConversationId(endpoint, created);
     return created;
-  }, [client, endpoint]);
+  }, [client, endpoint, userId]);
 
   const ensureId = useCallback(
     async () => getStoredConversationId(endpoint) ?? startConversation(),
@@ -80,8 +93,20 @@ export function useConversation(client: AgentChatClient, endpoint: string): Conv
     }
   }, [client, endpoint]);
 
+  const listThreads = useCallback(
+    () => client.listConversations(userId).catch(() => []),
+    [client, userId],
+  );
+
+  const switchTo = useCallback(
+    (conversationId: string) => setStoredConversationId(endpoint, conversationId),
+    [endpoint],
+  );
+
+  const startNew = useCallback(() => removeStoredConversationId(endpoint), [endpoint]);
+
   return useMemo(
-    () => ({ send, stream, loadHistory, loadUsage }),
-    [send, stream, loadHistory, loadUsage],
+    () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),
+    [send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
   );
 }

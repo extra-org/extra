@@ -7,6 +7,7 @@ export const DEFAULT_CONFIG: Omit<AgentChatConfig, "endpoint"> = {
   position: "bottom-right",
   avatar: "",
   mode: "floating",
+  user: "",
 };
 
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -37,6 +38,7 @@ export function parseConfig(element: HTMLElement, scriptOrigin: string): AgentCh
     position: safePosition(element.getAttribute("position")),
     avatar: element.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element.getAttribute("mode")),
+    user: element.getAttribute("user") || DEFAULT_CONFIG.user,
   };
 }
 

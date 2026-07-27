@@ -10,6 +10,7 @@ from agent_manager.domain.models import (
     Message,
     Role,
     User,
+    thread_title,
 )
 from agent_manager.domain.repository import Repository
 
@@ -24,4 +25,5 @@ __all__ = [
     "Repository",
     "Role",
     "User",
+    "thread_title",
 ]

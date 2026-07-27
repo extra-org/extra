@@ -23,6 +23,12 @@ class CreateConversationResponse(BaseModel):
     session_id: str
 
 
+class ConversationSummary(BaseModel):
+    conversation_id: str
+    title: str | None = None
+    last_message_at: datetime | None = None
+
+
 class MessageOut(BaseModel):
     role: Role
     content: str

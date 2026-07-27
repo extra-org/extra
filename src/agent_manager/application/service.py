@@ -20,9 +20,11 @@ from agent_manager.application.context import build_history
 from agent_manager.domain import (
     ContextUsage,
     ConversationMessage,
+    ConversationSession,
     Message,
     Repository,
     Role,
+    thread_title,
 )
 
 
@@ -87,6 +89,11 @@ class ConversationService:
         used = await self._repository.get_token_usage(conversation_id)
         return ContextUsage.from_totals(used, self._max_tokens)
 
+    async def list_conversations(
+        self, user_id: str, *, limit: int = 50
+    ) -> list[ConversationSession]:
+        return await self._repository.list_sessions(user_id, limit=limit)
+
     async def send(
         self, conversation_id: str, text: str, *, user_id: str | None = None
     ) -> RunResult:
@@ -127,6 +134,8 @@ class ConversationService:
             max_messages=self._window,
             max_chars=self._max_chars,
         )
+        if not prior_context.messages:
+            await self._repository.rename_session(conversation_id, thread_title(text))
         run_id = uuid.uuid4().hex
         now = datetime.now(UTC)
         await self._repository.append_message(

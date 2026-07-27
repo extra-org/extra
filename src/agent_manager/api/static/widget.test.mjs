@@ -260,6 +260,7 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
     position: "bottom-right",
     avatar: "",
     mode: "floating",
+    user: "",
   });
 }
 

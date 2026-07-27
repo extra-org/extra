@@ -14,6 +14,7 @@ from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.deps import get_service
 from agent_manager.api.schemas import (
     ContextUsageResponse,
+    ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
     MessageOut,
@@ -40,6 +41,19 @@ async def create_conversation(
     body = body or CreateConversationRequest()
     session_id = await service.create(user_id=body.user_id, session_id=body.session_id)
     return CreateConversationResponse(conversation_id=session_id, session_id=session_id)
+
+
+@router.get("/conversations", response_model=list[ConversationSummary])
+async def list_conversations(service: Service, user_id: str) -> list[ConversationSummary]:
+    sessions = await service.list_conversations(user_id)
+    return [
+        ConversationSummary(
+            conversation_id=s.session_id,
+            title=s.title,
+            last_message_at=s.last_message_at,
+        )
+        for s in sessions
+    ]
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])

@@ -10,7 +10,7 @@ let nextWidgetId = 0;
 
 export class AgentChatElement extends HTMLElement {
   static get observedAttributes(): string[] {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode"];
+    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "user"];
   }
 
   private config!: AgentChatConfig;
