@@ -25,6 +25,7 @@ import {
   ConversationContent,
   Message,
   MessageContent,
+  MessageFeedback,
   MessageResponse,
   PromptInput,
   PromptInputFooter,
@@ -46,9 +47,11 @@ const COPIED_RESET_MS = 2000;
 const newId = () => crypto.randomUUID();
 
 const toEntry = (message: ChatMessage): MessageEntry => ({
-  id: newId(),
+  id: message.message_id || newId(),
+  message_id: message.message_id,
   role: message.role === "user" ? "user" : "ai",
   text: message.content,
+  feedback: message.feedback as "thumbs_up" | "thumbs_down" | null | undefined,
 });
 
 export interface AgentChatAppProps {
@@ -158,12 +161,29 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     [putEntries],
   );
 
+  const handleFeedback = useCallback(
+    async (messageId: string, feedback: "thumbs_up" | "thumbs_down" | null) => {
+      const convId = activeId || getStoredConversationId(config.endpoint);
+      if (!convId) return;
+      putEntries(convId, (prev) =>
+        prev.map((entry) => (entry.message_id === messageId ? { ...entry, feedback } : entry)),
+      );
+      try {
+        await client.recordFeedback(convId, messageId, feedback);
+      } catch {
+        // Non-fatal feedback recording error
+      }
+    },
+    [activeId, client, config.endpoint, putEntries],
+  );
+
   const sendWithoutStreaming = useCallback(
     async (cid: string, text: string, entryId: string) => {
       try {
         const answer = await conversation.send(text);
         replaceEntry(cid, entryId, {
           id: entryId,
+          message_id: answer.message_id,
           role: "ai",
           text: answer.answer,
           route: answer.visited,
@@ -270,7 +290,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
                 <Welcome title={config.greeting || DEFAULT_GREETING} />
               ) : null}
               {entries.map((entry) => (
-                <ChatMessage key={entry.id} entry={entry} />
+                <ChatMessage key={entry.id} entry={entry} onFeedback={handleFeedback} />
               ))}
             </ConversationContent>
           </Conversation>
@@ -330,7 +350,13 @@ function Launcher({
   );
 }
 
-function ChatMessage({ entry }: { entry: MessageEntry }) {
+function ChatMessage({
+  entry,
+  onFeedback,
+}: {
+  entry: MessageEntry;
+  onFeedback?: (messageId: string, feedback: "thumbs_up" | "thumbs_down" | null) => void;
+}) {
   const from = entry.role === "user" ? "user" : "assistant";
 
   if (entry.error) {
@@ -363,7 +389,9 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
           <MessageContent>
             <MessageResponse>{entry.text}</MessageResponse>
           </MessageContent>
-          {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+          {entry.text.trim() ? (
+            <MessageActions text={entry.text} entry={entry} onFeedback={onFeedback} />
+          ) : null}
         </>
       )}
     </Message>
@@ -380,10 +408,24 @@ function ThinkingDots() {
   );
 }
 
-function MessageActions({ text }: { text: string }) {
+function MessageActions({
+  text,
+  entry,
+  onFeedback,
+}: {
+  text: string;
+  entry: MessageEntry;
+  onFeedback?: (messageId: string, feedback: "thumbs_up" | "thumbs_down" | null) => void;
+}) {
   return (
     <div className="msg-actions">
       <CopyButton text={text} />
+      {onFeedback ? (
+        <MessageFeedback
+          feedback={entry.feedback}
+          onFeedback={(fb) => onFeedback(entry.message_id || entry.id, fb)}
+        />
+      ) : null}
     </div>
   );
 }

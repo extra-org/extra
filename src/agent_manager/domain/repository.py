@@ -73,6 +73,12 @@ class Repository(ABC):
         oldest-first."""
 
     @abstractmethod
+    async def update_message_feedback(
+        self, session_id: str, message_id: str, feedback: str | None
+    ) -> ConversationMessage | None:
+        """Update feedback on a specific message in a conversation session."""
+
+    @abstractmethod
     async def get_snapshot(self, session_id: str) -> ConversationSnapshot | None: ...
 
     @abstractmethod

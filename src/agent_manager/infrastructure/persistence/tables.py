@@ -76,6 +76,7 @@ class ConversationMessageRow(SQLModel, table=True):
     status: str = Field(default="succeeded", max_length=64)
     error_type: str | None = Field(default=None, max_length=256)
     metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    feedback: str | None = Field(default=None, max_length=32)
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
 
 

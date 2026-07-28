@@ -17,6 +17,8 @@ from agent_manager.api.schemas import (
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
+    FeedbackRequest,
+    FeedbackResponse,
     MessageOut,
     SendMessageRequest,
     SendMessageResponse,
@@ -27,6 +29,7 @@ from agent_manager.application import (
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
+    MessageNotFound,
 )
 
 router = APIRouter()
@@ -62,7 +65,16 @@ async def list_messages(conversation_id: str, service: Service) -> list[MessageO
         msgs = await service.history(conversation_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
-    return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
+    return [
+        MessageOut(
+            message_id=m.message_id,
+            role=m.role,
+            content=m.content,
+            created_at=m.created_at,
+            feedback=m.feedback,
+        )
+        for m in msgs
+    ]
 
 
 @router.get("/conversations/{conversation_id}/usage", response_model=ContextUsageResponse)
@@ -84,7 +96,7 @@ async def send_message(
     conversation_id: str, body: SendMessageRequest, service: Service
 ) -> SendMessageResponse:
     try:
-        result = await service.send(conversation_id, body.message, user_id=body.user_id)
+        result, msg = await service.send(conversation_id, body.message, user_id=body.user_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except ConversationTokenBudgetExceeded:
@@ -95,10 +107,30 @@ async def send_message(
         answer=result.answer,
         visited=list(result.visited),
         used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
+        message_id=msg.message_id if msg else None,
     )
 
 
-def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/feedback",
+    response_model=FeedbackResponse,
+)
+async def record_feedback(
+    conversation_id: str,
+    message_id: str,
+    body: FeedbackRequest,
+    service: Service,
+) -> FeedbackResponse:
+    try:
+        msg = await service.record_feedback(conversation_id, message_id, body.feedback)
+    except ConversationNotFound as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except MessageNotFound as exc:
+        raise HTTPException(status_code=404, detail="message not found") from exc
+    return FeedbackResponse(message_id=msg.message_id, feedback=msg.feedback)
+
+
+def _to_stream_event(event: RunStreamEvent, message_id: str | None = None) -> StreamEventOut:
     return StreamEventOut(
         type=event.type,
         content=event.content,
@@ -114,6 +146,7 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
             if event.used_tools
             else None
         ),
+        message_id=message_id,
     )
 
 
@@ -135,10 +168,11 @@ async def stream_message(
     async def event_source() -> AsyncIterator[str]:
         try:
             if first is not None:
-                payload = _to_stream_event(first).model_dump(exclude_none=True)
-                yield f"event: {first.type}\ndata: {json.dumps(payload)}\n\n"
-            async for event in stream:
-                payload = _to_stream_event(event).model_dump(exclude_none=True)
+                first_event, first_msg_id = first
+                payload = _to_stream_event(first_event, first_msg_id).model_dump(exclude_none=True)
+                yield f"event: {first_event.type}\ndata: {json.dumps(payload)}\n\n"
+            async for event, msg_id in stream:
+                payload = _to_stream_event(event, msg_id).model_dump(exclude_none=True)
                 yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"

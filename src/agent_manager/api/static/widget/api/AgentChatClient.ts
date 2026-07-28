@@ -66,6 +66,7 @@ export class AgentChatClient {
       answer: String(data.answer || ""),
       visited: Array.isArray(data.visited) ? (data.visited as string[]) : undefined,
       used_tools: Array.isArray(data.used_tools) ? data.used_tools : undefined,
+      message_id: data.message_id ? String(data.message_id) : undefined,
     };
   }
 
@@ -81,6 +82,24 @@ export class AgentChatClient {
       percent: Number(data.percent) || 0,
       severity: data.severity ?? "normal",
     };
+  }
+
+  async recordFeedback(
+    conversationId: string,
+    messageId: string,
+    feedback: "thumbs_up" | "thumbs_down" | null,
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.endpoint}/conversations/${conversationId}/messages/${messageId}/feedback`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedback }),
+      },
+    );
+    if (!response.ok) {
+      throw new AgentChatHttpError(response.status);
+    }
   }
 
   async *streamMessage(conversationId: string, message: string): AsyncGenerator<StreamEvent> {

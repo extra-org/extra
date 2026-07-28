@@ -32,4 +32,3 @@ class SystemSpecValidator:
                     message="plugins/access.py is required for protected nodes",
                 )
             )
-

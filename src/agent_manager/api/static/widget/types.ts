@@ -34,6 +34,8 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   created_at?: string;
+  message_id?: string;
+  feedback?: "thumbs_up" | "thumbs_down" | null;
 }
 
 export type ContextSeverity = "normal" | "warning" | "critical";
@@ -47,12 +49,14 @@ export interface ContextUsage {
 
 export interface MessageEntry {
   id: string;
+  message_id?: string;
   role: "user" | "ai";
   text: string;
   typing?: boolean;
   error?: boolean;
   route?: string[];
   tools?: ToolRecord[];
+  feedback?: "thumbs_up" | "thumbs_down" | null;
 }
 
 export interface ToolRecord {
@@ -70,6 +74,7 @@ export interface SendMessageResponse {
   visited?: string[];
   /** Tools observed during the run. */
   used_tools?: ToolRecord[];
+  message_id?: string;
 }
 
 export interface StreamEvent {
@@ -90,6 +95,7 @@ export interface StreamEvent {
   error?: string;
   system_name?: string;
   used_tools?: ToolRecord[];
+  message_id?: string;
 }
 
 /** Detail of the `agent-chat:answer` event a host page can listen for. */

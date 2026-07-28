@@ -341,4 +341,16 @@ client = new AgentChatClient("https://api.example");
 assert.ok(client);
 await assert.rejects(() => client.sendMessage("conv-2", "break"), /HTTP 500/);
 
+resetPage();
+const feedbackCalls = [];
+globalThis.fetch = async (url, options = {}) => {
+  feedbackCalls.push({ url, options });
+  if (url.endsWith("/feedback")) return jsonResponse({ message_id: "msg-123", feedback: "thumbs_up" });
+  throw new Error(`unexpected fetch: ${url}`);
+};
+client = new AgentChatClient("https://api.example");
+await client.recordFeedback("conv-1", "msg-123", "thumbs_up");
+assert.equal(feedbackCalls[0].url, "https://api.example/conversations/conv-1/messages/msg-123/feedback");
+assert.equal(JSON.parse(feedbackCalls[0].options.body).feedback, "thumbs_up");
+
 console.log("widget self-check: OK");
