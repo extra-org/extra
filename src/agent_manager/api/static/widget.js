@@ -53050,65 +53050,71 @@ function upsertTool(tools, next2) {
 // src/agent_manager/api/static/widget/react/useConversation.ts
 var import_react9 = __toESM(require_react(), 1);
 var isUnusableConversation = (error) => error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
-function useConversation(client, endpoint, userId) {
+function useConversation(client, endpoint, userId, onReplaced) {
   const startConversation = (0, import_react9.useCallback)(async () => {
     const created = await client.createConversation();
     setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
-  const peekId = (0, import_react9.useCallback)(
-    () => getStoredConversationId(endpoint, userId),
-    [endpoint, userId]
-  );
+  const peekId = (0, import_react9.useCallback)(() => getStoredConversationId(endpoint, userId), [endpoint, userId]);
   const ensureId = (0, import_react9.useCallback)(
     async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
     [endpoint, userId, startConversation]
   );
-  const restartId = (0, import_react9.useCallback)(async () => {
-    removeStoredConversationId(endpoint, userId);
-    return startConversation();
-  }, [endpoint, userId, startConversation]);
+  const replace2 = (0, import_react9.useCallback)(
+    async (staleId) => {
+      removeStoredConversationId(endpoint, userId);
+      const fresh = await startConversation();
+      onReplaced?.(staleId, fresh);
+      return fresh;
+    },
+    [endpoint, userId, startConversation, onReplaced]
+  );
   const send = (0, import_react9.useCallback)(
-    async (text10) => {
+    async (conversationId, text10) => {
       try {
-        return await client.sendMessage(await ensureId(), text10);
+        return await client.sendMessage(conversationId, text10);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        return client.sendMessage(await restartId(), text10);
+        return client.sendMessage(await replace2(conversationId), text10);
       }
     },
-    [client, ensureId, restartId]
+    [client, replace2]
   );
   const stream = (0, import_react9.useCallback)(
-    async function* (text10) {
+    async function* (conversationId, text10) {
       try {
-        yield* client.streamMessage(await ensureId(), text10);
+        yield* client.streamMessage(conversationId, text10);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        yield* client.streamMessage(await restartId(), text10);
+        yield* client.streamMessage(await replace2(conversationId), text10);
       }
     },
-    [client, ensureId, restartId]
+    [client, replace2]
   );
-  const loadHistory = (0, import_react9.useCallback)(async () => {
-    const stored = getStoredConversationId(endpoint, userId);
-    if (!stored) return [];
-    try {
-      return await client.getMessages(stored);
-    } catch (error) {
-      if (isUnusableConversation(error)) removeStoredConversationId(endpoint, userId);
-      return [];
-    }
-  }, [client, endpoint, userId]);
-  const loadUsage = (0, import_react9.useCallback)(async () => {
-    const stored = getStoredConversationId(endpoint, userId);
-    if (!stored) return null;
-    try {
-      return await client.getUsage(stored);
-    } catch {
-      return null;
-    }
-  }, [client, endpoint, userId]);
+  const loadHistory = (0, import_react9.useCallback)(
+    async (conversationId) => {
+      try {
+        return await client.getMessages(conversationId);
+      } catch (error) {
+        if (isUnusableConversation(error) && peekId() === conversationId) {
+          removeStoredConversationId(endpoint, userId);
+        }
+        return [];
+      }
+    },
+    [client, endpoint, userId, peekId]
+  );
+  const loadUsage = (0, import_react9.useCallback)(
+    async (conversationId) => {
+      try {
+        return await client.getUsage(conversationId);
+      } catch {
+        return null;
+      }
+    },
+    [client]
+  );
   const listThreads = (0, import_react9.useCallback)(() => client.listConversations().catch(() => []), [client]);
   const switchTo = (0, import_react9.useCallback)(
     (conversationId) => setStoredConversationId(endpoint, userId, conversationId),
@@ -53154,28 +53160,37 @@ function AgentChatApp({
   titleId
 }) {
   const inline = config.mode === "inline";
-  const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = (0, import_react10.useState)(inline);
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
   const [sending, setSending] = (0, import_react10.useState)(false);
   const [entriesById, setEntriesById] = (0, import_react10.useState)({});
+  const [usageById, setUsageById] = (0, import_react10.useState)({});
   const [activeId, setActiveId] = (0, import_react10.useState)("");
   const entries = entriesById[activeId] ?? [];
-  const [usage, setUsage] = (0, import_react10.useState)(null);
+  const usage = usageById[activeId] ?? null;
   const [threads, setThreads] = (0, import_react10.useState)([]);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
-  const refreshUsage = (0, import_react10.useCallback)(async () => {
-    setUsage(await conversation.loadUsage());
-  }, [conversation]);
+  const onReplaced = (0, import_react10.useCallback)((staleId, freshId) => {
+    setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+    setActiveId((current) => current === staleId ? freshId : current);
+  }, []);
+  const conversation = useConversation(client, config.endpoint, userId, onReplaced);
+  const refreshUsage = (0, import_react10.useCallback)(
+    async (cid) => {
+      const next2 = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next2 }));
+    },
+    [conversation]
+  );
   const putEntries = (0, import_react10.useCallback)(
     (cid, update) => setEntriesById((prev) => ({ ...prev, [cid]: update(prev[cid] ?? []) })),
     []
   );
   const loadThread = (0, import_react10.useCallback)(
     async (cid) => {
-      const history = await conversation.loadHistory();
+      const history = await conversation.loadHistory(cid);
       putEntries(cid, () => history.map(toEntry));
     },
     [conversation, putEntries]
@@ -53187,7 +53202,7 @@ function AgentChatApp({
     if (!cid) return;
     setActiveId(cid);
     await loadThread(cid);
-    await refreshUsage();
+    await refreshUsage(cid);
   }, [conversation, loaded, loadThread, refreshUsage]);
   (0, import_react10.useEffect)(() => {
     if (inline) void loadHistory();
@@ -53215,7 +53230,7 @@ function AgentChatApp({
       setThreadsOpen(false);
       setActiveId(conversationId);
       if (!(conversationId in entriesById)) await loadThread(conversationId);
-      await refreshUsage();
+      await refreshUsage(conversationId);
       inputRef.current?.focus({ preventScroll: true });
     },
     [conversation, entriesById, loadThread, refreshUsage]
@@ -53224,7 +53239,6 @@ function AgentChatApp({
     conversation.startNew();
     setThreadsOpen(false);
     setActiveId("");
-    setUsage(null);
     inputRef.current?.focus({ preventScroll: true });
   }, [conversation]);
   const replaceEntry = (0, import_react10.useCallback)(
@@ -53234,7 +53248,7 @@ function AgentChatApp({
   const sendWithoutStreaming = (0, import_react10.useCallback)(
     async (cid, text10, entryId) => {
       try {
-        const answer = await conversation.send(text10);
+        const answer = await conversation.send(cid, text10);
         replaceEntry(cid, entryId, {
           id: entryId,
           role: "ai",
@@ -53258,7 +53272,7 @@ function AgentChatApp({
       setSending(true);
       try {
         let entry = pending;
-        for await (const event of conversation.stream(text10)) {
+        for await (const event of conversation.stream(cid, text10)) {
           entry = reduceStreamEvent(entry, event);
           replaceEntry(cid, pending.id, entry);
         }
@@ -53268,7 +53282,7 @@ function AgentChatApp({
         await sendWithoutStreaming(cid, text10, pending.id);
       } finally {
         setSending(false);
-        void refreshUsage();
+        void refreshUsage(cid);
       }
     },
     [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming]

@@ -619,6 +619,64 @@ test("thinking dots persist when switching away from an in-flight thread and bac
   await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
 });
 
+test("a turn stays on its own conversation when the user switches threads mid-request", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const usageCalls: string[] = [];
+
+  const calls = await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    usageCalls.push(new URL(route.request().url()).pathname);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+  // Hold the stream open until the user has switched away, then fail it: the
+  // widget retries the turn without streaming, and that retry must still go to
+  // the conversation the turn started in.
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "stream unavailable" }),
+    });
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  release();
+
+  await expect.poll(() => calls).toContain("POST /conversations/conv-smoke/messages");
+  expect(calls).not.toContain("POST /conversations/conv-other/messages");
+  await expect
+    .poll(() => usageCalls[usageCalls.length - 1])
+    .toBe("/conversations/conv-smoke/usage");
+});
+
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
   const calls = await mockConversationApiWithStaleConversation(page);
   await pinUser(page);
