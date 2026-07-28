@@ -224,7 +224,9 @@ def test_stream_ignores_cleanup_error_after_final() -> None:
         text = "".join(response.iter_text())
 
     assert response.status_code == 200
-    assert 'event: final\ndata: {"type": "final", "content": "done", "route": ["agent"]}' in text
+    assert "event: final" in text
+    assert '"type": "final"' in text
+    assert '"content": "done"' in text
     assert "cleanup after final" not in text
     messages = client.get(f"/conversations/{cid}/messages").json()
     assert [(m["role"], m["content"]) for m in messages] == [

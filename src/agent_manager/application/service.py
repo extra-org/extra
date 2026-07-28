@@ -195,7 +195,7 @@ class ConversationService:
 
     async def stream(
         self, conversation_id: str, text: str, *, user_id: str | None = None
-    ) -> AsyncIterator[RunStreamEvent]:
+    ) -> AsyncIterator[tuple[RunStreamEvent, str | None]]:
         turn = await self.prepare_turn(conversation_id, text, user_id=user_id)
 
         final: RunStreamEvent | None = None
@@ -211,7 +211,8 @@ class ConversationService:
             ):
                 if event.type == "final":
                     final = event
-                yield event
+                else:
+                    yield event, None
         except Exception:
             if final is None:
                 raise
@@ -236,7 +237,7 @@ class ConversationService:
                 msg,
                 snapshot_ttl_seconds=self._snapshot_ttl_seconds,
             )
-            yield dataclasses.replace(final, message_id=msg.message_id)
+            yield final, msg.message_id
 
     async def record_feedback(
         self, conversation_id: str, message_id: str, feedback: str | None

@@ -130,7 +130,7 @@ async def record_feedback(
     return FeedbackResponse(message_id=msg.message_id, feedback=msg.feedback)
 
 
-def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
+def _to_stream_event(event: RunStreamEvent, message_id: str | None = None) -> StreamEventOut:
     return StreamEventOut(
         type=event.type,
         content=event.content,
@@ -146,7 +146,7 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
             if event.used_tools
             else None
         ),
-        message_id=event.message_id,
+        message_id=message_id,
     )
 
 
@@ -168,10 +168,11 @@ async def stream_message(
     async def event_source() -> AsyncIterator[str]:
         try:
             if first is not None:
-                payload = _to_stream_event(first).model_dump(exclude_none=True)
-                yield f"event: {first.type}\ndata: {json.dumps(payload)}\n\n"
-            async for event in stream:
-                payload = _to_stream_event(event).model_dump(exclude_none=True)
+                first_event, first_msg_id = first
+                payload = _to_stream_event(first_event, first_msg_id).model_dump(exclude_none=True)
+                yield f"event: {first_event.type}\ndata: {json.dumps(payload)}\n\n"
+            async for event, msg_id in stream:
+                payload = _to_stream_event(event, msg_id).model_dump(exclude_none=True)
                 yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
