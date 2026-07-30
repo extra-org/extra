@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import (
@@ -106,7 +106,7 @@ def _map_approval_error(exc: ApprovalError) -> HTTPException:
 
 
 class InvokeRequest(BaseModel):
-    message: str
+    message: str = Field(max_length=65536)
 
 
 class ToolRecord(BaseModel):
@@ -240,7 +240,7 @@ def create_app(
             )
         except Exception as exc:
             log(logger, logging.ERROR, "request end", status="error", error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="internal server error") from exc
         log(
             logger,
             logging.INFO,
@@ -294,7 +294,7 @@ def create_app(
                 )
             except Exception as exc:
                 log(logger, logging.ERROR, "request end", status="error", error=str(exc))
-                yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'detail': 'internal server error'})}\n\n"
 
         return StreamingResponse(
             event_stream(),
@@ -329,7 +329,7 @@ def create_app(
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="internal server error") from exc
         return InvokeResponse(
             system_name=result.system_name,
             answer=result.answer,
