@@ -14,11 +14,23 @@ import type {
   ThreadSummary,
 } from "../types";
 
+/** Every request names the conversation it belongs to.
+ *
+ * Storage only remembers which thread was selected last; it never decides where
+ * an in-flight request lands. Switching threads mid-request would otherwise
+ * redirect a reply that started in A into B.
+ */
 export interface Conversation {
-  send(text: string): Promise<SendMessageResponse>;
-  stream(text: string): AsyncGenerator<StreamEvent>;
-  loadHistory(): Promise<ChatMessage[]>;
-  loadUsage(): Promise<TokenBudget | null>;
+  peekId(): string | null;
+  ensureId(): Promise<string>;
+  send(
+    conversationId: string,
+    text: string,
+    onReplaced?: Retarget,
+  ): Promise<SendMessageResponse>;
+  stream(conversationId: string, text: string, onReplaced?: Retarget): AsyncGenerator<StreamEvent>;
+  loadHistory(conversationId: string): Promise<ChatMessage[]>;
+  loadUsage(conversationId: string): Promise<TokenBudget | null>;
   listThreads(): Promise<ThreadSummary[]>;
   switchTo(conversationId: string): void;
   startNew(): void;
@@ -31,6 +43,11 @@ export interface Conversation {
 const isUnusableConversation = (error: unknown): boolean =>
   error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 
+/** Reports where a turn actually landed after its conversation vanished. The
+ *  caller must write the rest of the turn to `freshId`, not the id it started
+ *  with, or the answer is stored under a conversation that no longer exists. */
+export type Retarget = (staleId: string, freshId: string) => void;
+
 export function useConversation(
   client: AgentChatClient,
   endpoint: string,
@@ -42,60 +59,77 @@ export function useConversation(
     return created;
   }, [client, endpoint, userId]);
 
+  const peekId = useCallback(() => getStoredConversationId(endpoint, userId), [endpoint, userId]);
+
   const ensureId = useCallback(
     async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
     [endpoint, userId, startConversation],
   );
 
-  const restartId = useCallback(async () => {
-    removeStoredConversationId(endpoint, userId);
-    return startConversation();
-  }, [endpoint, userId, startConversation]);
+  const replace = useCallback(
+    async (staleId: string, onReplaced?: Retarget) => {
+      // Deliberately does not touch storage. Recovery can run for a turn the
+      // user has since navigated away from, and only the caller knows which
+      // thread is on screen — it selects the replacement via `onReplaced`.
+      const fresh = await client.createConversation();
+      onReplaced?.(staleId, fresh);
+      return fresh;
+    },
+    [client],
+  );
 
   const send = useCallback(
-    async (text: string) => {
+    async (conversationId: string, text: string, onReplaced?: Retarget) => {
       try {
-        return await client.sendMessage(await ensureId(), text);
+        return await client.sendMessage(conversationId, text);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        return client.sendMessage(await restartId(), text);
+        return client.sendMessage(await replace(conversationId, onReplaced), text);
       }
     },
-    [client, ensureId, restartId],
+    [client, replace],
   );
 
   const stream = useCallback(
-    async function* (text: string): AsyncGenerator<StreamEvent> {
+    async function* (
+      conversationId: string,
+      text: string,
+      onReplaced?: Retarget,
+    ): AsyncGenerator<StreamEvent> {
       try {
-        yield* client.streamMessage(await ensureId(), text);
+        yield* client.streamMessage(conversationId, text);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        yield* client.streamMessage(await restartId(), text);
+        yield* client.streamMessage(await replace(conversationId, onReplaced), text);
       }
     },
-    [client, ensureId, restartId],
+    [client, replace],
   );
 
-  const loadHistory = useCallback(async () => {
-    const stored = getStoredConversationId(endpoint, userId);
-    if (!stored) return [];
-    try {
-      return await client.getMessages(stored);
-    } catch (error) {
-      if (isUnusableConversation(error)) removeStoredConversationId(endpoint, userId);
-      return [];
-    }
-  }, [client, endpoint, userId]);
+  const loadHistory = useCallback(
+    async (conversationId: string) => {
+      try {
+        return await client.getMessages(conversationId);
+      } catch (error) {
+        if (isUnusableConversation(error) && peekId() === conversationId) {
+          removeStoredConversationId(endpoint, userId);
+        }
+        return [];
+      }
+    },
+    [client, endpoint, userId, peekId],
+  );
 
-  const loadUsage = useCallback(async () => {
-    const stored = getStoredConversationId(endpoint, userId);
-    if (!stored) return null;
-    try {
-      return await client.getUsage(stored);
-    } catch {
-      return null;
-    }
-  }, [client, endpoint, userId]);
+  const loadUsage = useCallback(
+    async (conversationId: string) => {
+      try {
+        return await client.getUsage(conversationId);
+      } catch {
+        return null;
+      }
+    },
+    [client],
+  );
 
   const listThreads = useCallback(() => client.listConversations().catch(() => []), [client]);
 
@@ -110,7 +144,17 @@ export function useConversation(
   );
 
   return useMemo(
-    () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),
-    [send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
+    () => ({
+      peekId,
+      ensureId,
+      send,
+      stream,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew,
+    }),
+    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
   );
 }

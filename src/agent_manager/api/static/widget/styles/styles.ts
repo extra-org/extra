@@ -142,6 +142,15 @@ export function styles(config: AgentChatConfig): string {
       color: #b91c1c; border-radius: 8px; padding: 10px 12px; font-size: 13.5px;
       line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2;
       -webkit-box-orient: vertical; overflow: hidden; }
+    .thinking { display: inline-flex; gap: 4px; color: #a1a1aa; }
+    .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+      animation: aui-dot 1.4s ease-in-out infinite; }
+    .thinking-dot:nth-child(2) { animation-delay: .2s; }
+    .thinking-dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes aui-dot {
+      0%, 100% { transform: scale(.8); opacity: .5; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
     .composer { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px;
       padding: 12px 14px; border-top: 1px solid #f0f0f1; }
     .input-wrap { min-width: 0; display: flex; border-radius: 20px; background: #fff;
@@ -211,6 +220,7 @@ export function styles(config: AgentChatConfig): string {
       .msg-action svg { animation: none; }
       .budget-ring-value, .budget-bar-fill, .budget-popover { transition: none; }
       .thread-drawer { transition: none; }
+      .thinking-dot { animation: none; }
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;

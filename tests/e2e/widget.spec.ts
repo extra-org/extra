@@ -266,6 +266,17 @@ async function shadowClick(page: Page, selector: string, index = 0) {
   }, selector);
 }
 
+async function shadowClickText(page: Page, selector: string, text: string, index = 0) {
+  const handle = await widget(page, index);
+  await handle.evaluate(
+    (element, { selector, text }) => {
+      const targets = Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>(selector) ?? []);
+      targets.find((node) => node.textContent?.includes(text))?.click();
+    },
+    { selector, text },
+  );
+}
+
 async function shadowFocus(page: Page, selector: string, index = 0) {
   const handle = await widget(page, index);
   await handle.evaluate((element, selector) => {
@@ -557,6 +568,295 @@ test("a stored conversation owned by another caller is replaced, not retried for
   expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
 });
 
+test("thinking dots persist when switching away from an in-flight thread and back", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "done", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Current chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  release();
+  await expect.poll(() => shadowText(page, ".messages")).toContain("done");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+});
+
+test("a turn stays on its own conversation when the user switches threads mid-request", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const usageCalls: string[] = [];
+
+  const calls = await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    usageCalls.push(new URL(route.request().url()).pathname);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+  // Hold the stream open until the user has switched away, then fail it: the
+  // widget retries the turn without streaming, and that retry must still go to
+  // the conversation the turn started in.
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "stream unavailable" }),
+    });
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  release();
+
+  await expect.poll(() => calls).toContain("POST /conversations/conv-smoke/messages");
+  expect(calls).not.toContain("POST /conversations/conv-other/messages");
+  await expect
+    .poll(() => usageCalls[usageCalls.length - 1])
+    .toBe("/conversations/conv-smoke/usage");
+});
+
+test("background recovery for a conversation the user left does not hijack the next submission", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: string[] = [];
+
+  await page.route("**/conversations", async (route: Route) => {
+    calls.push(`${route.request().method()} /conversations`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body:
+        route.request().method() === "GET"
+          ? JSON.stringify([
+              { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+              { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+            ])
+          : JSON.stringify({ conversation_id: "conv-reborn", session_id: "conv-reborn" }),
+    });
+  });
+  // conv-smoke's in-flight turn is held open until the user has switched to
+  // conv-other, then fails as vanished — recovery must not steal the storage
+  // slot conv-other is now occupying.
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "conversation not found" }),
+    });
+  });
+  // conv-smoke has to survive history loading, or it is cleared from storage
+  // before the turn even starts and the scenario never happens.
+  await page.route("**/conversations/conv-smoke/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/conversations/conv-other/messages/stream", async (route: Route) => {
+    calls.push("POST /conversations/conv-other/messages/stream");
+    const body = JSON.parse(route.request().postData() || "{}") as { message?: string };
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: `Echo: ${body.message}`, route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  // Start the turn in conv-smoke, so the recovery below belongs to a thread the
+  // user will have left by the time it fails.
+  await page.evaluate((key) => localStorage.setItem(key, "conv-smoke"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  // Let conv-smoke's turn fail and recover into conv-reborn while the user is
+  // looking at conv-other.
+  release();
+  await expect.poll(() => calls).toContain("POST /conversations");
+
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-other");
+
+  await shadowFill(page, ".input", "still here");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: still here");
+  expect(calls).toContain("POST /conversations/conv-other/messages/stream");
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-other");
+});
+
+test("background recovery does not capture a new chat the user started meanwhile", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: string[] = [];
+  const created: string[] = ["conv-reborn", "conv-brand-new"];
+
+  await page.route("**/conversations", async (route: Route) => {
+    const method = route.request().method();
+    calls.push(`${method} /conversations`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body:
+        method === "GET"
+          ? "[]"
+          : JSON.stringify({
+              conversation_id: created.shift(),
+              session_id: "s",
+            }),
+    });
+  });
+  // The first turn is held open until the user has hit "New chat", then fails
+  // as vanished. Its replacement must not become the selected conversation.
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "conversation not found" }),
+    });
+  });
+  // conv-smoke has to survive history loading, or it is cleared from storage
+  // before the turn even starts and the scenario never happens.
+  await page.route("**/conversations/conv-smoke/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  for (const id of ["conv-reborn", "conv-brand-new"]) {
+    await page.route(`**/conversations/${id}/messages/stream`, async (route: Route) => {
+      const body = JSON.parse(route.request().postData() || "{}") as { message?: string };
+      calls.push(`POST ${id} :: ${body.message}`);
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          `event: final\ndata: ${JSON.stringify({ type: "final", content: `${id}: ${body.message}`, route: [], used_tools: [] })}`,
+          "event: done\ndata: [DONE]",
+          "",
+        ].join("\n\n"),
+      });
+    });
+  }
+
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-smoke"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="New chat"]');
+  await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
+
+  // conv-smoke's turn now fails and recovers into conv-reborn in the
+  // background, while the user is sitting in an unsaved new chat.
+  release();
+  await expect.poll(() => calls).toContain("POST /conversations");
+
+  await shadowFill(page, ".input", "fresh start");
+  await shadowClick(page, ".send");
+
+  // The new chat must get its own conversation, not the recovered one. The
+  // recovered turn legitimately retries "hello" on conv-reborn; what it must
+  // never do is take the next message with it.
+  await expect.poll(() => shadowText(page, ".messages")).toContain("conv-brand-new: fresh start");
+  expect(calls).toContain("POST conv-brand-new :: fresh start");
+  expect(calls).not.toContain("POST conv-reborn :: fresh start");
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-brand-new");
+});
+
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
   const calls = await mockConversationApiWithStaleConversation(page);
   await pinUser(page);
@@ -574,6 +874,84 @@ test("stale stored conversation is replaced before sending to the agent", async 
   expect(calls).toContain("GET /conversations/conv-stale/messages");
   expect(calls).toContain("POST /conversations");
   expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
+});
+
+test("a turn whose conversation vanishes mid-request follows the replacement", async ({
+  page,
+}) => {
+  const usageCalls: string[] = [];
+  const calls: string[] = [];
+
+  // The conversation survives history loading — so it is still the active id at
+  // submit time — and only vanishes once the turn is under way.
+  await page.route("**/conversations/conv-gone/messages", async (route: Route) => {
+    calls.push(`${route.request().method()} /conversations/conv-gone/messages`);
+    await route.fulfill({
+      status: route.request().method() === "GET" ? 200 : 404,
+      contentType: "application/json",
+      body: route.request().method() === "GET" ? "[]" : JSON.stringify({ detail: "not found" }),
+    });
+  });
+  await page.route("**/conversations/conv-gone/messages/stream", async (route: Route) => {
+    calls.push("POST /conversations/conv-gone/messages/stream");
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "conversation not found" }),
+    });
+  });
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    usageCalls.push(new URL(route.request().url()).pathname);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 7, max_tokens: 100, percent: 7, severity: "normal" }),
+    });
+  });
+  await page.route("**/conversations", async (route: Route) => {
+    calls.push(`${route.request().method()} /conversations`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body:
+        route.request().method() === "GET"
+          ? "[]"
+          : JSON.stringify({ conversation_id: "conv-reborn", session_id: "conv-reborn" }),
+    });
+  });
+  await page.route("**/conversations/conv-reborn/messages/stream", async (route: Route) => {
+    calls.push("POST /conversations/conv-reborn/messages/stream");
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "Recovered answer", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-gone"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "are you there");
+  await shadowClick(page, ".send");
+
+  // The answer has to land in the conversation the turn was moved to, not the
+  // one it started in — the view is showing the replacement by now.
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered answer");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+  expect(calls).toContain("POST /conversations/conv-gone/messages/stream");
+  expect(calls).toContain("POST /conversations/conv-reborn/messages/stream");
+  await expect.poll(() => usageCalls[usageCalls.length - 1]).toBe("/conversations/conv-reborn/usage");
+  // Recovery of the thread on screen *does* move the selection — the inverse of
+  // the background case, and the reason that decision is conditional.
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-reborn");
 });
 
 test("script-only auto-mount creates one configured widget", async ({ page }) => {

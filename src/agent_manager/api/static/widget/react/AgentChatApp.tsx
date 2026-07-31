@@ -10,7 +10,6 @@ import {
 import { type Ref, useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentChatClient } from "../api/AgentChatClient";
-import { getStoredConversationId } from "../storage/conversationStorage";
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
@@ -69,28 +68,76 @@ export function AgentChatApp({
   titleId,
 }: AgentChatAppProps) {
   const inline = config.mode === "inline";
-  const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
-  const [entries, setEntries] = useState<MessageEntry[]>([]);
-  const [usage, setUsage] = useState<TokenBudget | null>(null);
+  const [entriesById, setEntriesById] = useState<Record<string, MessageEntry[]>>({});
+  const [usageById, setUsageById] = useState<Record<string, TokenBudget | null>>({});
+  const [activeId, setActiveId] = useState("");
+  const entries = entriesById[activeId] ?? [];
+  const usage = usageById[activeId] ?? null;
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const refreshUsage = useCallback(async () => {
-    setUsage(await conversation.loadUsage());
-  }, [conversation]);
+  // Recovery runs from async turn code that can outlive the view it started
+  // in, so it needs the thread on screen *now*, not the one captured when the
+  // turn began. Kept in step with `activeId` by `selectThread`.
+  const activeIdRef = useRef(activeId);
+  const selectThread = useCallback((conversationId: string) => {
+    activeIdRef.current = conversationId;
+    setActiveId(conversationId);
+  }, []);
+
+  const conversation = useConversation(client, config.endpoint, userId);
+
+  // A vanished conversation is replaced mid-turn; carry its messages onto the
+  // id the turn actually ran under so the view does not go blank.
+  const adoptConversation = useCallback(
+    (staleId: string, freshId: string) => {
+      setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+      // Only the thread the user is looking at may move the selection. A turn
+      // recovered in the background must not drag storage — and so the next
+      // message — onto a conversation the user never opened.
+      if (activeIdRef.current !== staleId) return;
+      selectThread(freshId);
+      conversation.switchTo(freshId);
+    },
+    [conversation, selectThread],
+  );
+
+  const refreshUsage = useCallback(
+    async (cid: string) => {
+      const next = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next }));
+    },
+    [conversation],
+  );
+
+  const putEntries = useCallback(
+    (cid: string, update: (prev: MessageEntry[]) => MessageEntry[]) =>
+      setEntriesById((prev) => ({ ...prev, [cid]: update(prev[cid] ?? []) })),
+    [],
+  );
+
+  const loadThread = useCallback(
+    async (cid: string) => {
+      const history = await conversation.loadHistory(cid);
+      putEntries(cid, () => history.map(toEntry));
+    },
+    [conversation, putEntries],
+  );
 
   const loadHistory = useCallback(async () => {
     if (loaded) return;
     setLoaded(true);
-    const history = await conversation.loadHistory();
-    if (history.length) setEntries(history.map(toEntry));
-    await refreshUsage();
-  }, [conversation, loaded, refreshUsage]);
+    const cid = conversation.peekId();
+    if (!cid) return;
+    selectThread(cid);
+    await loadThread(cid);
+    await refreshUsage(cid);
+  }, [conversation, loaded, loadThread, refreshUsage, selectThread]);
 
   useEffect(() => {
     if (inline) void loadHistory();
@@ -121,31 +168,40 @@ export function AgentChatApp({
     async (conversationId: string) => {
       conversation.switchTo(conversationId);
       setThreadsOpen(false);
-      const history = await conversation.loadHistory();
-      setEntries(history.map(toEntry));
-      await refreshUsage();
+      selectThread(conversationId);
+      // ponytail: in-session map owns in-flight streams, so only cold-load a thread we haven't opened yet.
+      if (!(conversationId in entriesById)) await loadThread(conversationId);
+      await refreshUsage(conversationId);
       inputRef.current?.focus({ preventScroll: true });
     },
-    [conversation, refreshUsage],
+    [conversation, entriesById, loadThread, refreshUsage, selectThread],
   );
 
   const startNewThread = useCallback(() => {
     conversation.startNew();
     setThreadsOpen(false);
-    setEntries([]);
-    setUsage(null);
+    selectThread("");
     inputRef.current?.focus({ preventScroll: true });
-  }, [conversation]);
+  }, [conversation, selectThread]);
 
-  const replaceEntry = useCallback((id: string, entry: MessageEntry) => {
-    setEntries((prev) => prev.map((current) => (current.id === id ? entry : current)));
-  }, []);
+  const replaceEntry = useCallback(
+    (cid: string, id: string, entry: MessageEntry) =>
+      putEntries(cid, (prev) => prev.map((current) => (current.id === id ? entry : current))),
+    [putEntries],
+  );
 
+  /** Runs the turn without streaming and returns the conversation it landed in,
+   *  which is not `cid` if the conversation had to be replaced. */
   const sendWithoutStreaming = useCallback(
-    async (text: string, entryId: string) => {
+    async (cid: string, text: string, entryId: string): Promise<string> => {
+      let target = cid;
+      const retarget = (staleId: string, freshId: string) => {
+        target = freshId;
+        adoptConversation(staleId, freshId);
+      };
       try {
-        const answer = await conversation.send(text);
-        replaceEntry(entryId, {
+        const answer = await conversation.send(cid, text, retarget);
+        replaceEntry(target, entryId, {
           id: entryId,
           role: "ai",
           text: answer.answer,
@@ -154,33 +210,55 @@ export function AgentChatApp({
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
       } catch {
-        replaceEntry(entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+        replaceEntry(target, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
       }
+      return target;
     },
-    [conversation, onAnswer, replaceEntry],
+    [adoptConversation, conversation, onAnswer, replaceEntry],
   );
 
   const submit = useCallback(
     async (text: string) => {
+      // The thread on screen wins; storage is consulted only before anything
+      // has been selected, since a background recovery may have moved it.
+      const cid = activeIdRef.current || (await conversation.ensureId());
+      selectThread(cid);
       const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
-      setEntries((prev) => [...prev, { id: newId(), role: "user", text }, pending]);
+      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text }, pending]);
       setSending(true);
+      // Where this turn's output belongs. A recovered turn moves to a new
+      // conversation mid-flight, and everything after that point — streamed
+      // content, the fallback answer, the usage refresh — has to follow it.
+      let target = cid;
+      const retarget = (staleId: string, freshId: string) => {
+        target = freshId;
+        adoptConversation(staleId, freshId);
+      };
       try {
         let entry = pending;
-        for await (const event of conversation.stream(text)) {
+        for await (const event of conversation.stream(cid, text, retarget)) {
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(pending.id, entry);
+          replaceEntry(target, pending.id, entry);
         }
-        replaceEntry(pending.id, { ...entry, typing: false });
+        replaceEntry(target, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
       } catch {
-        await sendWithoutStreaming(text, pending.id);
+        target = await sendWithoutStreaming(target, text, pending.id);
       } finally {
         setSending(false);
-        void refreshUsage();
+        void refreshUsage(target);
       }
     },
-    [conversation, onAnswer, refreshUsage, replaceEntry, sendWithoutStreaming],
+    [
+      adoptConversation,
+      conversation,
+      onAnswer,
+      putEntries,
+      refreshUsage,
+      replaceEntry,
+      selectThread,
+      sendWithoutStreaming,
+    ],
   );
 
   const toggle = () => void (open ? closeChat() : openChat());
@@ -240,7 +318,7 @@ export function AgentChatApp({
           <ThreadDrawer
             open={threadsOpen}
             threads={threads}
-            activeId={getStoredConversationId(config.endpoint, userId)}
+            activeId={activeId}
             onSelect={openThread}
             onNew={startNewThread}
             onClose={() => setThreadsOpen(false)}
@@ -314,14 +392,6 @@ function Launcher({
 function ChatMessage({ entry }: { entry: MessageEntry }) {
   const from = entry.role === "user" ? "user" : "assistant";
 
-  if (entry.typing) {
-    return (
-      <Message from={from} typing>
-        ...
-      </Message>
-    );
-  }
-
   if (entry.error) {
     return (
       <Message from={from}>
@@ -340,14 +410,32 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
     );
   }
 
+  const thinking = Boolean(entry.typing) && !entry.text.trim();
+
   return (
-    <Message from="assistant">
+    <Message from="assistant" typing={thinking}>
       <AgentActivity route={entry.route} tools={entry.tools} />
-      <MessageContent>
-        <MessageResponse>{entry.text}</MessageResponse>
-      </MessageContent>
-      {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+      {thinking ? (
+        <ThinkingDots />
+      ) : (
+        <>
+          <MessageContent>
+            <MessageResponse>{entry.text}</MessageResponse>
+          </MessageContent>
+          {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+        </>
+      )}
     </Message>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <span className="thinking" aria-hidden>
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+    </span>
   );
 }
 

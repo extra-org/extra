@@ -52407,29 +52407,6 @@ var X = createLucideIcon("x", __iconNode12);
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_react10 = __toESM(require_react(), 1);
 
-// src/agent_manager/api/static/widget/storage/conversationStorage.ts
-function conversationStorageKey(endpoint, userId) {
-  return `agent-chat:${endpoint}:${userId}`;
-}
-function getStoredConversationId(endpoint, userId, storage = localStorage) {
-  return storage.getItem(conversationStorageKey(endpoint, userId));
-}
-function setStoredConversationId(endpoint, userId, conversationId, storage = localStorage) {
-  storage.setItem(conversationStorageKey(endpoint, userId), conversationId);
-}
-function removeStoredConversationId(endpoint, userId, storage = localStorage) {
-  storage.removeItem(conversationStorageKey(endpoint, userId));
-}
-function getOrCreateUserId(endpoint, storage = localStorage) {
-  const key = `agent-chat:user:${endpoint}`;
-  let id = storage.getItem(key);
-  if (!id) {
-    id = crypto.randomUUID();
-    storage.setItem(key, id);
-  }
-  return id;
-}
-
 // src/agent_manager/api/static/widget/react/shadcnAiElements.tsx
 var import_react8 = __toESM(require_react(), 1);
 
@@ -53012,20 +52989,19 @@ var TOOL_STATUS = {
 function reduceStreamEvent(entry, event) {
   switch (event.type) {
     case "answer_delta":
-      return { ...entry, text: entry.text + (event.content ?? ""), typing: false };
+      return { ...entry, text: entry.text + (event.content ?? "") };
     case "route":
-      return { ...entry, route: event.route ?? entry.route, typing: false };
+      return { ...entry, route: event.route ?? entry.route };
     case "tool_started":
     case "tool_succeeded":
     case "tool_failed":
-      return { ...entry, tools: upsertTool(entry.tools ?? [], toToolRecord(event)), typing: false };
+      return { ...entry, tools: upsertTool(entry.tools ?? [], toToolRecord(event)) };
     case "final":
       return {
         ...entry,
         text: event.content ?? entry.text,
         route: event.route ?? entry.route,
-        tools: event.used_tools ?? entry.tools,
-        typing: false
+        tools: event.used_tools ?? entry.tools
       };
     case "error":
       throw new Error(event.error || "stream failed");
@@ -53050,6 +53026,31 @@ function upsertTool(tools, next2) {
 
 // src/agent_manager/api/static/widget/react/useConversation.ts
 var import_react9 = __toESM(require_react(), 1);
+
+// src/agent_manager/api/static/widget/storage/conversationStorage.ts
+function conversationStorageKey(endpoint, userId) {
+  return `agent-chat:${endpoint}:${userId}`;
+}
+function getStoredConversationId(endpoint, userId, storage = localStorage) {
+  return storage.getItem(conversationStorageKey(endpoint, userId));
+}
+function setStoredConversationId(endpoint, userId, conversationId, storage = localStorage) {
+  storage.setItem(conversationStorageKey(endpoint, userId), conversationId);
+}
+function removeStoredConversationId(endpoint, userId, storage = localStorage) {
+  storage.removeItem(conversationStorageKey(endpoint, userId));
+}
+function getOrCreateUserId(endpoint, storage = localStorage) {
+  const key = `agent-chat:user:${endpoint}`;
+  let id = storage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    storage.setItem(key, id);
+  }
+  return id;
+}
+
+// src/agent_manager/api/static/widget/react/useConversation.ts
 var isUnusableConversation = (error) => error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 function useConversation(client, endpoint, userId) {
   const startConversation = (0, import_react9.useCallback)(async () => {
@@ -53057,55 +53058,64 @@ function useConversation(client, endpoint, userId) {
     setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
+  const peekId = (0, import_react9.useCallback)(() => getStoredConversationId(endpoint, userId), [endpoint, userId]);
   const ensureId = (0, import_react9.useCallback)(
     async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
     [endpoint, userId, startConversation]
   );
-  const restartId = (0, import_react9.useCallback)(async () => {
-    removeStoredConversationId(endpoint, userId);
-    return startConversation();
-  }, [endpoint, userId, startConversation]);
+  const replace2 = (0, import_react9.useCallback)(
+    async (staleId, onReplaced) => {
+      const fresh = await client.createConversation();
+      onReplaced?.(staleId, fresh);
+      return fresh;
+    },
+    [client]
+  );
   const send = (0, import_react9.useCallback)(
-    async (text10) => {
+    async (conversationId, text10, onReplaced) => {
       try {
-        return await client.sendMessage(await ensureId(), text10);
+        return await client.sendMessage(conversationId, text10);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        return client.sendMessage(await restartId(), text10);
+        return client.sendMessage(await replace2(conversationId, onReplaced), text10);
       }
     },
-    [client, ensureId, restartId]
+    [client, replace2]
   );
   const stream = (0, import_react9.useCallback)(
-    async function* (text10) {
+    async function* (conversationId, text10, onReplaced) {
       try {
-        yield* client.streamMessage(await ensureId(), text10);
+        yield* client.streamMessage(conversationId, text10);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        yield* client.streamMessage(await restartId(), text10);
+        yield* client.streamMessage(await replace2(conversationId, onReplaced), text10);
       }
     },
-    [client, ensureId, restartId]
+    [client, replace2]
   );
-  const loadHistory = (0, import_react9.useCallback)(async () => {
-    const stored = getStoredConversationId(endpoint, userId);
-    if (!stored) return [];
-    try {
-      return await client.getMessages(stored);
-    } catch (error) {
-      if (isUnusableConversation(error)) removeStoredConversationId(endpoint, userId);
-      return [];
-    }
-  }, [client, endpoint, userId]);
-  const loadUsage = (0, import_react9.useCallback)(async () => {
-    const stored = getStoredConversationId(endpoint, userId);
-    if (!stored) return null;
-    try {
-      return await client.getUsage(stored);
-    } catch {
-      return null;
-    }
-  }, [client, endpoint, userId]);
+  const loadHistory = (0, import_react9.useCallback)(
+    async (conversationId) => {
+      try {
+        return await client.getMessages(conversationId);
+      } catch (error) {
+        if (isUnusableConversation(error) && peekId() === conversationId) {
+          removeStoredConversationId(endpoint, userId);
+        }
+        return [];
+      }
+    },
+    [client, endpoint, userId, peekId]
+  );
+  const loadUsage = (0, import_react9.useCallback)(
+    async (conversationId) => {
+      try {
+        return await client.getUsage(conversationId);
+      } catch {
+        return null;
+      }
+    },
+    [client]
+  );
   const listThreads = (0, import_react9.useCallback)(() => client.listConversations().catch(() => []), [client]);
   const switchTo = (0, import_react9.useCallback)(
     (conversationId) => setStoredConversationId(endpoint, userId, conversationId),
@@ -53116,8 +53126,18 @@ function useConversation(client, endpoint, userId) {
     [endpoint, userId]
   );
   return (0, import_react9.useMemo)(
-    () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),
-    [send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
+    () => ({
+      peekId,
+      ensureId,
+      send,
+      stream,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew
+    }),
+    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
   );
 }
 
@@ -53141,26 +53161,60 @@ function AgentChatApp({
   titleId
 }) {
   const inline = config.mode === "inline";
-  const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = (0, import_react10.useState)(inline);
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
   const [sending, setSending] = (0, import_react10.useState)(false);
-  const [entries, setEntries] = (0, import_react10.useState)([]);
-  const [usage, setUsage] = (0, import_react10.useState)(null);
+  const [entriesById, setEntriesById] = (0, import_react10.useState)({});
+  const [usageById, setUsageById] = (0, import_react10.useState)({});
+  const [activeId, setActiveId] = (0, import_react10.useState)("");
+  const entries = entriesById[activeId] ?? [];
+  const usage = usageById[activeId] ?? null;
   const [threads, setThreads] = (0, import_react10.useState)([]);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
-  const refreshUsage = (0, import_react10.useCallback)(async () => {
-    setUsage(await conversation.loadUsage());
-  }, [conversation]);
+  const activeIdRef = (0, import_react10.useRef)(activeId);
+  const selectThread = (0, import_react10.useCallback)((conversationId) => {
+    activeIdRef.current = conversationId;
+    setActiveId(conversationId);
+  }, []);
+  const conversation = useConversation(client, config.endpoint, userId);
+  const adoptConversation = (0, import_react10.useCallback)(
+    (staleId, freshId) => {
+      setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+      if (activeIdRef.current !== staleId) return;
+      selectThread(freshId);
+      conversation.switchTo(freshId);
+    },
+    [conversation, selectThread]
+  );
+  const refreshUsage = (0, import_react10.useCallback)(
+    async (cid) => {
+      const next2 = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next2 }));
+    },
+    [conversation]
+  );
+  const putEntries = (0, import_react10.useCallback)(
+    (cid, update) => setEntriesById((prev) => ({ ...prev, [cid]: update(prev[cid] ?? []) })),
+    []
+  );
+  const loadThread = (0, import_react10.useCallback)(
+    async (cid) => {
+      const history = await conversation.loadHistory(cid);
+      putEntries(cid, () => history.map(toEntry));
+    },
+    [conversation, putEntries]
+  );
   const loadHistory = (0, import_react10.useCallback)(async () => {
     if (loaded) return;
     setLoaded(true);
-    const history = await conversation.loadHistory();
-    if (history.length) setEntries(history.map(toEntry));
-    await refreshUsage();
-  }, [conversation, loaded, refreshUsage]);
+    const cid = conversation.peekId();
+    if (!cid) return;
+    selectThread(cid);
+    await loadThread(cid);
+    await refreshUsage(cid);
+  }, [conversation, loaded, loadThread, refreshUsage, selectThread]);
   (0, import_react10.useEffect)(() => {
     if (inline) void loadHistory();
   }, [inline, loadHistory]);
@@ -53185,28 +53239,33 @@ function AgentChatApp({
     async (conversationId) => {
       conversation.switchTo(conversationId);
       setThreadsOpen(false);
-      const history = await conversation.loadHistory();
-      setEntries(history.map(toEntry));
-      await refreshUsage();
+      selectThread(conversationId);
+      if (!(conversationId in entriesById)) await loadThread(conversationId);
+      await refreshUsage(conversationId);
       inputRef.current?.focus({ preventScroll: true });
     },
-    [conversation, refreshUsage]
+    [conversation, entriesById, loadThread, refreshUsage, selectThread]
   );
   const startNewThread = (0, import_react10.useCallback)(() => {
     conversation.startNew();
     setThreadsOpen(false);
-    setEntries([]);
-    setUsage(null);
+    selectThread("");
     inputRef.current?.focus({ preventScroll: true });
-  }, [conversation]);
-  const replaceEntry = (0, import_react10.useCallback)((id, entry) => {
-    setEntries((prev) => prev.map((current) => current.id === id ? entry : current));
-  }, []);
+  }, [conversation, selectThread]);
+  const replaceEntry = (0, import_react10.useCallback)(
+    (cid, id, entry) => putEntries(cid, (prev) => prev.map((current) => current.id === id ? entry : current)),
+    [putEntries]
+  );
   const sendWithoutStreaming = (0, import_react10.useCallback)(
-    async (text10, entryId) => {
+    async (cid, text10, entryId) => {
+      let target = cid;
+      const retarget = (staleId, freshId) => {
+        target = freshId;
+        adoptConversation(staleId, freshId);
+      };
       try {
-        const answer = await conversation.send(text10);
-        replaceEntry(entryId, {
+        const answer = await conversation.send(cid, text10, retarget);
+        replaceEntry(target, entryId, {
           id: entryId,
           role: "ai",
           text: answer.answer,
@@ -53215,32 +53274,49 @@ function AgentChatApp({
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
       } catch {
-        replaceEntry(entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+        replaceEntry(target, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
       }
+      return target;
     },
-    [conversation, onAnswer, replaceEntry]
+    [adoptConversation, conversation, onAnswer, replaceEntry]
   );
   const submit = (0, import_react10.useCallback)(
     async (text10) => {
+      const cid = activeIdRef.current || await conversation.ensureId();
+      selectThread(cid);
       const pending = { id: newId(), role: "ai", text: "", typing: true };
-      setEntries((prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
+      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
       setSending(true);
+      let target = cid;
+      const retarget = (staleId, freshId) => {
+        target = freshId;
+        adoptConversation(staleId, freshId);
+      };
       try {
         let entry = pending;
-        for await (const event of conversation.stream(text10)) {
+        for await (const event of conversation.stream(cid, text10, retarget)) {
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(pending.id, entry);
+          replaceEntry(target, pending.id, entry);
         }
-        replaceEntry(pending.id, { ...entry, typing: false });
+        replaceEntry(target, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
       } catch {
-        await sendWithoutStreaming(text10, pending.id);
+        target = await sendWithoutStreaming(target, text10, pending.id);
       } finally {
         setSending(false);
-        void refreshUsage();
+        void refreshUsage(target);
       }
     },
-    [conversation, onAnswer, refreshUsage, replaceEntry, sendWithoutStreaming]
+    [
+      adoptConversation,
+      conversation,
+      onAnswer,
+      putEntries,
+      refreshUsage,
+      replaceEntry,
+      selectThread,
+      sendWithoutStreaming
+    ]
   );
   const toggle = () => void (open ? closeChat() : openChat());
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
@@ -53297,7 +53373,7 @@ function AgentChatApp({
                   {
                     open: threadsOpen,
                     threads,
-                    activeId: getStoredConversationId(config.endpoint, userId),
+                    activeId,
                     onSelect: openThread,
                     onNew: startNewThread,
                     onClose: () => setThreadsOpen(false)
@@ -53366,19 +53442,26 @@ function Launcher({
 }
 function ChatMessage({ entry }) {
   const from = entry.role === "user" ? "user" : "assistant";
-  if (entry.typing) {
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from, typing: true, children: "..." });
-  }
   if (entry.error) {
     return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from, children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-error", role: "alert", children: entry.text }) });
   }
   if (entry.role === "user") {
     return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from: "user", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: entry.text }) });
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "assistant", children: [
+  const thinking = Boolean(entry.typing) && !entry.text.trim();
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "assistant", typing: thinking, children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(AgentActivity, { route: entry.route, tools: entry.tools }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }),
-    entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
+    thinking ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ThinkingDots, {}) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }),
+      entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
+    ] })
+  ] });
+}
+function ThinkingDots() {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "thinking", "aria-hidden": true, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" })
   ] });
 }
 function MessageActions({ text: text10 }) {
@@ -53669,6 +53752,15 @@ function styles(config) {
       color: #b91c1c; border-radius: 8px; padding: 10px 12px; font-size: 13.5px;
       line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2;
       -webkit-box-orient: vertical; overflow: hidden; }
+    .thinking { display: inline-flex; gap: 4px; color: #a1a1aa; }
+    .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+      animation: aui-dot 1.4s ease-in-out infinite; }
+    .thinking-dot:nth-child(2) { animation-delay: .2s; }
+    .thinking-dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes aui-dot {
+      0%, 100% { transform: scale(.8); opacity: .5; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
     .composer { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px;
       padding: 12px 14px; border-top: 1px solid #f0f0f1; }
     .input-wrap { min-width: 0; display: flex; border-radius: 20px; background: #fff;
@@ -53738,6 +53830,7 @@ function styles(config) {
       .msg-action svg { animation: none; }
       .budget-ring-value, .budget-bar-fill, .budget-popover { transition: none; }
       .thread-drawer { transition: none; }
+      .thinking-dot { animation: none; }
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;

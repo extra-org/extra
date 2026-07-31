@@ -5,8 +5,12 @@
 # to main. Single Python version per pyproject.toml (requires-python >=3.11);
 # no matrix, no caching tuning — see the issue's non-goals.
 #
-# To make this a required status check, protect `main` in the repo settings
-# and require the "check" job (maintainer action, not part of this file).
+# The `widget` job covers the embeddable chat widget: TypeScript typecheck,
+# bundle freshness, and the Playwright browser suite.
+#
+# To make these required status checks, protect `main` in the repo settings
+# and require the "check" and "widget" jobs (maintainer action, not part of
+# this file).
 
 name: CI
 
@@ -40,3 +44,45 @@ jobs:
 
       - name: Validate flagship example (offline)
         run: make validate
+
+  widget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # The e2e suite serves the widget from a uvicorn app (playwright.config.ts).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          npm ci
+          make install
+
+      - name: Typecheck (widget + e2e)
+        run: |
+          npm run typecheck:widget
+          npm run typecheck:e2e
+
+      # widget.js is committed and is what the browser loads, so a stale bundle
+      # would let e2e pass against source that was never built.
+      - name: Bundle matches source
+        run: |
+          npm run build:widget
+          git diff --exit-code -- src/agent_manager/api/static/widget.js
+
+      - name: Widget self-check
+        run: npm run test:widget
+
+      - name: Browser tests
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
