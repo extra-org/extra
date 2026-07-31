@@ -52407,29 +52407,6 @@ var X = createLucideIcon("x", __iconNode12);
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_react10 = __toESM(require_react(), 1);
 
-// src/agent_manager/api/static/widget/storage/conversationStorage.ts
-function conversationStorageKey(endpoint, userId) {
-  return `agent-chat:${endpoint}:${userId}`;
-}
-function getStoredConversationId(endpoint, userId, storage = localStorage) {
-  return storage.getItem(conversationStorageKey(endpoint, userId));
-}
-function setStoredConversationId(endpoint, userId, conversationId, storage = localStorage) {
-  storage.setItem(conversationStorageKey(endpoint, userId), conversationId);
-}
-function removeStoredConversationId(endpoint, userId, storage = localStorage) {
-  storage.removeItem(conversationStorageKey(endpoint, userId));
-}
-function getOrCreateUserId(endpoint, storage = localStorage) {
-  const key = `agent-chat:user:${endpoint}`;
-  let id = storage.getItem(key);
-  if (!id) {
-    id = crypto.randomUUID();
-    storage.setItem(key, id);
-  }
-  return id;
-}
-
 // src/agent_manager/api/static/widget/react/shadcnAiElements.tsx
 var import_react8 = __toESM(require_react(), 1);
 
@@ -53049,6 +53026,31 @@ function upsertTool(tools, next2) {
 
 // src/agent_manager/api/static/widget/react/useConversation.ts
 var import_react9 = __toESM(require_react(), 1);
+
+// src/agent_manager/api/static/widget/storage/conversationStorage.ts
+function conversationStorageKey(endpoint, userId) {
+  return `agent-chat:${endpoint}:${userId}`;
+}
+function getStoredConversationId(endpoint, userId, storage = localStorage) {
+  return storage.getItem(conversationStorageKey(endpoint, userId));
+}
+function setStoredConversationId(endpoint, userId, conversationId, storage = localStorage) {
+  storage.setItem(conversationStorageKey(endpoint, userId), conversationId);
+}
+function removeStoredConversationId(endpoint, userId, storage = localStorage) {
+  storage.removeItem(conversationStorageKey(endpoint, userId));
+}
+function getOrCreateUserId(endpoint, storage = localStorage) {
+  const key = `agent-chat:user:${endpoint}`;
+  let id = storage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    storage.setItem(key, id);
+  }
+  return id;
+}
+
+// src/agent_manager/api/static/widget/react/useConversation.ts
 var isUnusableConversation = (error) => error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 function useConversation(client, endpoint, userId) {
   const startConversation = (0, import_react9.useCallback)(async () => {
@@ -53063,12 +53065,11 @@ function useConversation(client, endpoint, userId) {
   );
   const replace2 = (0, import_react9.useCallback)(
     async (staleId, onReplaced) => {
-      removeStoredConversationId(endpoint, userId);
-      const fresh = await startConversation();
+      const fresh = await client.createConversation();
       onReplaced?.(staleId, fresh);
       return fresh;
     },
-    [endpoint, userId, startConversation]
+    [client]
   );
   const send = (0, import_react9.useCallback)(
     async (conversationId, text10, onReplaced) => {
@@ -53172,11 +53173,21 @@ function AgentChatApp({
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
-  const adoptConversation = (0, import_react10.useCallback)((staleId, freshId) => {
-    setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
-    setActiveId((current) => current === staleId ? freshId : current);
+  const activeIdRef = (0, import_react10.useRef)(activeId);
+  const selectThread = (0, import_react10.useCallback)((conversationId) => {
+    activeIdRef.current = conversationId;
+    setActiveId(conversationId);
   }, []);
   const conversation = useConversation(client, config.endpoint, userId);
+  const adoptConversation = (0, import_react10.useCallback)(
+    (staleId, freshId) => {
+      setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+      if (activeIdRef.current !== staleId) return;
+      selectThread(freshId);
+      conversation.switchTo(freshId);
+    },
+    [conversation, selectThread]
+  );
   const refreshUsage = (0, import_react10.useCallback)(
     async (cid) => {
       const next2 = await conversation.loadUsage(cid);
@@ -53200,10 +53211,10 @@ function AgentChatApp({
     setLoaded(true);
     const cid = conversation.peekId();
     if (!cid) return;
-    setActiveId(cid);
+    selectThread(cid);
     await loadThread(cid);
     await refreshUsage(cid);
-  }, [conversation, loaded, loadThread, refreshUsage]);
+  }, [conversation, loaded, loadThread, refreshUsage, selectThread]);
   (0, import_react10.useEffect)(() => {
     if (inline) void loadHistory();
   }, [inline, loadHistory]);
@@ -53228,19 +53239,19 @@ function AgentChatApp({
     async (conversationId) => {
       conversation.switchTo(conversationId);
       setThreadsOpen(false);
-      setActiveId(conversationId);
+      selectThread(conversationId);
       if (!(conversationId in entriesById)) await loadThread(conversationId);
       await refreshUsage(conversationId);
       inputRef.current?.focus({ preventScroll: true });
     },
-    [conversation, entriesById, loadThread, refreshUsage]
+    [conversation, entriesById, loadThread, refreshUsage, selectThread]
   );
   const startNewThread = (0, import_react10.useCallback)(() => {
     conversation.startNew();
     setThreadsOpen(false);
-    setActiveId("");
+    selectThread("");
     inputRef.current?.focus({ preventScroll: true });
-  }, [conversation]);
+  }, [conversation, selectThread]);
   const replaceEntry = (0, import_react10.useCallback)(
     (cid, id, entry) => putEntries(cid, (prev) => prev.map((current) => current.id === id ? entry : current)),
     [putEntries]
@@ -53271,8 +53282,8 @@ function AgentChatApp({
   );
   const submit = (0, import_react10.useCallback)(
     async (text10) => {
-      const cid = await conversation.ensureId();
-      setActiveId(cid);
+      const cid = activeIdRef.current || await conversation.ensureId();
+      selectThread(cid);
       const pending = { id: newId(), role: "ai", text: "", typing: true };
       putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
       setSending(true);
@@ -53303,6 +53314,7 @@ function AgentChatApp({
       putEntries,
       refreshUsage,
       replaceEntry,
+      selectThread,
       sendWithoutStreaming
     ]
   );
@@ -53361,7 +53373,7 @@ function AgentChatApp({
                   {
                     open: threadsOpen,
                     threads,
-                    activeId: getStoredConversationId(config.endpoint, userId),
+                    activeId,
                     onSelect: openThread,
                     onNew: startNewThread,
                     onClose: () => setThreadsOpen(false)

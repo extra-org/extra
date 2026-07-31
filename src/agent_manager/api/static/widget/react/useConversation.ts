@@ -68,12 +68,14 @@ export function useConversation(
 
   const replace = useCallback(
     async (staleId: string, onReplaced?: Retarget) => {
-      removeStoredConversationId(endpoint, userId);
-      const fresh = await startConversation();
+      // Deliberately does not touch storage. Recovery can run for a turn the
+      // user has since navigated away from, and only the caller knows which
+      // thread is on screen — it selects the replacement via `onReplaced`.
+      const fresh = await client.createConversation();
       onReplaced?.(staleId, fresh);
       return fresh;
     },
-    [endpoint, userId, startConversation],
+    [client],
   );
 
   const send = useCallback(

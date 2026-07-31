@@ -10,7 +10,6 @@ import {
 import { type Ref, useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentChatClient } from "../api/AgentChatClient";
-import { getStoredConversationId } from "../storage/conversationStorage";
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
@@ -82,14 +81,31 @@ export function AgentChatApp({
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // A vanished conversation is replaced mid-turn; carry its messages onto the
-  // id the turn actually ran under so the view does not go blank.
-  const adoptConversation = useCallback((staleId: string, freshId: string) => {
-    setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
-    setActiveId((current) => (current === staleId ? freshId : current));
+  // Recovery runs from async turn code that can outlive the view it started
+  // in, so it needs the thread on screen *now*, not the one captured when the
+  // turn began. Kept in step with `activeId` by `selectThread`.
+  const activeIdRef = useRef(activeId);
+  const selectThread = useCallback((conversationId: string) => {
+    activeIdRef.current = conversationId;
+    setActiveId(conversationId);
   }, []);
 
   const conversation = useConversation(client, config.endpoint, userId);
+
+  // A vanished conversation is replaced mid-turn; carry its messages onto the
+  // id the turn actually ran under so the view does not go blank.
+  const adoptConversation = useCallback(
+    (staleId: string, freshId: string) => {
+      setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+      // Only the thread the user is looking at may move the selection. A turn
+      // recovered in the background must not drag storage — and so the next
+      // message — onto a conversation the user never opened.
+      if (activeIdRef.current !== staleId) return;
+      selectThread(freshId);
+      conversation.switchTo(freshId);
+    },
+    [conversation, selectThread],
+  );
 
   const refreshUsage = useCallback(
     async (cid: string) => {
@@ -118,10 +134,10 @@ export function AgentChatApp({
     setLoaded(true);
     const cid = conversation.peekId();
     if (!cid) return;
-    setActiveId(cid);
+    selectThread(cid);
     await loadThread(cid);
     await refreshUsage(cid);
-  }, [conversation, loaded, loadThread, refreshUsage]);
+  }, [conversation, loaded, loadThread, refreshUsage, selectThread]);
 
   useEffect(() => {
     if (inline) void loadHistory();
@@ -152,21 +168,21 @@ export function AgentChatApp({
     async (conversationId: string) => {
       conversation.switchTo(conversationId);
       setThreadsOpen(false);
-      setActiveId(conversationId);
+      selectThread(conversationId);
       // ponytail: in-session map owns in-flight streams, so only cold-load a thread we haven't opened yet.
       if (!(conversationId in entriesById)) await loadThread(conversationId);
       await refreshUsage(conversationId);
       inputRef.current?.focus({ preventScroll: true });
     },
-    [conversation, entriesById, loadThread, refreshUsage],
+    [conversation, entriesById, loadThread, refreshUsage, selectThread],
   );
 
   const startNewThread = useCallback(() => {
     conversation.startNew();
     setThreadsOpen(false);
-    setActiveId("");
+    selectThread("");
     inputRef.current?.focus({ preventScroll: true });
-  }, [conversation]);
+  }, [conversation, selectThread]);
 
   const replaceEntry = useCallback(
     (cid: string, id: string, entry: MessageEntry) =>
@@ -203,8 +219,10 @@ export function AgentChatApp({
 
   const submit = useCallback(
     async (text: string) => {
-      const cid = await conversation.ensureId();
-      setActiveId(cid);
+      // The thread on screen wins; storage is consulted only before anything
+      // has been selected, since a background recovery may have moved it.
+      const cid = activeIdRef.current || (await conversation.ensureId());
+      selectThread(cid);
       const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
       putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text }, pending]);
       setSending(true);
@@ -238,6 +256,7 @@ export function AgentChatApp({
       putEntries,
       refreshUsage,
       replaceEntry,
+      selectThread,
       sendWithoutStreaming,
     ],
   );
@@ -299,7 +318,7 @@ export function AgentChatApp({
           <ThreadDrawer
             open={threadsOpen}
             threads={threads}
-            activeId={getStoredConversationId(config.endpoint, userId)}
+            activeId={activeId}
             onSelect={openThread}
             onNew={startNewThread}
             onClose={() => setThreadsOpen(false)}
