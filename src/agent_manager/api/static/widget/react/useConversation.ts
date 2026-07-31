@@ -23,8 +23,12 @@ import type {
 export interface Conversation {
   peekId(): string | null;
   ensureId(): Promise<string>;
-  send(conversationId: string, text: string): Promise<SendMessageResponse>;
-  stream(conversationId: string, text: string): AsyncGenerator<StreamEvent>;
+  send(
+    conversationId: string,
+    text: string,
+    onReplaced?: Retarget,
+  ): Promise<SendMessageResponse>;
+  stream(conversationId: string, text: string, onReplaced?: Retarget): AsyncGenerator<StreamEvent>;
   loadHistory(conversationId: string): Promise<ChatMessage[]>;
   loadUsage(conversationId: string): Promise<TokenBudget | null>;
   listThreads(): Promise<ThreadSummary[]>;
@@ -39,13 +43,15 @@ export interface Conversation {
 const isUnusableConversation = (error: unknown): boolean =>
   error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 
+/** Reports where a turn actually landed after its conversation vanished. The
+ *  caller must write the rest of the turn to `freshId`, not the id it started
+ *  with, or the answer is stored under a conversation that no longer exists. */
+export type Retarget = (staleId: string, freshId: string) => void;
+
 export function useConversation(
   client: AgentChatClient,
   endpoint: string,
   userId: string,
-  /** Told when a vanished conversation is replaced, so the caller can move that
-   *  thread's messages onto the id the turn actually ran under. */
-  onReplaced?: (staleId: string, freshId: string) => void,
 ): Conversation {
   const startConversation = useCallback(async () => {
     const created = await client.createConversation();
@@ -61,34 +67,38 @@ export function useConversation(
   );
 
   const replace = useCallback(
-    async (staleId: string) => {
+    async (staleId: string, onReplaced?: Retarget) => {
       removeStoredConversationId(endpoint, userId);
       const fresh = await startConversation();
       onReplaced?.(staleId, fresh);
       return fresh;
     },
-    [endpoint, userId, startConversation, onReplaced],
+    [endpoint, userId, startConversation],
   );
 
   const send = useCallback(
-    async (conversationId: string, text: string) => {
+    async (conversationId: string, text: string, onReplaced?: Retarget) => {
       try {
         return await client.sendMessage(conversationId, text);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        return client.sendMessage(await replace(conversationId), text);
+        return client.sendMessage(await replace(conversationId, onReplaced), text);
       }
     },
     [client, replace],
   );
 
   const stream = useCallback(
-    async function* (conversationId: string, text: string): AsyncGenerator<StreamEvent> {
+    async function* (
+      conversationId: string,
+      text: string,
+      onReplaced?: Retarget,
+    ): AsyncGenerator<StreamEvent> {
       try {
         yield* client.streamMessage(conversationId, text);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        yield* client.streamMessage(await replace(conversationId), text);
+        yield* client.streamMessage(await replace(conversationId, onReplaced), text);
       }
     },
     [client, replace],

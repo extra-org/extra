@@ -696,6 +696,79 @@ test("stale stored conversation is replaced before sending to the agent", async 
   expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
 });
 
+test("a turn whose conversation vanishes mid-request follows the replacement", async ({
+  page,
+}) => {
+  const usageCalls: string[] = [];
+  const calls: string[] = [];
+
+  // The conversation survives history loading — so it is still the active id at
+  // submit time — and only vanishes once the turn is under way.
+  await page.route("**/conversations/conv-gone/messages", async (route: Route) => {
+    calls.push(`${route.request().method()} /conversations/conv-gone/messages`);
+    await route.fulfill({
+      status: route.request().method() === "GET" ? 200 : 404,
+      contentType: "application/json",
+      body: route.request().method() === "GET" ? "[]" : JSON.stringify({ detail: "not found" }),
+    });
+  });
+  await page.route("**/conversations/conv-gone/messages/stream", async (route: Route) => {
+    calls.push("POST /conversations/conv-gone/messages/stream");
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "conversation not found" }),
+    });
+  });
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    usageCalls.push(new URL(route.request().url()).pathname);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 7, max_tokens: 100, percent: 7, severity: "normal" }),
+    });
+  });
+  await page.route("**/conversations", async (route: Route) => {
+    calls.push(`${route.request().method()} /conversations`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body:
+        route.request().method() === "GET"
+          ? "[]"
+          : JSON.stringify({ conversation_id: "conv-reborn", session_id: "conv-reborn" }),
+    });
+  });
+  await page.route("**/conversations/conv-reborn/messages/stream", async (route: Route) => {
+    calls.push("POST /conversations/conv-reborn/messages/stream");
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "Recovered answer", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-gone"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "are you there");
+  await shadowClick(page, ".send");
+
+  // The answer has to land in the conversation the turn was moved to, not the
+  // one it started in — the view is showing the replacement by now.
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered answer");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+  expect(calls).toContain("POST /conversations/conv-gone/messages/stream");
+  expect(calls).toContain("POST /conversations/conv-reborn/messages/stream");
+  await expect.poll(() => usageCalls[usageCalls.length - 1]).toBe("/conversations/conv-reborn/usage");
+});
+
 test("script-only auto-mount creates one configured widget", async ({ page }) => {
   await mockConversationApi(page);
   await page.goto("/widget-demo-automount.html");

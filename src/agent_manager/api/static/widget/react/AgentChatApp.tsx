@@ -84,12 +84,12 @@ export function AgentChatApp({
 
   // A vanished conversation is replaced mid-turn; carry its messages onto the
   // id the turn actually ran under so the view does not go blank.
-  const onReplaced = useCallback((staleId: string, freshId: string) => {
+  const adoptConversation = useCallback((staleId: string, freshId: string) => {
     setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
     setActiveId((current) => (current === staleId ? freshId : current));
   }, []);
 
-  const conversation = useConversation(client, config.endpoint, userId, onReplaced);
+  const conversation = useConversation(client, config.endpoint, userId);
 
   const refreshUsage = useCallback(
     async (cid: string) => {
@@ -174,11 +174,18 @@ export function AgentChatApp({
     [putEntries],
   );
 
+  /** Runs the turn without streaming and returns the conversation it landed in,
+   *  which is not `cid` if the conversation had to be replaced. */
   const sendWithoutStreaming = useCallback(
-    async (cid: string, text: string, entryId: string) => {
+    async (cid: string, text: string, entryId: string): Promise<string> => {
+      let target = cid;
+      const retarget = (staleId: string, freshId: string) => {
+        target = freshId;
+        adoptConversation(staleId, freshId);
+      };
       try {
-        const answer = await conversation.send(cid, text);
-        replaceEntry(cid, entryId, {
+        const answer = await conversation.send(cid, text, retarget);
+        replaceEntry(target, entryId, {
           id: entryId,
           role: "ai",
           text: answer.answer,
@@ -187,10 +194,11 @@ export function AgentChatApp({
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
       } catch {
-        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+        replaceEntry(target, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
       }
+      return target;
     },
-    [conversation, onAnswer, replaceEntry],
+    [adoptConversation, conversation, onAnswer, replaceEntry],
   );
 
   const submit = useCallback(
@@ -200,22 +208,38 @@ export function AgentChatApp({
       const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
       putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text }, pending]);
       setSending(true);
+      // Where this turn's output belongs. A recovered turn moves to a new
+      // conversation mid-flight, and everything after that point — streamed
+      // content, the fallback answer, the usage refresh — has to follow it.
+      let target = cid;
+      const retarget = (staleId: string, freshId: string) => {
+        target = freshId;
+        adoptConversation(staleId, freshId);
+      };
       try {
         let entry = pending;
-        for await (const event of conversation.stream(cid, text)) {
+        for await (const event of conversation.stream(cid, text, retarget)) {
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(cid, pending.id, entry);
+          replaceEntry(target, pending.id, entry);
         }
-        replaceEntry(cid, pending.id, { ...entry, typing: false });
+        replaceEntry(target, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
       } catch {
-        await sendWithoutStreaming(cid, text, pending.id);
+        target = await sendWithoutStreaming(target, text, pending.id);
       } finally {
         setSending(false);
-        void refreshUsage(cid);
+        void refreshUsage(target);
       }
     },
-    [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming],
+    [
+      adoptConversation,
+      conversation,
+      onAnswer,
+      putEntries,
+      refreshUsage,
+      replaceEntry,
+      sendWithoutStreaming,
+    ],
   );
 
   const toggle = () => void (open ? closeChat() : openChat());
