@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_engine.core.spec import HooksConfig, HookSpec
+from agent_engine.core.spec import FailurePolicy, HooksConfig, HookSpec
 from agent_engine.runtime.hooks.errors import HookExecutionError
 from agent_engine.runtime.hooks.manager import HookManager
 from agent_engine.runtime.hooks.models import (
@@ -297,8 +297,20 @@ async def test_hook_failure_raises_with_point_and_ref() -> None:
     assert isinstance(exc.value.cause, RuntimeError)
 
 
+async def test_hook_execution_error_str_omits_cause_message() -> None:
+    # str(HookExecutionError) is logged and may reach an API error response — it
+    # must never repeat the wrapped cause's own message, which can carry secrets.
+    mgr = _manager(HookSpec("after_tool_call", f"{_FIX}:secret_boom"))
+    with pytest.raises(HookExecutionError) as exc:
+        await mgr.run_after_tool_call(
+            RunContext(), ToolCallContext(agent_id="a", tool_name="t", provider="local")
+        )
+    assert "secret-context7-key" not in str(exc.value)
+    assert "RuntimeError" in str(exc.value)
+
+
 async def test_failure_policy_warn_does_not_raise() -> None:
-    mgr = _manager(HookSpec("after_tool_call", f"{_FIX}:boom", failure_policy="warn"))
+    mgr = _manager(HookSpec("after_tool_call", f"{_FIX}:boom", failure_policy=FailurePolicy.WARN))
     # Should swallow the error and continue.
     await mgr.run_after_tool_call(
         RunContext(), ToolCallContext(agent_id="a", tool_name="t", provider="local")
@@ -313,7 +325,7 @@ async def test_managed_hook_failure_policy_warn_does_not_raise(tmp_path: Path) -
                     "after_tool_call",
                     plugin="managed",
                     method="audit_warn",
-                    failure_policy="warn",
+                    failure_policy=FailurePolicy.WARN,
                 ),
             )
         ),
@@ -373,7 +385,9 @@ async def test_changed_hook_payload_logs_safe_applied_event(
 async def test_hook_failure_log_omits_exception_message(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    mgr = _manager(HookSpec("before_mcp_request", f"{_FIX}:secret_boom", failure_policy="warn"))
+    mgr = _manager(
+        HookSpec("before_mcp_request", f"{_FIX}:secret_boom", failure_policy=FailurePolicy.WARN)
+    )
     caplog.clear()
 
     with caplog.at_level(logging.ERROR, logger="agent_engine.runtime.hooks.manager"):
@@ -405,7 +419,9 @@ async def test_transform_tool_result_returns_modified_result() -> None:
 
 async def test_transform_tool_result_warn_failure_keeps_original() -> None:
     # A failing transform under failure_policy=warn must not alter the result.
-    mgr = _manager(HookSpec("transform_tool_result", f"{_FIX}:boom", failure_policy="warn"))
+    mgr = _manager(
+        HookSpec("transform_tool_result", f"{_FIX}:boom", failure_policy=FailurePolicy.WARN)
+    )
     original = ToolResultContext("a", "t", "mcp", result="keep-me")
     out = await mgr.run_transform_tool_result(None, original)
     assert out is original

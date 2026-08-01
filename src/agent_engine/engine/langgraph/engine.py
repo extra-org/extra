@@ -383,6 +383,7 @@ class LangGraphEngine(Engine):
                 run_id=ctx.run_id,
                 system=self._system_name,
                 error=type(exc).__name__,
+                message=exc,
             )
             await self._fail_run(ctx.run_id)
             await hook_manager.run_run_error(ctx, exc)
@@ -645,6 +646,7 @@ class LangGraphEngine(Engine):
                     run_id=ctx.run_id,
                     system=self._system_name,
                     error=type(exc).__name__,
+                    message=exc,
                 )
                 await self._fail_run(ctx.run_id)
                 await hook_manager.run_run_error(ctx, exc)

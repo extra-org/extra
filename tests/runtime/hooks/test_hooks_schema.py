@@ -135,6 +135,18 @@ def test_invalid_failure_policy_fails(tmp_path: Path) -> None:
     assert "failure_policy" in str(exc.value)
 
 
+def test_on_tool_error_defaults_to_warn_other_points_default_to_fail(tmp_path: Path) -> None:
+    spec = _parse(
+        tmp_path,
+        "hooks:\n"
+        "  on_tool_error:\n    - ref: m:toolerr\n"
+        "  before_tool_call:\n    - ref: m:before\n",
+    )
+    by_point = {h.point: h.failure_policy for h in spec.hooks.hooks}  # type: ignore[attr-defined]
+    assert by_point["on_tool_error"] == "warn"
+    assert by_point["before_tool_call"] == "fail"
+
+
 def test_secret_like_hook_value_rejected(tmp_path: Path) -> None:
     # The existing secret scanner also covers the hooks section: no inline tokens.
     with pytest.raises(ParseError):

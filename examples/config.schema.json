@@ -195,7 +195,8 @@
         "failure_policy": {
           "type": "string",
           "enum": ["fail", "warn"],
-          "default": "fail"
+          "default": "fail",
+          "description": "Defaults to 'fail' (fail-closed) at every hook point except on_tool_error, which defaults to 'warn'."
         }
       },
       "oneOf": [

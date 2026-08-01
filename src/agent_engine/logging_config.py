@@ -4,9 +4,31 @@ import contextvars
 import logging
 import os
 
+from pydantic import ValidationError
+
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
 
 _NOISY = ("httpx", "httpcore", "anthropic", "openai", "urllib3")
+_ERROR_LIMIT = 200
+
+
+def validation_problems(exc: ValidationError) -> str:
+    """Which fields were rejected and why, without the values that were sent."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in err['loc']) or 'input'}: {err['msg']}"
+        for err in exc.errors()
+    )
+
+
+def safe_error(exc: BaseException, limit: int = _ERROR_LIMIT) -> str:
+    """An exception rendered for a log field: bounded, single-line, no payload.
+
+    ``str()`` on a pydantic error appends the ``input_value`` it rejected — the
+    caller's own arguments — so validation failures are reduced to their field
+    reasons instead.
+    """
+    detail = validation_problems(exc) if isinstance(exc, ValidationError) else str(exc)
+    return " ".join(detail.split())[:limit]
 
 
 def _kv(key: str, value: object) -> str:
@@ -29,7 +51,11 @@ class StructuredFormatter(logging.Formatter):
 
 
 def log(logger: logging.Logger, level: int, event: str, **fields: object) -> None:
-    logger.log(level, event, extra={"fields": fields})
+    """Emit one structured line. Exception values are rendered by ``safe_error``,
+    so no call site can leak a rejected payload into a log field by passing the
+    exception straight through."""
+    safe = {k: safe_error(v) if isinstance(v, BaseException) else v for k, v in fields.items()}
+    logger.log(level, event, extra={"fields": safe})
 
 
 def configure_logging(level: str | None = None) -> None:

@@ -14,6 +14,7 @@ from agent_engine.core.spec import (
     BaseModelConfig,
     BasePromptSet,
     DefaultsConfig,
+    FailurePolicy,
     GraphNode,
     HooksConfig,
     HookSpec,
@@ -30,7 +31,7 @@ from agent_engine.core.spec import (
 )
 from agent_engine.parsers.errors import ParseError
 from agent_engine.parsers.parser import Parser
-from agent_engine.runtime.hooks.models import HOOK_POINTS
+from agent_engine.runtime.hooks.models import DEFAULT_FAILURE_POLICY, HOOK_POINTS
 
 _SECRET_MARKERS = ("api_key", "apikey", "secret", "token", "password", "private_key")
 _SECRET_KEY_EXEMPTIONS = {"max_tokens"}
@@ -120,7 +121,6 @@ def _validate_unknown_keys(
                 f"Unknown key '{key}'. Allowed: {allowed_str}",
             )
         )
-
 
 
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
@@ -218,7 +218,9 @@ def _build_hooks(raw: Any) -> HooksConfig:
                 HookSpec(
                     point=point,
                     ref=entry.get("ref"),
-                    failure_policy=entry.get("failure_policy", "fail"),
+                    failure_policy=FailurePolicy(
+                        entry.get("failure_policy", DEFAULT_FAILURE_POLICY[point])
+                    ),
                     plugin=entry.get("plugin"),
                     method=entry.get("method"),
                 )
@@ -320,9 +322,10 @@ def _validate_hook_entry(point: str, index: int, entry: Any, errors: list[Valida
                 "Removed field; hook configuration belongs in hook/plugin code",
             )
         )
-    policy = entry.get("failure_policy", "fail")
-    if policy not in ("fail", "warn"):
-        errors.append(ValidationError(f"{base}.failure_policy", "Must be 'fail' or 'warn'"))
+    policy = entry.get("failure_policy", FailurePolicy.FAIL.value)
+    options = [p.value for p in FailurePolicy]
+    if policy not in options:
+        errors.append(ValidationError(f"{base}.failure_policy", f"Must be one of {options}"))
 
 
 def _validate_hooks(hooks: Any, errors: list[ValidationError]) -> None:
@@ -415,7 +418,6 @@ def _validate_mcps(mcps: dict[str, Any], errors: list[ValidationError]) -> None:
         _validate_mcp_tool_tags(mcp_id, raw, errors)
 
 
-
 def _validate_model(
     path: str, raw: Any, errors: list[ValidationError], is_fallback: bool = False
 ) -> None:
@@ -424,10 +426,7 @@ def _validate_model(
     if not isinstance(raw, dict):
         errors.append(ValidationError(path, "Must be a mapping"))
         return
-    _validate_unknown_keys(
-        path, raw, _FALLBACK_MODEL_KEYS if is_fallback else _MODEL_KEYS, errors
-    )
-
+    _validate_unknown_keys(path, raw, _FALLBACK_MODEL_KEYS if is_fallback else _MODEL_KEYS, errors)
 
     provider = raw.get("provider")
     if not isinstance(provider, str) or not provider.strip():
@@ -587,7 +586,6 @@ class YAMLParser(Parser):
         self._validate_no_secrets(data, errors)
 
         return errors
-
 
     def _validate_graph(
         self,

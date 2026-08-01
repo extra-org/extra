@@ -14,6 +14,7 @@ That single rule drives both orchestrators (children-as-tools) and agents
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,6 +98,15 @@ class FailingChatModel:
         raise RuntimeError("Model stream failed")
 
 
+# Tool results the fake models were handed back, for asserting what a failure
+# actually puts into the model's context.
+SEEN_TOOL_RESULTS: list[str] = []
+
+
+def _record_tool_results(messages: list[Any]) -> None:
+    SEEN_TOOL_RESULTS.extend(str(m.content) for m in messages if isinstance(m, ToolMessage))
+
+
 class FakeChatModel:
     """A scriptless stand-in: route through one tool, then answer."""
 
@@ -121,6 +131,7 @@ class FakeChatModel:
         yield self._respond(messages)
 
     def _respond(self, messages: list[Any]) -> AIMessage:
+        _record_tool_results(messages)
         already_called = any(isinstance(m, ToolMessage) for m in messages)
         if self._tool_names and not already_called:
             call = ToolCall(
@@ -171,6 +182,7 @@ def agent(
     tools: tuple[ToolSpec, ...] = (),
     protected: bool = False,
     auto_mode: bool = True,
+    model: ModelConfig = _MODEL,
 ) -> GraphNode:
     # These flow tests exercise routing/tool execution, not Human-in-the-Loop, so
     # they default to auto_mode=True (no approval interrupts) — the behavior an
@@ -180,7 +192,7 @@ def agent(
         id=node_id,
         name=node_id,
         description=f"{node_id} agent",
-        model=_MODEL,
+        model=model,
         protected=protected,
         prompts=BasePromptSet(),
         tools=tools,
@@ -189,12 +201,14 @@ def agent(
     return GraphNode(node=spec)
 
 
-def orchestrator(node_id: str, children: list[GraphNode]) -> GraphNode:
+def orchestrator(
+    node_id: str, children: list[GraphNode], *, model: ModelConfig = _MODEL
+) -> GraphNode:
     spec = OrchestratorSpec(
         id=node_id,
         name=node_id,
         description=f"{node_id} orchestrator",
-        model=_MODEL,
+        model=model,
         prompts=OrchestratorPromptSet(),
     )
     return GraphNode(node=spec, children=tuple(children))
@@ -270,6 +284,28 @@ async def test_orchestrator_routes_to_matching_child(tmp_path: Path, model_facto
     result = await run_message(spec, tmp_path, model_factory, "please handle super order")
 
     assert result.visited == ["root", "root/super"]
+
+
+async def test_orchestrator_recovers_from_child_agent_crash(
+    tmp_path: Path, model_factory: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression: a child agent's own run raising (its model is down) must not
+    # crash the whole orchestrator run — the orchestrator still answers, and
+    # the model gets a generic notice instead of the run dying with a 500.
+    SEEN_TOOL_RESULTS.clear()
+    down = ModelConfig(provider="fake", name="failing-primary", temperature=None)
+    spec = system(orchestrator("root", [agent("flights", model=down)]))
+
+    with caplog.at_level(logging.WARNING):
+        result = await run_message(spec, tmp_path, model_factory, "please handle flights")
+
+    assert result.answer == "ok"
+    returned = "\n".join(SEEN_TOOL_RESULTS)
+    assert "Agent 'flights' failed to complete this request." in returned
+    assert "not a problem with the arguments" in returned
+
+    record = next(r for r in caplog.records if r.getMessage() == "child agent call failed")
+    assert getattr(record, "fields", {})["error"] == "RuntimeError"
 
 
 async def test_nested_tool_usage_is_recorded(tmp_path: Path, model_factory: Any) -> None:

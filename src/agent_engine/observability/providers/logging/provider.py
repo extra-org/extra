@@ -26,7 +26,7 @@ class LoggingCallbackHandler(BaseCallbackHandler):
         log(logger, logging.INFO, "llm end", tokens=usage)
 
     def on_llm_error(self, error: BaseException, **kwargs: Any) -> None:
-        log(logger, logging.ERROR, "llm error", error=str(error))
+        log(logger, logging.ERROR, "llm error", error=error)
 
     def on_tool_start(self, serialized: dict[str, Any], input_str: str, **kwargs: Any) -> None:
         log(logger, logging.INFO, "tool start", name=(serialized or {}).get("name", "?"))
@@ -37,7 +37,7 @@ class LoggingCallbackHandler(BaseCallbackHandler):
         log(logger, logging.DEBUG, "tool output", value=str(output)[:300])
 
     def on_tool_error(self, error: BaseException, **kwargs: Any) -> None:
-        log(logger, logging.WARNING, "tool end", status="error", error=str(error))
+        log(logger, logging.WARNING, "tool end", status="error", error=error)
 
     def on_chain_start(
         self, serialized: dict[str, Any], inputs: dict[str, Any], **kwargs: Any

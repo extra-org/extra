@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from agent_engine.core.execution import ExecutionPolicy
+
+
+class FailurePolicy(StrEnum):
+    FAIL = "fail"
+    WARN = "warn"
 
 
 @dataclass(frozen=True)
@@ -117,16 +123,14 @@ class GraphNode:
 class HookSpec:
     """One declared runtime hook: where it runs, what it is, how it behaves.
 
-    ``point`` is a hook lifecycle point (e.g. "before_mcp_request"). A hook is
-    declared either by explicit Python ``ref`` or by managed ``plugin`` +
-    ``method`` resolved through plugins.toml. ``failure_policy`` is "fail"
-    (default, fail-closed) or "warn" (best-effort: log and continue on hook
-    error).
+    ``failure_policy``'s ``FAIL`` default applies only when constructed
+    directly; the YAML parser picks its own default per point instead
+    (``agent_engine.runtime.hooks.models.DEFAULT_FAILURE_POLICY``).
     """
 
     point: str
     ref: str | None = None
-    failure_policy: str = "fail"
+    failure_policy: FailurePolicy = FailurePolicy.FAIL
     plugin: str | None = None
     method: str | None = None
 
