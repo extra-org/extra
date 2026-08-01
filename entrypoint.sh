@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# PATH already points at the project's agent-owned venv (/venv/bin), so `pip`
+# below installs workspace dependencies into a writable, non-root location.
+
 if { [ "$1" = "serve" ] || [ "$1" = "agent-manager" ]; } && [ -f /workspace/requirements.txt ]; then
     echo "Installing user dependencies..." >&2
     pip install -q -r /workspace/requirements.txt

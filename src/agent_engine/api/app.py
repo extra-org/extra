@@ -145,7 +145,7 @@ class ApprovalDecisionRequest(BaseModel):
     """Decide a pending tool call. ``user_id`` must match the run's authorized
     approver when one was recorded."""
 
-    user_id: str | None = None
+    user_id: str | None = Field(default=None, max_length=128)
 
 
 class ApprovalDecisionBody(ApprovalDecisionRequest):
@@ -153,7 +153,7 @@ class ApprovalDecisionBody(ApprovalDecisionRequest):
     boundary. Accepts values like ``allow``, ``allow for this session``, or
     ``deny``; an unrecognized value yields a 400."""
 
-    decision: str
+    decision: str = Field(max_length=128)
 
 
 class RunStatusResponse(BaseModel):

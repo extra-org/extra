@@ -10,6 +10,7 @@ To run:  python -m pytest tests/test_sprint0_static_checks.py -v
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,13 @@ class TestGenericErrorResponses:
             "expected at least 2 generic error strings in agent_manager/api/routes.py"
         )
 
+    def test_error_logs_include_context(self) -> None:
+        content = _read_src("agent_manager/api/routes.py")
+        assert "logger.exception(" in content, "routes.py should log exceptions server-side"
+        assert "conversation_id=%s" in content, (
+            "log content should indicate which conversation failed"
+        )
+
 
 # ── Task 2: Non-root Docker user ───────────────────────────────────────────
 
@@ -84,14 +92,38 @@ class TestDockerNonRoot:
 
     def test_workspace_created_before_chown(self) -> None:
         content = _read("Dockerfile")
-        # mkdir -p /workspace must appear before chown on the same line
-        for line in content.splitlines():
-            if "chown" in line and "mkdir" in line:
-                assert line.index("mkdir") < line.index("chown"), (
+        # mkdir -p /workspace must appear before chown in the same RUN block,
+        # so the chown target exists when it executes.
+        run_blocks = re.split(r"(?=^RUN )", content, flags=re.M)
+        for block in run_blocks:
+            if "chown" in block:
+                if "mkdir" not in block:
+                    pytest.fail("chown RUN block does not create its targets")
+                assert block.index("mkdir") < block.index("chown"), (
                     "/workspace must be created before chown runs"
                 )
                 return
-        pytest.fail("no line with both mkdir and chown found in Dockerfile")
+        pytest.fail("no RUN block containing chown found in Dockerfile")
+
+    def test_agent_owned_venv_for_user_deps(self) -> None:
+        content = _read("Dockerfile")
+        # entrypoint.sh pip-installs /workspace/requirements.txt at runtime as the
+        # non-root agent user; it needs a writable venv on PATH, not system dirs.
+        assert "python -m venv --system-site-packages /venv" in content, (
+            "Dockerfile should create an agent-owned venv for user dependencies"
+        )
+        assert 'ENV PATH="/venv/bin:$PATH"' in content, (
+            "venv bin should be on PATH so runtime pip install lands in /venv"
+        )
+        assert "chown -R agent:agent /app /workspace /venv" in content, (
+            "venv must be owned by the agent user"
+        )
+
+    def test_entrypoint_installs_user_deps(self) -> None:
+        content = _read("entrypoint.sh")
+        assert "pip install -q -r /workspace/requirements.txt" in content, (
+            "entrypoint should install workspace requirements.txt"
+        )
 
 
 # ── Task 3: Request size limits ────────────────────────────────────────────
@@ -144,6 +176,22 @@ class TestRequestSizeLimits:
                                     break
         assert id_fields_found >= 3, f"expected at least 3 id fields with max_length, found {id_fields_found}"
 
+    def test_approval_decision_fields_max_length(self) -> None:
+        tree = ast.parse(_read_src("agent_engine/api/app.py"))
+        expected = {"ApprovalDecisionRequest": {"user_id"}, "ApprovalDecisionBody": {"decision"}}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in expected:
+                for item in node.body:
+                    if isinstance(item, ast.AnnAssign) and getattr(item.target, "id", None) in expected[node.name]:
+                        assert item.value is not None
+                        call = item.value
+                        if isinstance(call, ast.Call):
+                            assert any(kw.arg == "max_length" for kw in call.keywords), (
+                                f"{node.name}.{item.target.id} missing Field(max_length=...)"
+                            )
+                        else:
+                            pytest.fail(f"{node.name}.{item.target.id} missing Field(max_length=...)")
+
 
 # ── Task 4: Default host 0.0.0.0 (Docker network model) ──────────────────
 
@@ -194,13 +242,20 @@ class TestDockerCompose:
         assert "127.0.0.1:8090:8090" in content, "engine port should be bound to 127.0.0.1"
         assert "127.0.0.1:8100:8100" in content, "manager port should be bound to 127.0.0.1"
 
-    def test_no_sqlite_volume(self) -> None:
-        content = _read("docker-compose.yml")
-        assert "manager-data:" not in content, "SQLite volume should not be in docker-compose (not part of deployment model)"
-
     def test_explicit_host_override(self) -> None:
         content = _read("docker-compose.yml")
         assert "--host" in content, "containers must override host to 0.0.0.0 explicitly"
+
+    def test_manager_writable_database(self) -> None:
+        content = _read("docker-compose.yml")
+        # /workspace is read-only; the manager needs a writable DATABASE_URL
+        # pointing outside it or the SQLite default resolves to /workspace/chat.db.
+        assert "DATABASE_URL=sqlite+aiosqlite:////data/chat.db" in content, (
+            "manager DATABASE_URL must point at a writable location"
+        )
+        assert "manager-data:/data" in content, (
+            "manager needs a writable volume mounted outside the read-only /workspace"
+        )
 
 
 # ── Syntax validation ─────────────────────────────────────────────────────

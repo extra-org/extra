@@ -44,7 +44,7 @@ This project is **not production-ready**. The following critical security gaps a
 
 | Gap | Risk | Status |
 |-----|------|--------|
-| **No authentication** on any API endpoint (`/invoke`, `/stream`, `/conversations`) | Critical | Open — Sprint 1 planned |
+| **No authentication at the HTTP boundary** — Extra does not validate API keys or JWTs; authentication is expected to be handled by the client gateway, host application, or API middleware. The verified identity/context is then passed into Extra (e.g. via the runtime hooks feature) for access-control decisions. See [docs/SIDECAR_CONTEXT_AUTH.md](docs/SIDECAR_CONTEXT_AUTH.md). | Critical | Design gap — deployer responsibility |
 | **Access control not enforced** — the `protected` node feature is structurally wired but the Security/Context Gate that populates real identity is not implemented | Critical | Open — Sprint 1 planned |
 | **No rate limiting** — no per-IP or per-endpoint request throttling | High | Open — Sprint 1 planned |
 | **No built-in TLS** — must be handled by a reverse proxy | High | Open — Sprint 3 planned |
@@ -65,7 +65,7 @@ Despite the gaps above, the following security practices are in place:
 | YAML secret scanning | Rejects literal secrets and credential shapes; only variable references are allowed |
 | Non-root Docker user | Container runs as `agent` user, not root |
 | CORS default deny | Empty allowed origins list by default; must be explicitly configured |
-| Request size limits | Pydantic `max_length` on all string fields in request schemas |
+| Request-field length validation | Pydantic `max_length` bounds on request string fields (applied after the body is read/parsed — this is **field-length validation, not a full HTTP body-size limit**). A true HTTP body-size limit at the ASGI/proxy layer is planned in Sprint 2 |
 | Execution cost guardrails | Per-run token and cost limits prevent runaway LLM spend |
 | MCP auth headers never logged | Authentication headers passed to MCP servers are excluded from logs |
 | SQL injection prevention | All database access goes through SQLAlchemy ORM |
@@ -79,7 +79,7 @@ Despite the gaps above, the following security practices are in place:
 
 Before exposing Extra to any network, you **must**:
 
-1. **Implement authentication** — write a custom auth plugin that validates API keys or JWT tokens. See the plugin architecture in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+1. **Terminate authentication at the client gateway / host application / API middleware** — Extra does not validate API keys or JWTs itself. The verified caller identity and context must be passed into Extra for access-control decisions, for example via the runtime hooks feature (see [docs/SIDECAR_CONTEXT_AUTH.md](docs/SIDECAR_CONTEXT_AUTH.md)).
 
 2. **Run behind a reverse proxy** — use nginx, Caddy, or a cloud load balancer to terminate TLS and add security headers.
 
@@ -98,7 +98,7 @@ Before exposing Extra to any network, you **must**:
 | Sprint | Focus | Status |
 |--------|-------|--------|
 | Sprint 0 | Emergency fixes (error responses, non-root Docker, request limits) | Completed |
-| Sprint 1 | Auth & access control (authentication middleware, rate limiting, security headers) | Planned |
+| Sprint 1 | Access control & rate limiting (wire identity into `protected` nodes, rate limiting, security headers) | Planned |
 | Sprint 2 | Input hardening (timeouts, SSE cleanup, path validation, log redaction) | Planned |
 | Sprint 3 | Production readiness (TLS docs, health checks, audit logging) | Planned |
 

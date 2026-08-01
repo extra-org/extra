@@ -1,5 +1,9 @@
 # Local development compose — exposes services on 127.0.0.1 only.
 # Not intended for production deployment.
+#
+# The manager needs a writable database. For local dev it uses a bundled SQLite
+# file on a named volume (writable under the non-root `agent` user); production
+# deployments point DATABASE_URL at a client-owned database instead.
 
 services:
   engine:
@@ -23,6 +27,9 @@ services:
       - "127.0.0.1:8100:8100"
     volumes:
       - ./examples:/workspace:ro
+      - manager-data:/data
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////data/chat.db
     env_file:
       - .env
     command: ["agent-manager", "--host", "0.0.0.0", "--config", "/workspace/enterprise-knowledge-assistant/agents.yaml"]
@@ -31,3 +38,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+volumes:
+  manager-data:
