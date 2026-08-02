@@ -170,11 +170,11 @@ The YAML never contains an import path, a config block, or a secret — it only 
 </ParamField>
 
 <ParamField path="failure_policy" type="string" default="fail">
-  What happens if the hook itself raises.
+  What happens if the hook itself raises. Defaults to `fail` everywhere except `on_tool_error`, which defaults to `warn`.
 
   <Expandable title="possible values">
     <ResponseField name="fail" type="string">
-      **Default (fail-closed).** The operation is aborted and the request fails. Use for anything security-critical, like auth — a broken auth hook must never fail open.
+      **Fail-closed.** The operation is aborted and the request fails. Use for anything security-critical, like auth — a broken auth hook must never fail open.
     </ResponseField>
     <ResponseField name="warn" type="string">
       The error is logged and the operation continues as if the hook had succeeded. Use for best-effort work like audit logging, where a logging failure shouldn't block the user.

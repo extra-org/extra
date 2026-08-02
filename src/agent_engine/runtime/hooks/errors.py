@@ -27,10 +27,15 @@ class HookLoadError(HookError):
 
 
 class HookExecutionError(HookError):
-    """A hook raised while running. Wraps the original exception as ``__cause__``."""
+    """A hook raised while running. Wraps the original exception as ``__cause__``.
+
+    The message names only the failing hook's point/ref and the cause's type —
+    never the cause's own message, which may carry payload or credential
+    material the hook was handling. ``str(exc)`` is safe to log anywhere.
+    """
 
     def __init__(self, point: str, ref: str, cause: BaseException) -> None:
         self.point = point
         self.ref = ref
         self.cause = cause
-        super().__init__(f"Hook for '{point}' (ref='{ref}') failed: {cause}")
+        super().__init__(f"Hook for '{point}' (ref='{ref}') failed: {type(cause).__name__}")

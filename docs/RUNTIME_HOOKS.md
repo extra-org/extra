@@ -109,8 +109,9 @@ hooks:
   The id is resolved through `plugins/plugins.toml` `[hooks.plugins]`.
 - **`ref`** *(advanced / backwards compatible)* — explicit import path to the
   hook callable. Use either `ref` or `plugin` + `method`, never both.
-- **`failure_policy`** *(optional, `fail` | `warn`, default `fail`)* — `fail`
-  aborts the operation (fail-closed); `warn` logs and continues.
+- **`failure_policy`** *(optional, `fail` | `warn`, default `fail` — except
+  `on_tool_error`, which defaults to `warn`)* — `fail` aborts the operation
+  (fail-closed); `warn` logs and continues.
 
 ### Validation
 
@@ -443,7 +444,8 @@ that and rely on env/config-based service credentials for the discovery phase.
 
 ## Error policy
 
-Fail-closed by default — security hooks must not be silently skipped:
+Fail-closed by default, except `on_tool_error` (see below) — security hooks
+must not be silently skipped:
 
 | Point | On hook failure (`failure_policy: fail`) |
 |---|---|
@@ -454,15 +456,16 @@ Fail-closed by default — security hooks must not be silently skipped:
 | `before_tool_call` | the run fails (a policy gate can block the call) |
 | `after_tool_call` | the run fails |
 | `transform_tool_result` | the run fails (use `warn` to pass the original result through) |
-| `on_tool_error` | the run fails |
+| `on_tool_error` | the run fails — but **defaults to `warn`** (see below) |
 | `before_mcp_request` | the MCP request fails |
 | `after_mcp_response` | the MCP request fails |
 | `on_run_error` | logged; **the original run error is preserved** |
 
 Use `failure_policy: warn` for best-effort hooks (e.g. audit) that should log
-and continue instead of aborting. Hook errors are never silently swallowed:
-they are logged with their point and `ref`, and (except `on_engine_stop` and
-`on_run_error`, which are best-effort) raised.
+and continue instead of aborting — `on_tool_error` already defaults to this.
+Hook errors are never silently swallowed: they are logged with their point and
+`ref`, and (except `on_engine_stop` and `on_run_error`, which are best-effort)
+raised.
 
 ---
 

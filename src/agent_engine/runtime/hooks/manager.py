@@ -18,7 +18,7 @@ Error policy (fail-closed by default, per hook ``failure_policy``):
     for best-effort audit hooks).
   * ``transform_tool_result`` fail-> the run fails (use ``failure_policy: warn``
     to pass the original, untransformed result through instead).
-  * ``on_tool_error`` failure     -> the run fails (use ``failure_policy: warn``).
+  * ``on_tool_error`` failure     -> logged and skipped (default ``warn`` here).
   * ``before_mcp_request`` fail   -> the MCP request fails.
   * ``after_mcp_response`` fail   -> the MCP request fails (observe-only payload).
   * ``on_run_error`` failure      -> logged; the original run error is preserved.
@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent_engine.core.spec import FailurePolicy
 from agent_engine.runtime.hooks.errors import HookExecutionError, HookLoadError
 from agent_engine.runtime.hooks.loader import HookLoader
 from agent_engine.runtime.hooks.models import (
@@ -65,7 +66,7 @@ class LoadedHook:
     point: HookPoint
     ref: str
     func: Any
-    failure_policy: str = "fail"
+    failure_policy: FailurePolicy = FailurePolicy.FAIL
     plugin: str | None = None
     method: str | None = None
     event_mode: bool = False
@@ -354,7 +355,7 @@ class HookManager:
                 hook.failure_policy,
                 type(exc).__name__,
             )
-            if hook.failure_policy == "warn":
+            if hook.failure_policy == FailurePolicy.WARN:
                 return None
             raise HookExecutionError(hook.point, hook.ref, exc) from exc
         return result

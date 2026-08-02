@@ -33,7 +33,7 @@ from agent_engine.engine.langgraph.helpers import (
     run_tool_loop,
 )
 from agent_engine.loaders.resolver_loader import ResolverLoader
-from agent_engine.logging_config import log
+from agent_engine.logging_config import log, safe_error
 from agent_engine.runtime.execution import (
     ExecutionLimitExceeded,
     blocked_message,
@@ -41,6 +41,7 @@ from agent_engine.runtime.execution import (
     log_limit,
 )
 from agent_engine.runtime.hooks import (
+    HookExecutionError,
     HookManager,
     ToolCallContext,
     ToolRequestContext,
@@ -345,7 +346,7 @@ class AgentNode:
 
         The failure is returned (not raised) so the model can read it and recover.
         """
-        error = str(exc)[:200]
+        error = safe_error(exc)
         used_tools.append(self._usage(call, "failed", error=error))
         self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms, error=error)
 
@@ -582,8 +583,24 @@ class OrchestratorNode:
                 # to the LangGraph runtime so the checkpoint is taken — it is
                 # control flow, not a child failure. Never swallow it.
                 raise
+            except HookExecutionError:
+                # A fail-closed hook (e.g. before_tool_call) rejected this child's
+                # own call. That must abort the run like any other fail-closed
+                # hook, not be reported as a recoverable child-agent failure.
+                raise
             except Exception as exc:
-                return f"Agent error: {exc}"
+                log(
+                    logger,
+                    logging.WARNING,
+                    "child agent call failed",
+                    agent=entry.id,
+                    error=type(exc).__name__,
+                    message=exc,
+                )
+                return (
+                    f"Agent '{entry.id}' failed to complete this request. "
+                    "This is an internal error, not a problem with the arguments."
+                )
             finally:
                 current_streams.reset(sink_token)
 
@@ -645,7 +662,28 @@ class OrchestratorNode:
                 except ExecutionLimitExceeded as exc:
                     log_limit(exc)
                     return blocked_message(exc)
-            return cast(str, await tool.ainvoke(tc["args"]))
+            try:
+                return cast(str, await tool.ainvoke(tc["args"]))
+            except GraphInterrupt:
+                raise
+            except HookExecutionError:
+                # A fail-closed hook (e.g. before_tool_call) rejected this call.
+                # That must abort the run like any other fail-closed hook, not be
+                # reported as a recoverable child-agent failure.
+                raise
+            except Exception as exc:
+                log(
+                    logger,
+                    logging.WARNING,
+                    "child agent call failed",
+                    agent=tc["name"],
+                    error=type(exc).__name__,
+                    message=exc,
+                )
+                return (
+                    f"Agent '{tc['name']}' failed to complete this request. "
+                    "This is an internal error, not a problem with the arguments."
+                )
 
         response = await run_tool_loop(bound_model, messages, state, self._node_path, invoke_tool)
         answer = as_text(response.content)

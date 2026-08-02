@@ -13,6 +13,8 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
+from agent_engine.core.spec import FailurePolicy
+
 # The supported lifecycle points. Adding a point here is the one place that
 # enables a new hook kind across schema validation, loading, and execution.
 HookPoint = Literal[
@@ -41,6 +43,23 @@ HOOK_POINTS: tuple[HookPoint, ...] = (
     "on_tool_error",
     "before_mcp_request",
     "after_mcp_response",
+)
+
+DEFAULT_FAILURE_POLICY: dict[HookPoint, FailurePolicy] = {
+    "on_engine_start": FailurePolicy.FAIL,
+    "on_engine_stop": FailurePolicy.FAIL,
+    "on_run_start": FailurePolicy.FAIL,
+    "on_run_end": FailurePolicy.FAIL,
+    "on_run_error": FailurePolicy.FAIL,
+    "before_tool_call": FailurePolicy.FAIL,
+    "after_tool_call": FailurePolicy.FAIL,
+    "transform_tool_result": FailurePolicy.FAIL,
+    "on_tool_error": FailurePolicy.WARN,
+    "before_mcp_request": FailurePolicy.FAIL,
+    "after_mcp_response": FailurePolicy.FAIL,
+}
+assert set(DEFAULT_FAILURE_POLICY) == set(HOOK_POINTS), (
+    "DEFAULT_FAILURE_POLICY must declare a default for every HOOK_POINTS entry"
 )
 
 T = TypeVar("T")

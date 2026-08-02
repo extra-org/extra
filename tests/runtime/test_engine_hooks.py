@@ -18,17 +18,20 @@ from langchain_core.messages.tool import ToolCall
 from agent_engine.core.spec import (
     AgentSpec,
     BasePromptSet,
+    FailurePolicy,
     GraphNode,
     HooksConfig,
     HookSpec,
     ModelConfig,
+    OrchestratorPromptSet,
+    OrchestratorSpec,
     SystemMeta,
     SystemSpec,
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.parsers.yaml.parser import YAMLParser
-from agent_engine.runtime.hooks.errors import HookLoadError
+from agent_engine.runtime.hooks.errors import HookExecutionError, HookLoadError
 from agent_engine.runtime.hooks.models import RunContext
 from tests.runtime.hooks import fixtures
 
@@ -89,6 +92,19 @@ def _agent(node_id: str, *, tools: tuple[ToolSpec, ...] = ()) -> GraphNode:
     )
 
 
+def _orchestrator(node_id: str, children: list[GraphNode]) -> GraphNode:
+    return GraphNode(
+        node=OrchestratorSpec(
+            id=node_id,
+            name=node_id,
+            description=f"{node_id} orchestrator",
+            model=_MODEL,
+            prompts=OrchestratorPromptSet(),
+        ),
+        children=tuple(children),
+    )
+
+
 def _system(graph: GraphNode, *hooks: HookSpec) -> SystemSpec:
     return SystemSpec(
         meta=SystemMeta(name="hooks-system"),
@@ -107,6 +123,15 @@ def _write_tool(base_dir: Path, tool_id: str) -> None:
     tools_dir.mkdir(parents=True, exist_ok=True)
     (tools_dir / f"{tool_id}.py").write_text(
         f"def {tool_id}(message: str) -> str:\n    return 'did: ' + message\n",
+        encoding="utf-8",
+    )
+
+
+def _write_failing_tool(base_dir: Path, tool_id: str) -> None:
+    tools_dir = base_dir / "plugins" / "tools"
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    (tools_dir / f"{tool_id}.py").write_text(
+        f"def {tool_id}(message: str) -> str:\n    raise RuntimeError('tool exploded')\n",
         encoding="utf-8",
     )
 
@@ -344,3 +369,63 @@ async def test_on_engine_stop_failure_does_not_block_cleanup(
     await engine.build(spec)
     await engine.close()  # must not raise despite the failing stop hook
     assert engine._mcp_tools == {}
+
+
+async def test_on_tool_error_hook_failure_does_not_abort_run_by_default(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    # Parsed from YAML with no failure_policy declared, so this exercises the
+    # real default rather than an explicitly-passed one: the tool fails, its
+    # reporting hook fails too, and the model still answers.
+    _write_failing_tool(tmp_path, "boom_tool")
+    config_path = tmp_path / "agents.yml"
+    config_path.write_text(
+        "system: {name: hooks-system}\n"
+        "tools: {boom_tool: {description: boom}}\n"
+        "agents: {solo: {description: d, auto: true, tools: [boom_tool]}}\n"
+        "graph: {solo: }\n"
+        f"hooks: {{on_tool_error: [{{ref: '{_FIX}:boom'}}]}}\n",
+        encoding="utf-8",
+    )
+    spec = YAMLParser().parse(str(config_path))
+    assert [h.failure_policy for h in spec.hooks.hooks] == [FailurePolicy.WARN]
+
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        result = await engine.run("call boom_tool")
+
+    assert result.answer == "ok"
+    assert result.used_tools[0].status == "failed"
+    assert [c[0] for c in fixtures.CALLS] == []  # the hook raised, nothing recorded
+
+
+async def test_on_tool_error_hook_failure_with_fail_aborts_run(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    _write_failing_tool(tmp_path, "boom_tool")
+    spec = _system(
+        _agent("solo", tools=(ToolSpec("boom_tool", "boom"),)),
+        HookSpec("on_tool_error", f"{_FIX}:boom", failure_policy=FailurePolicy.FAIL),
+    )
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        with pytest.raises(HookExecutionError, match="on_tool_error"):
+            await engine.run("call boom_tool")
+
+
+async def test_fail_closed_before_tool_call_aborts_run_under_orchestrator(
+    tmp_path: Path, model_factory: Any
+) -> None:
+    # Regression: a child agent called by an orchestrator must not have its
+    # fail-closed before_tool_call hook silently swallowed by the
+    # orchestrator's own child-call error handling — that would turn a
+    # security gate into a fail-open no-op.
+    _write_tool(tmp_path, "local_tool")
+    spec = _system(
+        _orchestrator("root", [_agent("child", tools=(ToolSpec("local_tool", "local"),))]),
+        HookSpec("before_tool_call", f"{_FIX}:boom"),  # default failure_policy=fail
+    )
+    async with LangGraphEngine(tmp_path, model_factory=model_factory) as engine:
+        await engine.build(spec)
+        with pytest.raises(HookExecutionError, match="before_tool_call"):
+            await engine.run("call local_tool")

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+from pydantic import BaseModel, ValidationError
+
 from agent_engine.logging_config import (
     StructuredFormatter,
     configure_logging,
@@ -94,3 +97,19 @@ def test_begin_request_sanitizes_untrusted_id():
     assert _begin_request("bad id\nINFO fake") == "badidINFOfake"
     minted = _begin_request("!@#$%")
     assert minted and " " not in minted
+
+
+def test_log_helper_renders_exception_fields_without_payload(caplog):
+    class _Args(BaseModel):
+        message: str
+
+    with pytest.raises(ValidationError) as excinfo:
+        _Args(message={"secret": "hunter2"})  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.WARNING, logger="agent_engine.test"):
+        log(logging.getLogger("agent_engine.test"), logging.WARNING, "boom", error=excinfo.value)
+
+    rendered = caplog.records[-1].fields["error"]
+    assert "hunter2" not in rendered  # the rejected input never reaches a log field
+    assert "message:" in rendered  # but which field failed still does
+    assert "\n" not in rendered
