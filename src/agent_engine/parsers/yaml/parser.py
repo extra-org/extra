@@ -658,6 +658,10 @@ class YAMLParser(Parser):
             hooks=_build_hooks(data.get("hooks")),
             plugins=_build_plugins(data.get("plugins")),
             execution=_build_execution(data.get("execution")),
+            declared_tools=tuple(
+                ToolSpec(id=tool_id, description=raw.get("description", ""))
+                for tool_id, raw in tools.items()
+            ),
         )
 
     def _build_defaults(self, raw: Any) -> DefaultsConfig | None:

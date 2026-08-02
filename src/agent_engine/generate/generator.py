@@ -15,6 +15,7 @@ from agent_engine.generate.manifest import (
 class GenerateResult:
     created: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    ignored: list[str] = field(default_factory=list)
 
 
 class Generator:
@@ -44,6 +45,10 @@ class Generator:
             self._write(
                 tools_dir / f"{tool_id}.py", _tool_stub(tool_id, description), result, base_dir
             )
+
+        result.ignored.extend(
+            t.id for t in spec.declared_tools if t.id not in tool_ids
+        )
 
         resolvers_dir = base_dir / "plugins" / "resolvers"
         resolvers_dir.mkdir(parents=True, exist_ok=True)

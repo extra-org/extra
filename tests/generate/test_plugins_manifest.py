@@ -242,6 +242,37 @@ def test_generate_is_idempotent_and_preserves_manifest(tmp_path: Path) -> None:
     assert f"plugins/{MANIFEST_NAME}" in result.skipped  # existed, not recreated
 
 
+# -- declared-but-unreferenced tools -------------------------------------------
+
+
+def test_generate_reports_declared_but_unreferenced_tools(tmp_path: Path) -> None:
+    spec = _spec_with_plugins()
+    spec = SystemSpec(
+        meta=spec.meta,
+        defaults=spec.defaults,
+        graph=spec.graph,
+        hooks=spec.hooks,
+        plugins=spec.plugins,
+        declared_tools=(
+            ToolSpec("book_flight", "book a flight"),
+            ToolSpec("cancel_flight", "cancel a flight"),
+        ),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    # book_flight is referenced by the flights agent, so it's not reported.
+    assert "cancel_flight" in result.ignored
+    assert "book_flight" not in result.ignored
+    # Still no stub — nothing calls it.
+    assert not (tmp_path / "plugins" / "tools" / "cancel_flight.py").exists()
+
+
+def test_generate_reports_no_ignored_tools_when_all_referenced(tmp_path: Path) -> None:
+    result = Generator().generate(_spec_with_plugins(), tmp_path)
+    assert result.ignored == []
+
+
 def test_generator_creates_missing_prompt_stubs(tmp_path: Path) -> None:
     # Setup spec with an orchestrator routing to an agent, both having missing prompts
     agent = AgentSpec(

@@ -168,3 +168,6 @@ class SystemSpec:
     hooks: HooksConfig = field(default_factory=HooksConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     execution: ExecutionPolicy = field(default_factory=ExecutionPolicy)
+    # The full top-level `tools:` registry, independent of which agents
+    # reference them. Lets `generate` report tools declared but unused.
+    declared_tools: tuple[ToolSpec, ...] = field(default_factory=tuple)
