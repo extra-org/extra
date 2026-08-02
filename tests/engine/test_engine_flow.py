@@ -157,6 +157,32 @@ class FakeChatModel:
         return ""
 
 
+def _logged_fields(caplog: pytest.LogCaptureFixture) -> str:
+    """Every structured field value emitted during the capture, as one string."""
+    return "\n".join(str(getattr(r, "fields", "")) for r in caplog.records)
+
+
+class BadArgsChatModel(FakeChatModel):
+    """Calls its first tool with args that fail the tool's own schema."""
+
+    BAD_ARG_VALUE = "secret-arg-value"
+
+    def _respond(self, messages: list[Any]) -> AIMessage:
+        _record_tool_results(messages)
+        already_called = any(isinstance(m, ToolMessage) for m in messages)
+        if self._tool_names and not already_called:
+            call = ToolCall(
+                name=self._select(messages),
+                args={"message": {"leaked": self.BAD_ARG_VALUE}},
+                id="call_1",
+            )
+            return AIMessage(content="", tool_calls=[call])
+        return AIMessage(content=self._answer)
+
+    def bind_tools(self, tools: list[Any]) -> BadArgsChatModel:
+        return BadArgsChatModel(self._answer, [t.name for t in tools])
+
+
 @pytest.fixture
 def model_factory() -> Callable[[str, str, float | None], BaseChatModel]:
     def factory(provider: str, name: str, temperature: float | None) -> BaseChatModel:
@@ -164,6 +190,8 @@ def model_factory() -> Callable[[str, str, float | None], BaseChatModel]:
             return cast(BaseChatModel, FailingChatModel())
         if name == "successful-fallback":
             return cast(BaseChatModel, FakeChatModel(answer="recovered ok"))
+        if name == "bad-args":
+            return cast(BaseChatModel, BadArgsChatModel())
         return cast(BaseChatModel, FakeChatModel())
 
     return factory
@@ -286,12 +314,42 @@ async def test_orchestrator_routes_to_matching_child(tmp_path: Path, model_facto
     assert result.visited == ["root", "root/super"]
 
 
+async def test_orchestrator_recovers_from_invalid_child_tool_args(
+    tmp_path: Path, model_factory: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Regression: a malformed child-agent tool call (args failing _AgentCall's
+    # schema) must not crash the run. The model is told which field it got
+    # wrong so it can correct the call, but never has its own arguments echoed
+    # back at it; the untrimmed detail goes to the server log instead.
+    SEEN_TOOL_RESULTS.clear()
+    bad_args_model = ModelConfig(provider="fake", name="bad-args", temperature=None)
+    spec = system(orchestrator("root", [agent("flights")], model=bad_args_model))
+
+    with caplog.at_level(logging.WARNING):
+        result = await run_message(spec, tmp_path, model_factory, "please handle flights")
+
+    assert result.answer == "ok"
+    assert result.visited == ["root"]
+
+    returned = "\n".join(SEEN_TOOL_RESULTS)
+    assert "Invalid arguments for 'flights'" in returned
+    assert "message: Input should be a valid string" in returned
+    assert BadArgsChatModel.BAD_ARG_VALUE not in returned
+
+    record = next(r for r in caplog.records if r.getMessage() == "child agent call failed")
+    assert getattr(record, "fields", {})["error"] == "ValidationError"
+    # The rejected arguments must not reach the log either — not through this
+    # record, and not through the trace callback's own tool-error line.
+    assert BadArgsChatModel.BAD_ARG_VALUE not in str(getattr(record, "fields", {}))
+    assert BadArgsChatModel.BAD_ARG_VALUE not in _logged_fields(caplog)
+
+
 async def test_orchestrator_recovers_from_child_agent_crash(
     tmp_path: Path, model_factory: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # Regression: a child agent's own run raising (its model is down) must not
-    # crash the whole orchestrator run — the orchestrator still answers, and
-    # the model gets a generic notice instead of the run dying with a 500.
+    # The child's own run raises (its model is down) rather than its arguments
+    # being rejected: the orchestrator still answers, and the cause reaches the
+    # model so it can decide whether the call is worth correcting.
     SEEN_TOOL_RESULTS.clear()
     down = ModelConfig(provider="fake", name="failing-primary", temperature=None)
     spec = system(orchestrator("root", [agent("flights", model=down)]))
@@ -301,8 +359,8 @@ async def test_orchestrator_recovers_from_child_agent_crash(
 
     assert result.answer == "ok"
     returned = "\n".join(SEEN_TOOL_RESULTS)
-    assert "Agent 'flights' failed to complete this request." in returned
-    assert "not a problem with the arguments" in returned
+    assert "Agent 'flights' failed to complete this request" in returned
+    assert "Model execution failed" in returned  # the cause, not a generic notice
 
     record = next(r for r in caplog.records if r.getMessage() == "child agent call failed")
     assert getattr(record, "fields", {})["error"] == "RuntimeError"

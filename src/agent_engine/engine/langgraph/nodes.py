@@ -17,7 +17,7 @@ from typing import Any, cast
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.errors import GraphInterrupt
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.invocation import ToolInvocation
@@ -33,7 +33,7 @@ from agent_engine.engine.langgraph.helpers import (
     run_tool_loop,
 )
 from agent_engine.loaders.resolver_loader import ResolverLoader
-from agent_engine.logging_config import log, safe_error
+from agent_engine.logging_config import log, safe_error, validation_problems
 from agent_engine.runtime.execution import (
     ExecutionLimitExceeded,
     blocked_message,
@@ -69,7 +69,16 @@ _ORCHESTRATOR_CONTRACT = """
 class _AgentCall(BaseModel):
     """Input schema for a child-agent tool."""
 
-    message: str
+    # Every child agent takes exactly this one argument, so describing it once
+    # here is what keeps an orchestrator from inventing a shape (a dict of
+    # fields, a nested object) that can only fail validation.
+    message: str = Field(
+        description=(
+            "The complete request for this agent, as a single plain-text string. "
+            "Not an object or a list: everything the agent needs — including any "
+            "context it cannot see — goes into the text itself."
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -128,6 +137,30 @@ class _ToolCall:
 def _elapsed_ms(start: float) -> int:
     """Whole milliseconds elapsed since a ``time.perf_counter()`` reading."""
     return int((time.perf_counter() - start) * 1000)
+
+
+def _invalid_args_message(subject: str, exc: ValidationError) -> str:
+    """Tell the model which fields it got wrong, so it can correct the call.
+
+    Built from the structured errors rather than ``str(exc)``: pydantic echoes
+    the rejected ``input_value`` back in its own message, which is the caller's
+    arguments and may hold credentials or personal data.
+    """
+    problems = validation_problems(exc)
+    return f"Invalid arguments for '{subject}': {problems}. Correct them and call it again."
+
+
+def _child_failure_message(subject: str, exc: Exception) -> str:
+    """Report a child-agent failure back to the calling model, cause included.
+
+    A model can only correct a call whose failure it can read, so the reason is
+    passed through rather than replaced by a generic notice — the same contract
+    a tool failure already has with its caller. ``safe_error`` bounds it and
+    keeps a schema rejection from echoing the arguments back into the context.
+    """
+    if isinstance(exc, ValidationError):
+        return _invalid_args_message(subject, exc)
+    return f"Agent '{subject}' failed to complete this request: {safe_error(exc)}"
 
 
 class AgentNode:
@@ -345,6 +378,11 @@ class AgentNode:
         """Record a failed call, fire ``on_tool_error``, and return the error text.
 
         The failure is returned (not raised) so the model can read it and recover.
+        A tool's own exception text is the developer's message to the model and
+        is passed through; a schema rejection is reworded so the model learns
+        which field it got wrong without its arguments being echoed back — the
+        same rewording is used for the trace/hook copy of the error, which a
+        pydantic ``str(exc)`` would otherwise leak its rejected input through.
         """
         error = safe_error(exc)
         used_tools.append(self._usage(call, "failed", error=error))
@@ -354,10 +392,15 @@ class AgentNode:
             current_run_context.get(),
             self._call_context(call, "failed", latency_ms, error=error),
         )
-        await self._execution_manager.finish_execution(
-            call.exec_id, status="failed", result=f"Tool error: {exc}"
+        model_error = (
+            _invalid_args_message(call.name, exc)
+            if isinstance(exc, ValidationError)
+            else f"Tool error: {exc}"
         )
-        return f"Tool error: {exc}"
+        await self._execution_manager.finish_execution(
+            call.exec_id, status="failed", result=model_error
+        )
+        return model_error
 
     async def _record_success(
         self,
@@ -597,10 +640,7 @@ class OrchestratorNode:
                     error=type(exc).__name__,
                     message=exc,
                 )
-                return (
-                    f"Agent '{entry.id}' failed to complete this request. "
-                    "This is an internal error, not a problem with the arguments."
-                )
+                return _child_failure_message(entry.id, exc)
             finally:
                 current_streams.reset(sink_token)
 
@@ -680,10 +720,7 @@ class OrchestratorNode:
                     error=type(exc).__name__,
                     message=exc,
                 )
-                return (
-                    f"Agent '{tc['name']}' failed to complete this request. "
-                    "This is an internal error, not a problem with the arguments."
-                )
+                return _child_failure_message(tc["name"], exc)
 
         response = await run_tool_loop(bound_model, messages, state, self._node_path, invoke_tool)
         answer = as_text(response.content)
