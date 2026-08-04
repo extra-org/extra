@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.5.0](https://github.com/extra-org/extra/compare/agent-engine-v0.4.1...agent-engine-v0.5.0) (2026-08-04)
+
+
+### Features
+
+* expose manager playground route ([82c405f](https://github.com/extra-org/extra/commit/82c405fd4436675a2fed20fc687705e7e4b09611))
+
+
+### Bug Fixes
+
+* **api:** sanitize raw tool exception text to generic error in ToolRecord ([4959cfc](https://github.com/extra-org/extra/commit/4959cfcbd92b8064396570e121c96d06535b6f8b))
+* **api:** sanitize raw tool exception text to generic error in ToolRecord ([24cd005](https://github.com/extra-org/extra/commit/24cd005a4ff88bed77ddcfd5a28c87d7472224f8))
+* **cli:** validate config before serving ([b172b1a](https://github.com/extra-org/extra/commit/b172b1ab8f41cd8c6a1f03b473808c871ed4417d))
+* **cli:** validate config before serving ([5f1442f](https://github.com/extra-org/extra/commit/5f1442f286a7bc6723c33b48a54f0267cf10a48d))
+* **generate:** report unreferenced tools ([2581c0e](https://github.com/extra-org/extra/commit/2581c0e5e910de24287057f73f323d9a03338a4d))
+* **generate:** report unreferenced tools ([cc80456](https://github.com/extra-org/extra/commit/cc804560ea3774d41df769977621e8a2f0953163))
+* **logging:** align uvicorn/third-party logs with structured formatter ([90711ab](https://github.com/extra-org/extra/commit/90711ab77012aa05cf6eee0fb12d38f67c18fb5e))
+* **logging:** make configure_logging own the root handler unconditionally ([861c60f](https://github.com/extra-org/extra/commit/861c60fca7c744b175bcb3d60f79b0fee8a50516))
+* **parser:** reject unknown and misplaced YAML keys during spec validation ([016f89d](https://github.com/extra-org/extra/commit/016f89d2cc87849320c3f711495f870d1715925b))
+* **parser:** reject unknown and misplaced YAML keys during spec validation ([c981c57](https://github.com/extra-org/extra/commit/c981c57a7a71a469180c3e575122b046f94348f1))
+* **widget:** avoid crypto.randomUUID crash outside secure contexts ([46a98ce](https://github.com/extra-org/extra/commit/46a98ce118a99b9a249bef86c52aae484e95a8c9))
+* **widget:** avoid crypto.randomUUID crash outside secure contexts ([da666bc](https://github.com/extra-org/extra/commit/da666bc004bdd013862c3d466e519cd111413a96))
+* **widget:** hide internal tool provider labels ([5166956](https://github.com/extra-org/extra/commit/51669564e712adcc1406d754f8c8b0f652fe20f0))
+* **widget:** hide tool provider labels ([3a5f3a2](https://github.com/extra-org/extra/commit/3a5f3a209d880ce8854995c0c417faac3089a218))
+
+
+### Performance Improvements
+
+* **parser:** optimize _validate_unknown_keys loop ([d821d6b](https://github.com/extra-org/extra/commit/d821d6b5620d476b722c4dcc2712f4635e0aec1f))
+
 ## [0.4.1](https://github.com/extra-org/extra/compare/agent-engine-v0.4.0...agent-engine-v0.4.1) (2026-08-01)
 
 
