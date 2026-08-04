@@ -53685,11 +53685,11 @@ function styles(config) {
     .thread-drawer.open { transform: none; opacity: 1; pointer-events: auto; }
     .thread-drawer-head { display: flex; align-items: center; justify-content: space-between;
       padding: 10px 12px 10px 18px; font-weight: 600; font-size: 14px; color: #18181b;
-      border-bottom: 1px solid #f0f0f1; }
+      border-bottom: 1px solid #f0f0f1; flex: 0 0 auto; }
     .thread-new { display: flex; align-items: center; gap: 8px; margin: 12px 14px 4px;
       padding: 10px 14px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff;
       color: #18181b; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit;
-      transition: background .12s; }
+      transition: background .12s; flex: 0 0 auto; }
     .thread-new:hover { background: #f4f4f5; }
     .thread-new svg { width: 16px; height: 16px; flex: 0 0 auto; }
     .thread-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 14px;
@@ -53698,7 +53698,7 @@ function styles(config) {
     .thread-item { text-align: left; border: 0; background: transparent; cursor: pointer;
       padding: 10px 12px; border-radius: 10px; font-size: 13.5px; color: #3f3f46;
       font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      transition: background .12s; }
+      transition: background .12s; flex: 0 0 auto; }
     .thread-item:hover { background: #f4f4f5; }
     .thread-item.active { background: #f4f4f5; color: #18181b; font-weight: 600; }
     .thread-empty { color: #a1a1aa; font-size: 13px; text-align: center; padding: 24px 12px; margin: 0; }
