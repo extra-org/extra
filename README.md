@@ -5,10 +5,10 @@
   </picture>
 </p>
 
+<h1 align="center">Turn your product into an AI-powered assistant.</h1>
+
 <p align="center">
-  <b>Turn your app into an agentic product — from one YAML file.</b><br>
-  Give any application a smart, domain-aware agent layer, without
-  building the engine yourself.
+  Give your users an AI-powered way to use your product—with zero backend rewrites.
 </p>
 
 <p align="center">
@@ -18,195 +18,169 @@
 </p>
 
 <p align="center">
-  <a href="https://docs.extra-ai.co/docs/introduction">Documentation</a> ·
   <a href="#quick-start">Quick Start</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#learn-more">Learn more</a> ·
+  <a href="#why-extra">Why Extra</a> ·
+  <a href="https://docs.extra-ai.co/docs/introduction">Documentation</a> ·
   <a href="#contributing">Contributing</a>
 </p>
 
 ---
 
-## What Extra is
+## Why Extra
 
-Extra is a lightweight engine that adds an agentic layer to any application.
-You describe your agents in a simple YAML file — what each one is responsible
-for and what it can access — and Extra turns that into a running system that
-routes each request to the right agent and answers it accurately.
+Extra gives your customers an AI-powered way to use your product.
 
-Every agent has a single, clear responsibility and is scoped to its own
-domain, with its own prompt, tools, and data. That scoping is what keeps
-answers grounded: a request about billing never reaches the returns agent, so
-there's no context bleeding between domains and no hallucinated hand-off. You
-get tools, MCP servers, authentication, provider connectors, and
-observability out of the box — so your app can be agentic in a day, not a
-quarter.
+It works with the APIs, business logic, and workflows you already have — without requiring you to redesign your product around AI.
 
-## How it works
 
-You define a small graph in YAML: one **orchestrator** that routes, and
-focused **agents** that do the work. Extra runs it — picking the right agent
-per request and keeping each one inside its own domain.
+* **No backend rewrite.** Keep your existing APIs, services, and business logic as they are.
 
-```mermaid
-flowchart TD
-    U([User request]) --> R{{Orchestrator<br/>routes by domain}}
-    R -->|billing| A1[Billing agent]
-    R -->|orders| A2[Orders agent]
-    R -->|docs| A3[Docs agent]
+* **Specialized by design.** Each AI specialist owns a specific part of your business.
 
-    A1 --- P1[/prompt · tools · MCP · auth/]
-    A2 --- P2[/prompt · tools · MCP · auth/]
-    A3 --- P3[/prompt · tools · MCP · auth/]
+* **Your backend stays in control.** Business logic, data, credentials, and authorization remain in trusted code.
 
-    A1 --> RESP([Grounded response])
-    A2 --> RESP
-    A3 --> RESP
-```
+* **Explicit orchestration.** Work moves between specialists through predictable and inspectable execution paths.
 
-Each agent only sees its own tools and data, so the model stays focused and
-answers correctly for that part of your business. Add a new capability by
-adding an agent to the file — no routing code to write.
+* **Built for your product.** Expose Extra through an API or embed the assistant directly into your application.
 
-Here's the same idea in YAML:
+**Not just a chatbot.** Extra doesn't stop at answering questions. It can execute real product workflows using your existing APIs and tools.
 
-```yaml
-orchestrators:
-  router:
-    description: "Routes each request to the right department."
-    prompts:
-      orchestrator: "prompts/router.md"
-
-agents:
-  orders_agent:
-    description: "Handles order status and tracking."
-    prompts:
-      system: "prompts/orders_agent.md"
-    tools: [get_order_status]
-    mcps: [orders_api]
-
-  returns_agent:
-    description: "Handles returns and refunds."
-    prompts:
-      system: "prompts/returns_agent.md"
-    tools: [create_return]
-
-graph:
-  router:
-    orders_agent:
-    returns_agent:
-```
-
-That's the whole system. Extra validates it, compiles it, and serves it as an
-API. You only write your own business logic — the tool and connector stubs
-Extra generates for you.
 
 ## Quick Start
 
-Write your `agents.yml` (like the one above), then generate the plugin stubs
-and serve it:
+You need Docker and a language model.
+
+Use a supported cloud provider with an API key, or run open-source models locally with Ollama.
+
+Create `agents.yml` — an orchestrator that routes to two focused agents:
+
+```yaml
+system:
+  name: "Support Assistant"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+
+orchestrators:
+  support_router:
+    description: "Routes each request to the agent that owns it."
+    prompts:
+      orchestrator: prompts/support_router/orchestrator.md
+
+agents:
+  orders_agent:
+    description: "Handles order status, shipping changes, and returns."
+    prompts:
+      system: prompts/orders_agent/system.md
+
+  billing_agent:
+    description: "Handles invoices, subscriptions, and refunds."
+    prompts:
+      system: prompts/billing_agent/system.md
+
+# Indentation is the hierarchy: the orchestrator routes to both agents.
+graph:
+  support_router:
+    orders_agent:
+    billing_agent:
+```
+
+Scaffold the prompt and plugin stubs the YAML references. It never overwrites a
+file you already wrote:
 
 ```bash
-# Generate tool/resolver stubs from your spec, then fill in your logic
 docker run --rm -v "$(pwd):/workspace" -w /workspace \
   ghcr.io/extra-org/extra:latest generate --config agents.yml
+```
 
-# Serve your system
-docker run -p 8090:8090 -v "$(pwd):/workspace" -w /workspace \
+Fill in the three prompt stubs it created:
+
+```markdown
+<!-- prompts/support_router/orchestrator.md -->
+Route orders, shipping, and returns to orders_agent.
+Route invoices, plans, and refunds to billing_agent.
+
+<!-- prompts/orders_agent/system.md -->
+Handle order status, shipping changes, and returns using the available tools.
+
+<!-- prompts/billing_agent/system.md -->
+Handle invoices, subscriptions, and refunds using the available tools.
+```
+
+Run it with Agent Manager, which serves the conversation API, history, and the
+chat widget:
+
+```bash
+docker run -p 8100:8100 -v "$(pwd):/workspace" -w /workspace \
   -e ANTHROPIC_API_KEY=sk-... \
-  ghcr.io/extra-org/extra:latest serve --config agents.yml
+  ghcr.io/extra-org/extra:latest \
+  agent-manager --config agents.yml --port 8100
 ```
 
-Your agent API is live at `http://localhost:8090`. For the widget, local
-(non-Docker) setup, and the full walkthrough, see the
-[Quickstart docs](https://docs.extra-ai.co/docs/quickstart).
-
-### Agent setup skill
-
-If you use Claude Code, Cursor, or Codex, you can install the official Extra
-setup skill to create or repair an `extra` project configuration
-interactively. The same open Agent Skills-format skill works across supported
-agents; it helps set up `agents.yml`, prompts, MCPs, tools, resolvers, plugins,
-generation, Docker/local execution, and validation.
-
-List available skills:
+Talk to it in the browser at **http://localhost:8100/playground**, or over the
+API — create a conversation with an id you choose, then send it a message:
 
 ```bash
-npx skills add extra-org/extra-skills --list
+curl -X POST http://localhost:8100/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"readme-demo"}'
+
+curl -X POST http://localhost:8100/conversations/readme-demo/messages \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Tell me about my system"}'
 ```
 
-Install for Claude Code:
+Tools, MCP servers, deeper routing, per-node authorization, and embedding the
+chat widget are covered in the
+[Quickstart](https://docs.extra-ai.co/docs/quickstart).
 
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a claude-code
+## Features
+
+- AI specialists
+- Workflow orchestration
+- Authorization outside the LLM
+- Local tools and MCP
+- Human approvals
+- Streaming API
+- Embeddable chat widget
+- Anthropic, OpenAI, Gemini, and Bedrock
+- Langfuse tracing
+
+## Architecture
+
+Extra executes an explicit orchestration graph.
+
+Orchestrators route requests to AI specialists. Each specialist owns its own prompts, tools, MCP servers, and authorization.
+
+Your business logic stays in your backend. Extra only orchestrates execution.
+
+```mermaid
+flowchart TD
+    U([User request]) --> R{{Orchestrator}}
+
+    R --> A1[Billing specialist]
+    R --> A2[Orders specialist]
+    R --> A3[Docs specialist]
+
+    A1 --> T1[Business logic / APIs]
+    A2 --> T2[Business logic / APIs]
+    A3 --> T3[Business logic / APIs]
+
+    T1 --> RESP([Response])
+    T2 --> RESP
+    T3 --> RESP
 ```
 
-Install for Cursor:
+Extra runs the graph. Your project's plugins hold the trusted business logic —
+tools, access checks, and the values resolved into prompts.
 
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a cursor
-```
-
-Install for Codex:
-
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a codex
-```
-
-Install for all three:
-
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a claude-code -a cursor -a codex
-```
-
-Add `-g` to install globally for the current user instead of into the current
-project.
-
-In Claude Code, open your project:
-
-```bash
-claude
-```
-
-Then run:
-
-```text
-/extra-setup
-```
-
-Examples:
-
-```text
-/extra-setup simple banking demo
-/extra-setup repair my agents.yml
-/extra-setup configure MCP tools and resolvers
-```
-
-In Cursor or Codex, install the same `extra-setup` skill and ask the agent to
-use it:
-
-```text
-Use the extra-setup skill to create a simple banking demo for this project.
-```
-
-If your current Cursor or Codex version supports direct skill invocation, use
-that agent's documented invocation flow.
-
-The skill repository is available at
-[extra-org/extra-skills](https://github.com/extra-org/extra-skills).
-
-## What you get out of the box
-
-- **Domain-focused agents** — one responsibility each, scoped to their own tools and data, so answers stay accurate.
-- **Automatic routing** — declare the graph; Extra sends each request to the right agent.
-- **Tools, MCP & auth** — connect any tool or MCP server, with tokens that never reach the model or the logs.
-- **Observability** — a full trace of every request.
-
-## Learn more
-
-- **[Full example](https://docs.extra-ai.co/docs/tutorial)** — build a complete multi-agent system step by step.
+- **[Tutorial](https://docs.extra-ai.co/docs/tutorial)** — build a complete multi-agent system step by step.
 - **[YAML reference](https://docs.extra-ai.co/docs/yaml-spec)** — every field you can declare.
-- **[Architecture](https://docs.extra-ai.co/docs/architecture)** — how routing and execution work under the hood.
+- **[Architecture](https://docs.extra-ai.co/docs/architecture)** — how routing and execution work.
+- **[`examples/`](examples/)** — runnable specs, including an enterprise knowledge assistant.
+
 
 ## Contributing
 
