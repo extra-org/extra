@@ -39,8 +39,13 @@ sync-ai: generate-ai ## Alias for generate-ai (older name, kept for docs compati
 
 sync-skills: generate-ai ## Alias for generate-ai (older name, kept for docs compatibility).
 
-format: ## Auto-format the codebase (ruff format).
+format-check: ## Check code formatting without modifying files.
+	ruff format --check $(SRC) $(TESTS)
+
+format: ## Auto-format the codebase.
 	ruff format $(SRC) $(TESTS)
+
+check: format-check lint typecheck test generate-check ## Quality gate.
 
 lint: ## Lint the codebase (ruff check).
 	ruff check $(SRC) $(TESTS)
@@ -51,7 +56,6 @@ typecheck: ## Type-check the codebase (mypy).
 test: ## Run the test suite (pytest).
 	pytest
 
-check: lint typecheck test generate-check ## Quality gate: lint + typecheck + test + generated stubs.
 
 # Compares the example tree before and after `generate` rather than against
 # HEAD, so an unrelated work-in-progress diff cannot make this fail.

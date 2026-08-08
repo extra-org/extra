@@ -1,17 +1,3 @@
-"""Run / approval / execution domain model.
-
-Keeps the five identifiers the design mandates strictly separate:
-
-* ``run_id``       — business-level Extra run identifier.
-* ``thread_id``    — LangGraph persistence / checkpoint identifier.
-* ``approval_id``  — one pending approval request.
-* ``tool_call_id`` — the agent's requested tool call.
-* ``execution_id`` — a single actual execution attempt (idempotency key).
-
-State transitions are explicit and validated; illegal transitions raise so a
-completed or rejected run can never silently re-run.
-"""
-
 from __future__ import annotations
 
 import time
@@ -29,6 +15,7 @@ class RunStatus(StrEnum):
     RESUMING = "resuming"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ApprovalStatus(StrEnum):
@@ -38,18 +25,28 @@ class ApprovalStatus(StrEnum):
     REJECTED = "rejected"
 
 
-# Allowed forward transitions. Anything not listed is rejected. Note there is no
-# path out of COMPLETED/FAILED and no REJECTED -> APPROVED, per the spec.
 _RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.RUNNING: frozenset(
-        {RunStatus.PENDING_APPROVAL, RunStatus.COMPLETED, RunStatus.FAILED}
+        {
+            RunStatus.PENDING_APPROVAL,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
     ),
     RunStatus.PENDING_APPROVAL: frozenset({RunStatus.RESUMING, RunStatus.FAILED}),
     RunStatus.RESUMING: frozenset(
-        {RunStatus.RUNNING, RunStatus.PENDING_APPROVAL, RunStatus.COMPLETED, RunStatus.FAILED}
+        {
+            RunStatus.RUNNING,
+            RunStatus.PENDING_APPROVAL,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
     ),
     RunStatus.COMPLETED: frozenset(),
     RunStatus.FAILED: frozenset(),
+    RunStatus.CANCELLED: frozenset(),
 }
 
 _APPROVAL_TRANSITIONS: dict[ApprovalStatus, frozenset[ApprovalStatus]] = {
@@ -60,8 +57,20 @@ _APPROVAL_TRANSITIONS: dict[ApprovalStatus, frozenset[ApprovalStatus]] = {
 }
 
 
+def can_run_transition(current: RunStatus, target: RunStatus) -> bool:
+    """Whether a run may legally move from ``current`` to ``target``.
+
+    The non-raising counterpart of :func:`ensure_run_transition`, for callers
+    that close a run *opportunistically* — a run that already reached a terminal
+    state, or that is suspended awaiting a decision, is left alone rather than
+    treated as an error. Asking here keeps the allowed transitions in this table
+    only, instead of being restated as status checks at each call site.
+    """
+    return target in _RUN_TRANSITIONS[current]
+
+
 def ensure_run_transition(current: RunStatus, target: RunStatus) -> None:
-    if target not in _RUN_TRANSITIONS[current]:
+    if not can_run_transition(current, target):
         raise InvalidStateTransition("run", current.value, target.value)
 
 

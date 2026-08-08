@@ -85,7 +85,7 @@ def split_instruction_content(text: str) -> tuple[dict[str, object], str]:
     if not match:
         return {}, text
     fields = _parse_frontmatter_block(match.group(1))
-    body = text[match.end():]
+    body = text[match.end() :]
     if body.startswith("\n"):
         body = body[1:]
     return fields, body
@@ -166,9 +166,7 @@ def remove_if_empty(path: Path, removed: list[Path]) -> None:
         removed.append(path)
 
 
-def remove_stale_in(
-    adapter_dir: Path, source_names: set[str], removed: list[Path]
-) -> None:
+def remove_stale_in(adapter_dir: Path, source_names: set[str], removed: list[Path]) -> None:
     if not adapter_dir.exists():
         return
     for f in list(adapter_dir.glob("*.md")) + list(adapter_dir.glob("*.mdc")):
@@ -304,9 +302,7 @@ def sync(
     root = root or ROOT
 
     active_targets = (
-        [TARGETS[t] for t in targets if t in TARGETS]
-        if targets
-        else list(TARGETS.values())
+        [TARGETS[t] for t in targets if t in TARGETS] if targets else list(TARGETS.values())
     )
 
     if not active_targets:
@@ -334,7 +330,9 @@ def sync(
 
     target_names = ", ".join(t.name for t in active_targets)
     total_sources = sum(len(v) for v in source_names_by_kind.values())
-    print(f"generated {len(generated)} adapter(s) for [{target_names}] from {total_sources} source(s)")
+    print(
+        f"generated {len(generated)} adapter(s) for [{target_names}] from {total_sources} source(s)"
+    )
     for path in sorted(generated, key=lambda p: str(p.relative_to(root))):
         print(f"  + {path.relative_to(root)}")
     if removed:

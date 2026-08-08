@@ -91,6 +91,7 @@ learning_planner_agent = "plugins.resolvers.learning_planner_agent:Resolver"
 # plugins/resolvers/shared.py
 from agent_engine.runtime.hooks import RunContext
 
+
 class SharedResolver:
     def current_date(self, ctx: RunContext) -> str:
         return "2026-06-12"
@@ -103,6 +104,7 @@ class SharedResolver:
 # plugins/resolvers/learning_planner_agent.py
 from plugins.resolvers.shared import SharedResolver
 from agent_engine.runtime.hooks import RunContext
+
 
 class Resolver(SharedResolver):
     def experience_level(self, ctx: RunContext) -> str:
@@ -157,8 +159,7 @@ If any protected node exists, the engine expects:
 ```python
 # plugins/access.py
 class AccessResolver:
-    def can_access(self, ctx, node_id: str) -> bool:
-        ...
+    def can_access(self, ctx, node_id: str) -> bool: ...
 ```
 
 Rules:

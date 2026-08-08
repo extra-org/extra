@@ -161,7 +161,7 @@ connect MCP servers on its own — `build()` must run first.
 
 ```python
 async with LangGraphEngine(base_dir) as engine:
-    await engine.build(spec)   # connects MCP servers, discovers tools
+    await engine.build(spec)  # connects MCP servers, discovers tools
     result = await engine.run(message)
 ```
 

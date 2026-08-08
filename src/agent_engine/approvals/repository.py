@@ -27,7 +27,7 @@ from agent_engine.approvals.models import (
 
 @runtime_checkable
 class RunRepository(Protocol):
-    async def create(self, record: RunRecord) -> RunRecord: ...
+    async def create_if_absent(self, record: RunRecord) -> tuple[RunRecord, bool]: ...
     async def get(self, run_id: str) -> RunRecord | None: ...
     async def set_status(self, run_id: str, target: RunStatus) -> RunRecord: ...
 
@@ -57,10 +57,21 @@ class InMemoryRunRepository:
         self._runs: dict[str, RunRecord] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, record: RunRecord) -> RunRecord:
+    async def create_if_absent(self, record: RunRecord) -> tuple[RunRecord, bool]:
+        """Register ``record`` unless its ``run_id`` is already known.
+
+        The existence check and the write happen under one lock acquisition, so
+        two concurrent callers for the same ``run_id`` cannot both observe
+        "absent" and both write — exactly one wins and the other gets back the
+        existing record with ``created=False``. A shared implementation gets the
+        same guarantee from ``INSERT ... ON CONFLICT (run_id) DO NOTHING``.
+        """
         async with self._lock:
+            existing = self._runs.get(record.run_id)
+            if existing is not None:
+                return existing, False
             self._runs[record.run_id] = record
-            return record
+            return record, True
 
     async def get(self, run_id: str) -> RunRecord | None:
         async with self._lock:

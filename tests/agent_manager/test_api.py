@@ -263,7 +263,10 @@ def test_stream_surfaces_sse_events_and_persists_final_answer(client: TestClient
     assert [(m["role"], m["content"]) for m in messages] == [("user", "hello")]
 
 
-def test_stream_ignores_cleanup_error_after_final() -> None:
+def test_stream_surfaces_engine_error_raised_after_final() -> None:
+    """The engine's own generator failing after `final` is a real failure: it
+    reaches the client as an `error` event (the route's own catch-all, not the
+    service) and the assistant message is not persisted."""
     app = FastAPI()
     app.state.service = ConversationService(_FinalThenCleanupErrorEngine(), MemoryRepository())
     app.include_router(router)
@@ -277,12 +280,10 @@ def test_stream_ignores_cleanup_error_after_final() -> None:
 
     assert response.status_code == 200
     assert 'event: final\ndata: {"type": "final", "content": "done", "route": ["agent"]}' in text
-    assert "cleanup after final" not in text
+    assert "cleanup after final" in text
+    assert "event: done\ndata: [DONE]" in text
     messages = client.get(f"/conversations/{cid}/messages").json()
-    assert [(m["role"], m["content"]) for m in messages] == [
-        ("user", "x"),
-        ("assistant", "done"),
-    ]
+    assert [(m["role"], m["content"]) for m in messages] == [("user", "x")]
 
 
 def test_create_accepts_a_stable_session_id_owned_by_the_caller(client: TestClient) -> None:
@@ -425,6 +426,3 @@ def test_tool_error_text_is_sanitized_in_stream_message() -> None:
     assert response.status_code == 200
     assert "Tool execution failed" in response.text
     assert "localhost" not in response.text
-
-
-

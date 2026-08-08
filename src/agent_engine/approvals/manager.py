@@ -113,7 +113,14 @@ class ApprovalManager:
         self._approvals = approval_repository
 
     async def register_run(self, record: RunRecord) -> RunRecord:
-        return await self._runs.create(record)
+        """Register ``record`` unless its ``run_id`` is already known.
+
+        Idempotent: a concurrent caller for the same ``run_id`` (e.g. a retried
+        request landing on a different pod) gets back the record that actually
+        won, instead of overwriting it.
+        """
+        existing, _created = await self._runs.create_if_absent(record)
+        return existing
 
     async def get_run(self, run_id: str) -> RunRecord:
         record = await self._runs.get(run_id)
@@ -170,16 +177,12 @@ class ApprovalManager:
             organization_id=organization_id,
         )
         await self._approvals.create(record)
-        # A run may not have been registered by an external caller; register lazily.
-        run = await self._runs.get(run_id)
-        if run is None:
-            await self._runs.create(
-                RunRecord(
-                    run_id=run_id, thread_id=thread_id, system_name="", status=RunStatus.RUNNING
-                )
-            )
-            run = await self._runs.get(run_id)
-        assert run is not None
+        # A run may not have been registered by an external caller; register
+        # lazily. create_if_absent is atomic, so a concurrent interrupt for the
+        # same run_id cannot race this into two records.
+        run, _created = await self._runs.create_if_absent(
+            RunRecord(run_id=run_id, thread_id=thread_id, system_name="", status=RunStatus.RUNNING)
+        )
         # A model can emit several tool calls in one response. Reaching another
         # interrupt while the run is already pending should keep that state,
         # rather than attempting an illegal pending -> pending transition.

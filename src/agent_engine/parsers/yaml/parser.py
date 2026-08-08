@@ -122,7 +122,6 @@ def _validate_unknown_keys(
         )
 
 
-
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
     if plugins is None:
         return
@@ -415,7 +414,6 @@ def _validate_mcps(mcps: dict[str, Any], errors: list[ValidationError]) -> None:
         _validate_mcp_tool_tags(mcp_id, raw, errors)
 
 
-
 def _validate_model(
     path: str, raw: Any, errors: list[ValidationError], is_fallback: bool = False
 ) -> None:
@@ -424,10 +422,7 @@ def _validate_model(
     if not isinstance(raw, dict):
         errors.append(ValidationError(path, "Must be a mapping"))
         return
-    _validate_unknown_keys(
-        path, raw, _FALLBACK_MODEL_KEYS if is_fallback else _MODEL_KEYS, errors
-    )
-
+    _validate_unknown_keys(path, raw, _FALLBACK_MODEL_KEYS if is_fallback else _MODEL_KEYS, errors)
 
     provider = raw.get("provider")
     if not isinstance(provider, str) or not provider.strip():
@@ -587,7 +582,6 @@ class YAMLParser(Parser):
         self._validate_no_secrets(data, errors)
 
         return errors
-
 
     def _validate_graph(
         self,

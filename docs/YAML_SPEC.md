@@ -437,8 +437,7 @@ If any node has `protected: true`, the engine expects a fixed plugin contract at
 
 ```python
 class AccessResolver:
-    def can_access(self, ctx, node_id: str) -> bool:
-        ...
+    def can_access(self, ctx, node_id: str) -> bool: ...
 ```
 
 Before routing, protected nodes are checked. Allowed nodes remain candidates;

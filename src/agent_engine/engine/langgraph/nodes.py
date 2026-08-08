@@ -164,7 +164,7 @@ class AgentNode:
         self._approval_coordinator = approval_coordinator
         self._system_namespace = system_namespace
 
-    async def __call__(self, state: GraphState) -> dict[str, object]:
+    async def __call__(self, state: GraphState) -> GraphState:
         ctx = self._resolve_context()
         system_prompt = self._build_prompt(ctx)
         return await self._run(system_prompt, state)
@@ -185,7 +185,7 @@ class AgentNode:
         template = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
         return render_prompt(template, ctx)
 
-    async def _run(self, system_prompt: str, state: GraphState) -> dict[str, object]:
+    async def _run(self, system_prompt: str, state: GraphState) -> GraphState:
         """Drive the model + tool loop until the model stops requesting tools."""
         user_msg: str = state.get("message", "")
         messages = model_context(system_prompt, state.get("history", []), user_msg)
@@ -530,7 +530,7 @@ class OrchestratorNode:
         self._filters = filters
         self._base_dir = base_dir
 
-    async def __call__(self, state: GraphState) -> dict[str, object]:
+    async def __call__(self, state: GraphState) -> GraphState:
         candidates = self._filter_children(state)
         base_prompt = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
         orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
@@ -567,7 +567,7 @@ class OrchestratorNode:
             # orchestrator's final synthesis does. The stream sinks are ambient
             # (current_streams); clear the answer sink for the child while keeping
             # route/token, so the live route still reflects the full chain.
-            sub_state: dict[str, Any] = {
+            sub_state: GraphState = {
                 "message": message,
                 "visited": snapshot,
                 "used_tools": [],
@@ -576,7 +576,7 @@ class OrchestratorNode:
             child_sinks = replace(current_streams.get(), answer=None)
             sink_token = current_streams.set(child_sinks)
             try:
-                result = await entry.callable(cast(GraphState, sub_state))
+                result = await entry.callable(sub_state)
             except GraphInterrupt:
                 # An approval interrupt raised inside a nested child must bubble up
                 # to the LangGraph runtime so the checkpoint is taken — it is
@@ -587,12 +587,10 @@ class OrchestratorNode:
             finally:
                 current_streams.reset(sink_token)
 
-            child_visited = cast("list[str]", result.get("visited", []))
-            child_tools = cast("list[ToolUsageRecord]", result.get("used_tools", []))
-            for path in child_visited[len(snapshot) :]:
+            for path in result.get("visited", [])[len(snapshot) :]:
                 visited_acc.append(path)
-            used_tools_acc.extend(child_tools)
-            return cast(str, result.get("answer", ""))
+            used_tools_acc.extend(result.get("used_tools", []))
+            return result.get("answer", "")
 
         return StructuredTool.from_function(
             coroutine=invoke,
@@ -606,7 +604,7 @@ class OrchestratorNode:
         system_prompt: str,
         candidates: list[ChildEntry],
         state: GraphState,
-    ) -> dict[str, object]:
+    ) -> GraphState:
         """Drive the orchestrator LLM tool loop and return the synthesised answer."""
         visited: list[str] = [*state.get("visited", []), self._node_path]
         used_tools: list[ToolUsageRecord] = list(state.get("used_tools", []))

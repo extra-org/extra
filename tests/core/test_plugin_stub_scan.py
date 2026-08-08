@@ -71,9 +71,7 @@ def write(base: Path, rel: str, text: str) -> None:
 
 
 STUB_TOOL = (
-    "def {name}(input: dict) -> str:\n"
-    '    """Does a thing."""\n'
-    "    raise NotImplementedError\n"
+    'def {name}(input: dict) -> str:\n    """Does a thing."""\n    raise NotImplementedError\n'
 )
 REAL_TOOL = "def {name}(input: dict) -> str:\n    return 'done'\n"
 
@@ -150,16 +148,12 @@ def test_resolver_implemented_in_shared_base_passes(tmp_path: Path) -> None:
     write(
         tmp_path,
         "plugins/resolvers/shared.py",
-        "class SharedResolver:\n"
-        "    def user_name(self, ctx: dict) -> str:\n"
-        "        return 'guy'\n",
+        "class SharedResolver:\n    def user_name(self, ctx: dict) -> str:\n        return 'guy'\n",
     )
     write(
         tmp_path,
         "plugins/resolvers/a.py",
-        "from shared import SharedResolver\n\n"
-        "class Resolver(SharedResolver):\n"
-        "    pass\n",
+        "from shared import SharedResolver\n\nclass Resolver(SharedResolver):\n    pass\n",
     )
     spec = system(agent("a", resolvers=(ResolverSpec(id="user_name", scope="shared"),)))
 
@@ -177,9 +171,7 @@ def test_stub_resolver_in_shared_base_is_reported(tmp_path: Path) -> None:
     write(
         tmp_path,
         "plugins/resolvers/a.py",
-        "from shared import SharedResolver\n\n"
-        "class Resolver(SharedResolver):\n"
-        "    pass\n",
+        "from shared import SharedResolver\n\nclass Resolver(SharedResolver):\n    pass\n",
     )
     spec = system(agent("a", resolvers=(ResolverSpec(id="user_name", scope="shared"),)))
 
@@ -203,9 +195,7 @@ def test_unknown_method_is_skipped_not_flagged(tmp_path: Path) -> None:
     write(
         tmp_path,
         "plugins/resolvers/a.py",
-        "from mylib import CustomBase\n\n"
-        "class Resolver(CustomBase):\n"
-        "    pass\n",
+        "from mylib import CustomBase\n\nclass Resolver(CustomBase):\n    pass\n",
     )
     spec = system(agent("a", resolvers=(ResolverSpec(id="user_name", scope="agent"),)))
 
@@ -431,9 +421,6 @@ def test_missing_prompt_file_is_reported_with_hint(tmp_path: Path) -> None:
     errors = scan(spec, tmp_path)
     assert len(errors) == 1
     expected = (
-        "Prompt file not found: prompts/a/system.md — "
-        "run `agentctl generate` to create the stub"
+        "Prompt file not found: prompts/a/system.md — run `agentctl generate` to create the stub"
     )
     assert any("a.prompts.system" in e and expected in e for e in errors)
-
-

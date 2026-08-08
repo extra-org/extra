@@ -426,9 +426,7 @@ def test_missing_model_credentials_name_existing_environment(
     factory = RUNNER["configured_model_factory"]
 
     class MissingCredentialModel:
-        lc_secrets: ClassVar[dict[str, str]] = {
-            "provider_api_key": "CONFIGURED_PROVIDER_API_KEY"
-        }
+        lc_secrets: ClassVar[dict[str, str]] = {"provider_api_key": "CONFIGURED_PROVIDER_API_KEY"}
         provider_api_key = ""
 
     monkeypatch.setitem(
@@ -486,10 +484,7 @@ async def test_runner_logs_history_counts_without_message_contents(
     await demo.invoke("1")
     output = capsys.readouterr().out
 
-    assert (
-        "[SESSION HISTORY] session_id=history-log-session messages_before_run=2"
-        in output
-    )
+    assert "[SESSION HISTORY] session_id=history-log-session messages_before_run=2" in output
     assert "[MODEL CONTEXT] session_id=history-log-session message_count=3" in output
     assert "[SESSION MESSAGE APPENDED] session_id=history-log-session role=user" in output
     assert "[SESSION MESSAGE APPENDED] session_id=history-log-session role=assistant" in output

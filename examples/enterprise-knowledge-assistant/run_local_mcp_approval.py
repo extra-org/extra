@@ -54,6 +54,8 @@ _CREDENTIAL_FIELD_MARKERS = (
 )
 
 EventSink = Callable[[str], None]
+
+
 class ObservableSessionApprovalRepository(InMemorySessionApprovalRepository):
     """Emit safe cache and persistence events without arguments or credentials."""
 
@@ -200,10 +202,7 @@ class ApprovalDemo:
             caller_id=USER_ID,
         )
         print(f"[SESSION MESSAGE APPENDED] session_id={self.session_id} role=user")
-        print(
-            f"[MODEL CONTEXT] session_id={self.session_id} "
-            f"message_count={len(turn.history) + 1}"
-        )
+        print(f"[MODEL CONTEXT] session_id={self.session_id} message_count={len(turn.history) + 1}")
         self._log_model_invocation(turn.run_id, phase="started")
         result = await self._engine.run(
             turn.message,

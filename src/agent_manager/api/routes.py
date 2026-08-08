@@ -39,10 +39,7 @@ CallerId = Annotated[str | None, Depends(get_caller_id)]
 
 _BUDGET_EXCEEDED_DETAIL = {
     "error_type": "context_limit_exceeded",
-    "message": (
-        "This conversation has reached its context limit."
-        " Start a new chat to continue."
-    ),
+    "message": ("This conversation has reached its context limit. Start a new chat to continue."),
 }
 
 _HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
@@ -60,7 +57,6 @@ def _as_http_error() -> Iterator[None]:
     except tuple(_HTTP_ERRORS) as exc:
         status, detail = _HTTP_ERRORS[type(exc)]
         raise HTTPException(status_code=status, detail=detail) from None
-
 
 
 @router.post("/conversations", response_model=CreateConversationResponse)
@@ -148,9 +144,7 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
         error=event.error,
         system_name=event.system_name,
         used_tools=(
-            [_client_tool_record(tool) for tool in event.used_tools]
-            if event.used_tools
-            else None
+            [_client_tool_record(tool) for tool in event.used_tools] if event.used_tools else None
         ),
     )
 
@@ -166,7 +160,6 @@ async def stream_message(
             first = await stream.__anext__()
     except StopAsyncIteration:
         first = None
-
 
     async def event_source() -> AsyncIterator[str]:
         try:

@@ -125,3 +125,8 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = "-q"
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "ruff (>=0.16.2,<0.17.0)"
+]

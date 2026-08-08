@@ -91,9 +91,7 @@ class FakeChatModel:
         yield self._respond(messages)
 
     def _respond(self, messages: list[Any]) -> AIMessage:
-        already_called = any(
-            m.__class__.__name__ == "ToolMessage" for m in messages
-        )
+        already_called = any(m.__class__.__name__ == "ToolMessage" for m in messages)
         if self._tool_names and not already_called:
             return AIMessage(
                 content="",
@@ -153,9 +151,7 @@ def load_test_system(spec_path: Path | None = None) -> tuple[SystemSpec, Path]:
     spec = YAMLParser().parse(str(spec_path))
     errors = SystemSpecValidator().validate(spec, base_dir)
     if errors:
-        raise AssertionError(
-            "Fixture validation failed:\n" + "\n".join(str(e) for e in errors)
-        )
+        raise AssertionError("Fixture validation failed:\n" + "\n".join(str(e) for e in errors))
     return spec, base_dir
 
 

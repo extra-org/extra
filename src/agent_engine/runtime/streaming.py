@@ -8,6 +8,31 @@ from typing import Literal
 from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord, ToolUsageStatus
 
 
+@dataclass
+class TokenUsage:
+    """Per-run token counters fed by the ``token`` sink below.
+
+    Mutable and deliberately trivial: it exists so a run's accounting is one
+    object that can be handed to the sink and read back when the run finishes,
+    instead of closure variables that only the enclosing function can see.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def add(self, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+
+    def totals(self) -> tuple[int | None, int | None]:
+        """Counted tokens, or ``None`` when a model never reported usage.
+
+        ``None`` (rather than ``0``) distinguishes "not reported" from "zero"
+        for result and event payloads.
+        """
+        return self.input_tokens or None, self.output_tokens or None
+
+
 @dataclass(frozen=True)
 class StreamSinks:
     """Request-scoped streaming callbacks.
@@ -53,8 +78,6 @@ class RunStreamEvent:
     used_tools: tuple[ToolUsageRecord, ...] = ()
     input_tokens: int | None = None
     output_tokens: int | None = None
-    # Populated only on a ``pending_approval`` event, when the run suspends at an
-    # approval interrupt. All fields are sanitized and safe to send to a client.
     run_id: str | None = None
     approval_id: str | None = None
     agent_id: str | None = None

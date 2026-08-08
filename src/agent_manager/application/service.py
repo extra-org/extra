@@ -210,53 +210,62 @@ class ConversationService:
         )
 
     async def stream(
-        self, conversation_id: str, text: str, *, caller_id: str | None = None
+        self,
+        conversation_id: str,
+        text: str,
+        *,
+        caller_id: str | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
-        turn = await self.prepare_turn(conversation_id, text, caller_id=caller_id)
+        turn = await self.prepare_turn(
+            conversation_id,
+            text,
+            caller_id=caller_id,
+        )
 
         final: RunStreamEvent | None = None
-        try:
-            async for event in self._engine.stream(
-                turn.message,
-                history=turn.history,
-                context=RunContext(
-                    run_id=turn.run_id,
-                    conversation_id=turn.session_id,
-                    user_id=turn.user_id,
-                ),
-            ):
-                if event.type == "final":
-                    final = event
-                yield event
-        except Exception:
-            if final is None:
-                raise
 
-        if final is not None:
-            await self._repository.append_message(
-                ConversationMessage(
-                    message_id=uuid.uuid4().hex,
-                    session_id=turn.session_id,
-                    run_id=turn.run_id,
-                    user_id=turn.user_id,
-                    role=Role.ASSISTANT,
-                    content=final.content or "",
-                    created_at=datetime.now(UTC),
-                    input_tokens=final.input_tokens,
-                    output_tokens=final.output_tokens,
-                    metadata={
-                        "visited": list(final.route or ()),
-                        "used_tools": [dataclasses.asdict(tool) for tool in final.used_tools],
-                    },
-                ),
-                snapshot_ttl_seconds=self._snapshot_ttl_seconds,
-            )
+        async for event in self._engine.stream(
+            turn.message,
+            history=turn.history,
+            context=RunContext(
+                run_id=turn.run_id,
+                conversation_id=turn.session_id,
+                user_id=turn.user_id,
+            ),
+        ):
+            if event.type == "final":
+                final = event
+
+            yield event
+
+        if final is None:
+            return
+
+        await self._repository.append_message(
+            ConversationMessage(
+                message_id=uuid.uuid4().hex,
+                session_id=turn.session_id,
+                run_id=turn.run_id,
+                user_id=turn.user_id,
+                role=Role.ASSISTANT,
+                content=final.content or "",
+                created_at=datetime.now(UTC),
+                input_tokens=final.input_tokens,
+                output_tokens=final.output_tokens,
+                metadata={
+                    "visited": list(final.route or ()),
+                    "used_tools": [dataclasses.asdict(tool) for tool in final.used_tools],
+                },
+            ),
+            snapshot_ttl_seconds=self._snapshot_ttl_seconds,
+        )
 
     async def _require(self, conversation_id: str) -> ConversationSession:
         session = await self._repository.get_session(conversation_id)
         if session is None:
             raise ConversationNotFound(conversation_id)
         return session
+
     async def _authorize(self, conversation_id: str, caller_id: str | None) -> ConversationSession:
         """Resolve a conversation the caller owns.
 

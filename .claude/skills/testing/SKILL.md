@@ -77,15 +77,17 @@ that never touch real external systems.
 ```python
 import pytest
 
+
 @pytest.fixture
 def valid_spec_dict() -> dict:
     return {"version": "1.0", "app": {"name": "demo"}, "...": "..."}
+
 
 @pytest.mark.parametrize("missing_key", ["version", "app", "runtime"])
 def test_validation_reports_missing_top_level_key(valid_spec_dict, missing_key):
     data = dict(valid_spec_dict)
     del data[missing_key]
-    result = validate_spec(data)            # public interface
+    result = validate_spec(data)  # public interface
     assert not result.ok
     assert any(missing_key in e.message for e in result.errors)
 ```

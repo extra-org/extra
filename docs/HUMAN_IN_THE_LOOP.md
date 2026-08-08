@@ -220,6 +220,12 @@ execution_id  one actual execution attempt (idempotency key)
 Run states: `RUNNING → PENDING_APPROVAL → RESUMING → COMPLETED | FAILED`, with
 validated transitions (no `COMPLETED → RESUMING`, no `REJECTED → APPROVED`).
 
+`CANCELLED` is also terminal and is reachable only from `RUNNING` or `RESUMING`.
+It records that a streaming consumer disconnected or stopped iteration, so the
+engine cancelled the graph instead of continuing model calls for an abandoned
+stream. Losing a stream after the run reaches `PENDING_APPROVAL` does not cancel
+the run: its durable checkpoint remains valid for a later human decision.
+
 ## 6. Checkpointer selection
 
 `CheckpointProviderFactory` chooses the checkpointer **once** at startup; nothing

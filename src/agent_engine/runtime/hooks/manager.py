@@ -34,6 +34,7 @@ import inspect
 import logging
 import time
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,46 @@ class LoadedHook:
     plugin: str | None = None
     method: str | None = None
     event_mode: bool = False
+
+
+async def _invoke(
+    hook: LoadedHook,
+    *,
+    payload: object,
+    positional: tuple[Any, ...],
+    run_context: RunContext | None = None,
+) -> Any:
+    start = time.perf_counter()
+    try:
+        if hook.event_mode:
+            result = hook.func(
+                HookInvocation(
+                    hook_point=hook.point,
+                    plugin=hook.plugin,
+                    method=hook.method,
+                    ref=None,
+                    run_context=run_context,
+                    payload=payload,
+                )
+            )
+        else:
+            result = hook.func(*positional)
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception as exc:
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        logger.error(
+            "hook failed point=%s ref=%s ms=%d policy=%s error_type=%s",
+            hook.point,
+            hook.ref,
+            duration_ms,
+            hook.failure_policy,
+            type(exc).__name__,
+        )
+        if hook.failure_policy == "warn":
+            return None
+        raise HookExecutionError(hook.point, hook.ref, exc) from exc
+    return result
 
 
 class HookManager:
@@ -114,9 +155,6 @@ class HookManager:
         if not specs:
             return cls.empty()
 
-        # Imported lazily to avoid an import cycle with generate.manifest, which
-        # imports runtime.hooks.models. The manifest is read only when managed
-        # plugin/method hooks are actually declared.
         needs_plugin_manifest = any(not spec.ref for spec in specs)
         plugin_refs: dict[str, str] = {}
         if needs_plugin_manifest and manifest_path is not None:
@@ -171,18 +209,16 @@ class HookManager:
         """Total number of registered hook entries."""
         return sum(len(hooks) for hooks in self._hooks.values())
 
-    # -- lifecycle execution -------------------------------------------------
-
     async def run_engine_start(self, context: EngineContext) -> None:
         for hook in self._hooks["on_engine_start"]:
-            await self._invoke(hook, payload=context, positional=(context,))
+            await _invoke(hook, payload=context, positional=(context,))
 
     async def run_engine_stop(self, context: EngineContext) -> None:
         """Engine-stop hooks are best-effort: a failure is logged and never
         prevents resource cleanup during shutdown."""
         for hook in self._hooks["on_engine_stop"]:
             try:
-                await self._invoke(hook, payload=context, positional=(context,))
+                await _invoke(hook, payload=context, positional=(context,))
             except Exception as exc:  # cleanup must proceed regardless
                 logger.error(
                     "on_engine_stop hook failed (continuing shutdown) ref=%s error_type=%s",
@@ -193,7 +229,7 @@ class HookManager:
     async def run_run_start(self, context: RunContext) -> RunContext:
         for hook in self._hooks["on_run_start"]:
             before = self._snapshot(context)
-            result = await self._invoke(
+            result = await _invoke(
                 hook,
                 payload=context,
                 run_context=context,
@@ -207,7 +243,7 @@ class HookManager:
     async def run_run_end(self, run_context: RunContext | None, summary: RunEndContext) -> None:
         """Run-end hooks observe a successful completion; return is ignored."""
         for hook in self._hooks["on_run_end"]:
-            await self._invoke(
+            await _invoke(
                 hook,
                 payload=summary,
                 run_context=run_context,
@@ -219,7 +255,7 @@ class HookManager:
     ) -> None:
         """Pre-call tool hooks are observe-only in this version; return ignored."""
         for hook in self._hooks["before_tool_call"]:
-            await self._invoke(
+            await _invoke(
                 hook,
                 payload=request,
                 run_context=run_context,
@@ -230,7 +266,7 @@ class HookManager:
         self, run_context: RunContext | None, call: ToolCallContext
     ) -> None:
         for hook in self._hooks["after_tool_call"]:
-            await self._invoke(
+            await _invoke(
                 hook,
                 payload=call,
                 run_context=run_context,
@@ -249,7 +285,7 @@ class HookManager:
         """
         for hook in self._hooks["transform_tool_result"]:
             before = self._snapshot(result)
-            transformed = await self._invoke(
+            transformed = await _invoke(
                 hook,
                 payload=result,
                 run_context=run_context,
@@ -265,7 +301,7 @@ class HookManager:
     ) -> None:
         """Tool-error hooks observe a failed tool call; return ignored."""
         for hook in self._hooks["on_tool_error"]:
-            await self._invoke(
+            await _invoke(
                 hook,
                 payload=call,
                 run_context=run_context,
@@ -277,7 +313,7 @@ class HookManager:
     ) -> McpRequestContext:
         for hook in self._hooks["before_mcp_request"]:
             before = self._snapshot(request)
-            result = await self._invoke(
+            result = await _invoke(
                 hook,
                 payload=request,
                 run_context=run_context,
@@ -293,7 +329,7 @@ class HookManager:
     ) -> None:
         """Post-response MCP hooks are observe-only (audit/metrics); return ignored."""
         for hook in self._hooks["after_mcp_response"]:
-            await self._invoke(
+            await _invoke(
                 hook,
                 payload=response,
                 run_context=run_context,
@@ -304,7 +340,7 @@ class HookManager:
         """Run error hooks best-effort: a hook failure here never masks ``error``."""
         for hook in self._hooks["on_run_error"]:
             try:
-                await self._invoke(
+                await _invoke(
                     hook,
                     payload=error,
                     run_context=run_context,
@@ -317,48 +353,6 @@ class HookManager:
                     type(exc).__name__,
                 )
 
-    # -- internals -----------------------------------------------------------
-
-    async def _invoke(
-        self,
-        hook: LoadedHook,
-        *,
-        payload: object,
-        positional: tuple[Any, ...],
-        run_context: RunContext | None = None,
-    ) -> Any:
-        start = time.perf_counter()
-        try:
-            if hook.event_mode:
-                result = hook.func(
-                    HookInvocation(
-                        hook_point=hook.point,
-                        plugin=hook.plugin,
-                        method=hook.method,
-                        ref=None,
-                        run_context=run_context,
-                        payload=payload,
-                    )
-                )
-            else:
-                result = hook.func(*positional)
-            if inspect.isawaitable(result):
-                result = await result
-        except Exception as exc:
-            duration_ms = int((time.perf_counter() - start) * 1000)
-            logger.error(
-                "hook failed point=%s ref=%s ms=%d policy=%s error_type=%s",
-                hook.point,
-                hook.ref,
-                duration_ms,
-                hook.failure_policy,
-                type(exc).__name__,
-            )
-            if hook.failure_policy == "warn":
-                return None
-            raise HookExecutionError(hook.point, hook.ref, exc) from exc
-        return result
-
     @staticmethod
     def _snapshot(payload: object) -> object:
         """Copy a transform payload so in-place mutations can be detected safely.
@@ -367,20 +361,26 @@ class HookManager:
         failed snapshot must never break hook execution; it only means the
         manager cannot emit its generic applied log for that invocation.
         """
-        try:
-            return copy.deepcopy(payload)
-        except Exception:
-            return _SNAPSHOT_UNAVAILABLE
+        snapshot = _SNAPSHOT_UNAVAILABLE
+
+        with suppress(Exception):
+            snapshot = copy.deepcopy(payload)
+
+        return snapshot
 
     @staticmethod
-    def _log_applied_if_changed(hook: LoadedHook, before: object, after: object) -> None:
+    def _log_applied_if_changed(
+        hook: LoadedHook,
+        before: object,
+        after: object,
+    ) -> None:
         if before is _SNAPSHOT_UNAVAILABLE:
             return
-        try:
-            changed = before != after
-        except Exception:
-            return
-        if changed:
-            # Log identity only. Payloads can contain credentials, headers,
-            # prompts, arguments, results, or other sensitive application data.
-            logger.info("hook applied point=%s ref=%s", hook.point, hook.ref)
+
+        with suppress(Exception):
+            if before != after:
+                logger.info(
+                    "hook applied point=%s ref=%s",
+                    hook.point,
+                    hook.ref,
+                )

@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import uuid
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,7 +19,7 @@ from langgraph.types import Command
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.manager import ApprovalManager, ToolExecutionManager
-from agent_engine.approvals.models import ApprovalRecord, RunRecord, RunStatus
+from agent_engine.approvals.models import ApprovalRecord
 from agent_engine.approvals.repository import (
     InMemoryApprovalRepository,
     InMemoryRunRepository,
@@ -54,6 +54,8 @@ from agent_engine.engine.langgraph.helpers import (
     walk,
 )
 from agent_engine.engine.langgraph.nodes import AgentNode, ChildEntry, OrchestratorNode
+from agent_engine.engine.langgraph.run_lifecycle import RunLifecycle
+from agent_engine.engine.langgraph.stream_channel import StreamChannel
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
@@ -66,16 +68,25 @@ from agent_engine.runtime.hooks import (
     EngineContext,
     HookManager,
     RunContext,
-    RunEndContext,
     current_run_context,
 )
 from agent_engine.runtime.state import GraphState
-from agent_engine.runtime.streaming import RunStreamEvent, StreamSinks, current_streams
+from agent_engine.runtime.streaming import (
+    RunStreamEvent,
+    StreamSinks,
+    TokenUsage,
+    current_streams,
+)
 
 logger = logging.getLogger(__name__)
 
 ModelFactory = Callable[..., BaseChatModel]
 _MODEL_FACTORY_OPTIONAL_KWARGS = ("region", "max_tokens", "top_p")
+
+# noinspection PyTypeChecker
+RunGraphBuilder = StateGraph[GraphState, None, GraphState, GraphState]
+# noinspection PyTypeChecker
+RunGraph = CompiledStateGraph[GraphState, None, GraphState, GraphState]
 
 
 def _root_cause(exc: BaseException) -> str:
@@ -85,12 +96,18 @@ def _root_cause(exc: BaseException) -> str:
     return str(exc)
 
 
-def _new_state(
+def _initial_state(
     message: str,
     *,
-    history: Sequence[ChatMessage] = (),
-    run_context: dict[str, Any] | None = None,
+    history: Sequence[ChatMessage],
+    ctx: RunContext,
+    expose_run_context: bool,
 ) -> dict[str, Any]:
+    """Build the graph's input state for one run.
+
+    ``run_context`` is only put on the state when the caller supplied a context
+    of their own, so a plain ``run("hi")`` leaves the key absent for filters.
+    """
     state: dict[str, Any] = {
         "message": message,
         "history": [
@@ -99,8 +116,8 @@ def _new_state(
         ],
         "used_tools": [],
     }
-    if run_context is not None:
-        state["run_context"] = run_context
+    if expose_run_context:
+        state["run_context"] = _state_run_context(ctx)
     return state
 
 
@@ -159,14 +176,33 @@ def _pending_approval(approval: ApprovalRecord) -> PendingApproval:
     )
 
 
-def _run_end_context(system_name: str, ctx: RunContext, result: RunResult) -> RunEndContext:
-    """Safe summary of a completed run for on_run_end hooks (no answer text)."""
-    return RunEndContext(
-        run_id=ctx.run_id,
+def _final_event(system_name: str, result: RunResult) -> RunStreamEvent:
+    """The terminal event of a successful stream, mirroring its ``RunResult``."""
+    return RunStreamEvent(
+        type="final",
+        content=result.answer,
+        route=tuple(result.visited),
         system_name=system_name,
-        status="succeeded",
-        visited=tuple(result.visited),
-        used_tool_count=len(result.used_tools),
+        used_tools=result.used_tools,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
+
+
+def _pending_approval_event(system_name: str, result: RunResult) -> RunStreamEvent:
+    """The terminal event of a stream suspended at an approval interrupt."""
+    assert result.pending_approval is not None
+    approval = result.pending_approval
+    return RunStreamEvent(
+        type="pending_approval",
+        route=tuple(result.visited),
+        system_name=system_name,
+        used_tools=result.used_tools,
+        run_id=approval.run_id,
+        approval_id=approval.approval_id,
+        agent_id=approval.agent_id,
+        tool_name=approval.tool_name,
+        description=approval.description,
     )
 
 
@@ -211,7 +247,7 @@ class LangGraphEngine(Engine):
         self._model_factory = model_factory
         self._callbacks: list[BaseCallbackHandler] = [*build_callbacks(), *(callbacks or [])]
 
-        self._app: CompiledStateGraph | None = None
+        self._app: RunGraph | None = None
         self._system_name = ""
         self._filters: list[RouteFilter] = []
         self._mcp_clients: dict[str, Any] = {}
@@ -219,16 +255,10 @@ class LangGraphEngine(Engine):
         self._tool_loader: ToolLoader | None = None
         self._resolver_loader: ResolverLoader | None = None
         self._hook_manager: HookManager | None = None
+        self._lifecycle: RunLifecycle | None = None
         self._mcp_server_by_tool: dict[str, str] = {}
         self._policy = ExecutionPolicy()
 
-        # Human-in-the-Loop wiring. Checkpointer, approval/execution managers, and
-        # the deterministic approval coordinator are selected once here (Dependency
-        # Inversion) and injected into every node, so both local and MCP tools
-        # share one centralized approval path and the graph/resume logic is
-        # identical for in-memory and persistent backends. There is no LLM-based
-        # risk classification: every tool requires approval unless the agent is in
-        # auto mode or the tool was already approved for the session.
         self._checkpoint_connection_string = checkpoint_connection_string
         self._checkpointer: CheckpointerHandle | None = None
         self._execution_manager = execution_manager or ToolExecutionManager(
@@ -238,9 +268,6 @@ class LangGraphEngine(Engine):
             run_repository=InMemoryRunRepository(),
             approval_repository=InMemoryApprovalRepository(),
         )
-        # Composition roots inject a shared or persistent repository. The fallback
-        # keeps direct engine construction backwards-compatible for tests and
-        # embedded local use.
         self._session_approval_repository = (
             session_approval_repository or InMemorySessionApprovalRepository()
             if session_approval_store is None
@@ -261,6 +288,11 @@ class LangGraphEngine(Engine):
             manifest_path=self._base_dir / "plugins" / "plugins.toml",
         )
         await self._hook_manager.run_engine_start(EngineContext(system_name=spec.meta.name))
+        self._lifecycle = RunLifecycle(
+            system_name=self._system_name,
+            hook_manager=self._hook_manager,
+            approval_manager=self._approval_manager,
+        )
         self._filters = self._setup_filters(spec)
         self._mcp_tools = await self._connect_mcps(spec)
         self._tool_loader = ToolLoader(self._base_dir)
@@ -287,8 +319,6 @@ class LangGraphEngine(Engine):
         logger.info("graph:\n%s", "\n".join(render_graph(spec.graph)))
 
     async def close(self) -> None:
-        # on_engine_stop runs best-effort before resources are released; a hook
-        # failure is logged inside run_engine_stop and never blocks cleanup.
         if self._hook_manager is not None:
             log(logger, logging.INFO, "engine stopping", system=self._system_name)
             await self._hook_manager.run_engine_stop(EngineContext(system_name=self._system_name))
@@ -302,17 +332,70 @@ class LangGraphEngine(Engine):
             for server_id, tools in sorted(self._mcp_tools.items())
         }
 
-    async def _begin_run(self, context: RunContext | None) -> RunContext:
-        hook_manager = self._require_built("running")[1]
-        ctx = context or RunContext()
-        if ctx.run_id is None:
-            ctx = ctx.replace(run_id=str(uuid.uuid4()))
-        return await hook_manager.run_run_start(ctx)
+    def _require_built(self, action: str) -> tuple[RunGraph, RunLifecycle]:
+        """The two collaborators every run needs: the graph and its lifecycle.
 
-    def _require_built(self, action: str) -> tuple[CompiledStateGraph, HookManager]:
-        if self._app is None or self._hook_manager is None:
+        Both are created by ``build``; asking for them earlier is a programming
+        error, so this fails loudly rather than executing a half-built engine.
+        """
+        if self._app is None or self._lifecycle is None:
             raise RuntimeError(f"Engine must be built before {action}")
-        return self._app, self._hook_manager
+        return self._app, self._lifecycle
+
+    @contextmanager
+    def _run_scope(self, ctx: RunContext, *, sinks: StreamSinks | None) -> Iterator[None]:
+        """Publish the ambient per-run state for the duration of one run.
+
+        Nodes, tools, and the MCP transport read the run context, the execution
+        limiter, and the stream sinks from context vars instead of having them
+        threaded through the graph state (which the checkpointer serializes).
+        Anything started with ``asyncio.create_task`` *inside* this scope
+        inherits them; anything started outside does not — which is why the
+        streaming path creates its graph task here.
+
+        ``sinks=None`` leaves ``current_streams`` untouched, for a leg of a run
+        that must not disturb the sinks its caller already installed.
+        """
+        ctx_token = current_run_context.set(ctx)
+        exec_token = current_execution.set(ExecutionLimiter(self._policy))
+        stream_token = None if sinks is None else current_streams.set(sinks)
+        try:
+            yield
+        finally:
+            # An async generator may be finalized in a context other than the
+            # consumer's. Tokens cannot be reset from that foreign context; in
+            # that case there is no ambient value here to restore.
+            if stream_token is not None:
+                with suppress(ValueError):
+                    current_streams.reset(stream_token)
+            with suppress(ValueError):
+                current_execution.reset(exec_token)
+            with suppress(ValueError):
+                current_run_context.reset(ctx_token)
+
+    async def _invoke_graph(
+        self, app: RunGraph, ctx: RunContext, graph_input: Any
+    ) -> dict[str, Any]:
+        """Execute the compiled graph and return its raw output.
+
+        ``graph_input`` is the initial state of a new run, or the ``Command``
+        that continues a suspended one from its checkpoint.
+        """
+        return cast(dict[str, Any], await app.ainvoke(graph_input, self._thread_config(ctx)))
+
+    def _completed_result(
+        self, result: dict[str, Any], *, tokens: TokenUsage | None = None
+    ) -> RunResult:
+        """Map the graph's raw output onto the public run result."""
+        input_tokens, output_tokens = tokens.totals() if tokens is not None else (None, None)
+        return RunResult(
+            system_name=self._system_name,
+            visited=result.get("visited", []),
+            answer=result.get("answer", ""),
+            used_tools=tuple(result.get("used_tools", [])),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
 
     async def run(
         self,
@@ -321,80 +404,24 @@ class LangGraphEngine(Engine):
         history: Sequence[ChatMessage] = (),
         context: RunContext | None = None,
     ) -> RunResult:
-        app, hook_manager = self._require_built("running")
-        has_caller_context = context is not None
-        ctx = await self._begin_run(context)
-        token = current_run_context.set(ctx)
-        exec_token = current_execution.set(ExecutionLimiter(self._policy))
-        input_tokens = 0
-        output_tokens = 0
-
-        def accumulate_tokens(inp: int, out: int) -> None:
-            nonlocal input_tokens, output_tokens
-            input_tokens += inp
-            output_tokens += out
-
-        stream_token = current_streams.set(StreamSinks(token=accumulate_tokens))
-        config = self._thread_config(ctx)
-        await self._register_run(ctx)
-        log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
-        try:
-            result = await app.ainvoke(
-                cast(
-                    Any,
-                    _new_state(
-                        message,
-                        history=history,
-                        run_context=_state_run_context(ctx) if has_caller_context else None,
-                    ),
-                ),
-                config,
-            )
-            pending = await self._pending_result(ctx, result)
-            if pending is not None:
-                return pending
-            run_result = RunResult(
-                system_name=self._system_name,
-                visited=result.get("visited", []),
-                answer=result.get("answer", ""),
-                used_tools=tuple(result.get("used_tools", [])),
-                input_tokens=input_tokens or None,
-                output_tokens=output_tokens or None,
-            )
-            await self._complete_run(ctx.run_id)
-            await hook_manager.run_run_end(
-                ctx, _run_end_context(self._system_name, ctx, run_result)
-            )
-            log(
-                logger,
-                logging.INFO,
-                "run ended",
-                run_id=ctx.run_id,
-                system=self._system_name,
-                visited=len(run_result.visited),
-                tools=len(run_result.used_tools),
-            )
-            return run_result
-        except Exception as exc:
-            log(
-                logger,
-                logging.WARNING,
-                "run failed",
-                run_id=ctx.run_id,
-                system=self._system_name,
-                error=type(exc).__name__,
-            )
-            await self._fail_run(ctx.run_id)
-            await hook_manager.run_run_error(ctx, exc)
-            raise
-        finally:
-            current_run_context.reset(token)
-            current_execution.reset(exec_token)
-            current_streams.reset(stream_token)
-
-    # ------------------------------------------------------------------ #
-    # Human-in-the-Loop: run/approval lifecycle                          #
-    # ------------------------------------------------------------------ #
+        app, lifecycle = self._require_built("running")
+        ctx = await lifecycle.begin(context)
+        state = _initial_state(
+            message, history=history, ctx=ctx, expose_run_context=context is not None
+        )
+        tokens = TokenUsage()
+        with self._run_scope(ctx, sinks=StreamSinks(token=tokens.add)):
+            try:
+                result = await self._invoke_graph(app, ctx, state)
+                pending = await self._pending_result(ctx, result)
+                if pending is not None:
+                    return pending
+                run_result = self._completed_result(result, tokens=tokens)
+                await lifecycle.succeed(ctx, run_result)
+                return run_result
+            except Exception as exc:
+                await lifecycle.fail(ctx, exc)
+                raise
 
     def _thread_config(self, ctx: RunContext) -> RunnableConfig:
         """Build the run config, binding the LangGraph checkpoint thread_id.
@@ -408,32 +435,6 @@ class LangGraphEngine(Engine):
             metadata=_trace_metadata(ctx),
             configurable={"thread_id": ctx.run_id},
         )
-
-    async def _register_run(self, ctx: RunContext) -> None:
-        assert ctx.run_id is not None
-        if await self._approval_manager.get_run_or_none(ctx.run_id) is None:
-            await self._approval_manager.register_run(
-                RunRecord(
-                    run_id=ctx.run_id,
-                    thread_id=ctx.run_id,
-                    system_name=self._system_name,
-                    status=RunStatus.RUNNING,
-                )
-            )
-
-    async def _complete_run(self, run_id: str | None) -> None:
-        if run_id is None:
-            return
-        run = await self._approval_manager.get_run_or_none(run_id)
-        if run is not None and run.status in (RunStatus.RUNNING, RunStatus.RESUMING):
-            await self._approval_manager.mark_run(run_id, RunStatus.COMPLETED)
-
-    async def _fail_run(self, run_id: str | None) -> None:
-        if run_id is None:
-            return
-        run = await self._approval_manager.get_run_or_none(run_id)
-        if run is not None and run.status not in (RunStatus.COMPLETED, RunStatus.FAILED):
-            await self._approval_manager.mark_run(run_id, RunStatus.FAILED)
 
     async def _pending_result(self, ctx: RunContext, result: Any) -> RunResult | None:
         """If the graph suspended at an approval interrupt, return a pending
@@ -490,7 +491,7 @@ class LangGraphEngine(Engine):
         additionally records a session permission so the tool is not re-prompted
         for the rest of the conversation.
         """
-        app, hook_manager = self._require_built("resuming")
+        app, lifecycle = self._require_built("resuming")
         kind = parse_decision(decision)
         approval = await self._approval_manager.claim(
             run_id=run_id, approval_id=approval_id, caller_user_id=caller_user_id
@@ -503,8 +504,6 @@ class LangGraphEngine(Engine):
             organization_id=approval.organization_id,
             metadata={"approval_id": approval.approval_id},
         )
-        token = current_run_context.set(ctx)
-        exec_token = current_execution.set(ExecutionLimiter(self._policy))
         log(
             logger,
             logging.INFO,
@@ -513,43 +512,28 @@ class LangGraphEngine(Engine):
             approval_id=approval_id,
             decision=kind.value,
         )
-        try:
-            result = await app.ainvoke(
-                Command(resume={"decision": kind.value}),
-                self._thread_config(ctx),
-            )
-            await self._approval_manager.finalize(approval_id, approved=approved)
-            pending = await self._pending_result(ctx, result)
-            if pending is not None:
-                # The resumed run hit a *further* approval; stay pending.
-                return pending
-            await self._complete_run(run_id)
-            run_result = RunResult(
-                system_name=self._system_name,
-                visited=result.get("visited", []),
-                answer=result.get("answer", ""),
-                used_tools=tuple(result.get("used_tools", [])),
-                status="completed",
-            )
-            await hook_manager.run_run_end(
-                ctx, _run_end_context(self._system_name, ctx, run_result)
-            )
-            log(
-                logger,
-                logging.INFO,
-                "run completed",
-                run_id=run_id,
-                approval_id=approval_id,
-                decision=kind.value,
-            )
-            return run_result
-        except Exception as exc:
-            await self._fail_run(run_id)
-            await hook_manager.run_run_error(ctx, exc)
-            raise
-        finally:
-            current_run_context.reset(token)
-            current_execution.reset(exec_token)
+        with self._run_scope(ctx, sinks=None):
+            try:
+                resume_command: Command[Any] = Command(resume={"decision": kind.value})
+                result = await self._invoke_graph(app, ctx, resume_command)
+                await self._approval_manager.finalize(approval_id, approved=approved)
+                pending = await self._pending_result(ctx, result)
+                if pending is not None:
+                    return pending
+                run_result = self._completed_result(result)
+                await lifecycle.succeed(ctx, run_result)
+                log(
+                    logger,
+                    logging.INFO,
+                    "run completed",
+                    run_id=run_id,
+                    approval_id=approval_id,
+                    decision=kind.value,
+                )
+                return run_result
+            except Exception as exc:
+                await lifecycle.fail(ctx, exc)
+                raise
 
     async def stream(
         self,
@@ -558,119 +542,73 @@ class LangGraphEngine(Engine):
         history: Sequence[ChatMessage] = (),
         context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
-        app, hook_manager = self._require_built("streaming")
+        app, lifecycle = self._require_built("streaming")
 
-        has_caller_context = context is not None
-        ctx = await self._begin_run(context)
-        queue: asyncio.Queue[RunStreamEvent | BaseException | None] = asyncio.Queue()
-        input_tokens = 0
-        output_tokens = 0
-
-        def accumulate_tokens(inp: int, out: int) -> None:
-            nonlocal input_tokens, output_tokens
-            input_tokens += inp
-            output_tokens += out
-
-        state = _new_state(
-            message,
-            history=history,
-            run_context=_state_run_context(ctx) if has_caller_context else None,
+        ctx = await lifecycle.begin(context)
+        state = _initial_state(
+            message, history=history, ctx=ctx, expose_run_context=context is not None
         )
-        sinks = StreamSinks(
-            answer=lambda c: queue.put_nowait(RunStreamEvent(type="answer_delta", content=c)),
-            route=lambda r: queue.put_nowait(RunStreamEvent(type="route", route=r)),
-            token=accumulate_tokens,
-        )
-
-        await self._register_run(ctx)
-
-        async def run_graph() -> None:
-            config = self._thread_config(ctx)
+        channel = StreamChannel()
+        tokens = TokenUsage()
+        with self._run_scope(ctx, sinks=channel.sinks(token=tokens.add)):
+            task = asyncio.create_task(
+                self._stream_graph(app, lifecycle, ctx, state, channel=channel, tokens=tokens)
+            )
             try:
-                result = await app.ainvoke(cast(Any, state), config)
-                pending = await self._pending_result(ctx, result)
-                if pending is not None and pending.pending_approval is not None:
-                    pa = pending.pending_approval
-                    queue.put_nowait(
-                        RunStreamEvent(
-                            type="pending_approval",
-                            route=tuple(pending.visited),
-                            system_name=self._system_name,
-                            used_tools=pending.used_tools,
-                            run_id=pa.run_id,
-                            approval_id=pa.approval_id,
-                            agent_id=pa.agent_id,
-                            tool_name=pa.tool_name,
-                            description=pa.description,
-                        )
-                    )
-                    return
-                await self._complete_run(ctx.run_id)
-                visited = tuple(result.get("visited", []))
-                used_tools = tuple(result.get("used_tools", []))
-                queue.put_nowait(
-                    RunStreamEvent(
-                        type="final",
-                        content=result.get("answer", ""),
-                        route=visited,
-                        system_name=self._system_name,
-                        used_tools=used_tools,
-                        input_tokens=input_tokens or None,
-                        output_tokens=output_tokens or None,
-                    )
-                )
-                await hook_manager.run_run_end(
-                    ctx,
-                    RunEndContext(
-                        run_id=ctx.run_id,
-                        system_name=self._system_name,
-                        visited=visited,
-                        used_tool_count=len(used_tools),
-                    ),
-                )
-                log(
-                    logger,
-                    logging.INFO,
-                    "run ended",
-                    run_id=ctx.run_id,
-                    system=self._system_name,
-                    visited=len(visited),
-                    tools=len(used_tools),
-                )
-            except Exception as exc:
-                log(
-                    logger,
-                    logging.WARNING,
-                    "run failed",
-                    run_id=ctx.run_id,
-                    system=self._system_name,
-                    error=type(exc).__name__,
-                )
-                await self._fail_run(ctx.run_id)
-                await hook_manager.run_run_error(ctx, exc)
-                queue.put_nowait(exc)
+                async for event in channel.events():
+                    yield event
+                await task
             finally:
-                queue.put_nowait(None)
+                await self._stop_abandoned_stream(task, lifecycle, ctx)
 
-        log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
-        token = current_run_context.set(ctx)
-        exec_token = current_execution.set(ExecutionLimiter(self._policy))
-        # Set before creating the task so the child task inherits the sinks.
-        stream_token = current_streams.set(sinks)
-        try:
-            task = asyncio.create_task(run_graph())
-            while True:
-                item = await queue.get()
-                if item is None:
-                    break
-                if isinstance(item, BaseException):
-                    raise RuntimeError(str(item)) from item
-                yield item
+    @staticmethod
+    async def _stop_abandoned_stream(
+        task: asyncio.Task[None],
+        lifecycle: RunLifecycle,
+        ctx: RunContext,
+    ) -> None:
+        """Stop a graph producer when its stream is closed before completion."""
+        if task.done():
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
             await task
+        await asyncio.shield(lifecycle.cancel(ctx))
+
+    async def _stream_graph(
+        self,
+        app: RunGraph,
+        lifecycle: RunLifecycle,
+        ctx: RunContext,
+        state: dict[str, Any],
+        *,
+        channel: StreamChannel,
+        tokens: TokenUsage,
+    ) -> None:
+        """Execute the graph for a streamed run and report the outcome.
+
+        This is the channel's producer, running as its own task so the consumer
+        can yield events while the graph is still executing. Every outcome —
+        suspended, succeeded, failed — therefore has to leave through the
+        channel: an exception raised here would reach nobody.
+        """
+        try:
+            result = await self._invoke_graph(app, ctx, state)
+            pending = await self._pending_result(ctx, result)
+            if pending is not None:
+                channel.emit(_pending_approval_event(self._system_name, pending))
+                return
+            run_result = self._completed_result(result, tokens=tokens)
+            await lifecycle.succeed(
+                ctx,
+                run_result,
+                on_completed=lambda: channel.emit(_final_event(self._system_name, run_result)),
+            )
+        except Exception as exc:
+            await lifecycle.fail(ctx, exc)
+            channel.abort(exc)
         finally:
-            current_run_context.reset(token)
-            current_execution.reset(exec_token)
-            current_streams.reset(stream_token)
+            channel.close()
 
     def _setup_filters(self, spec: SystemSpec) -> list[RouteFilter]:
         filters: list[RouteFilter] = []
@@ -700,8 +638,6 @@ class LangGraphEngine(Engine):
             if auth is not None:
                 config["auth"] = auth
 
-            # Optional, per-server tool-discovery tags. No tags -> unchanged.
-            # No explicit transport -> default header transport is applied.
             if mcp_spec.tool_tags:
                 transport = effective_tool_tag_transport(mcp_spec)
                 config = apply_tool_tags(config, mcp_spec.tool_tags, transport, server_id=server_id)
@@ -738,18 +674,18 @@ class LangGraphEngine(Engine):
                 mcp_tools[server_id] = []
         return mcp_tools
 
-    def _compile_graph(self, spec: SystemSpec) -> CompiledStateGraph:
+    # noinspection PyTypeChecker
+    def _compile_graph(self, spec: SystemSpec) -> RunGraph:
         builder = StateGraph(GraphState)
         self._wire_node(builder, spec.graph, parent_path=None)
         builder.add_edge(START, node_id(spec.graph, parent_path=None))
-        # A checkpointer is always present (in-memory by default), so approval
-        # interrupts and resume use one identical code path regardless of backend.
         assert self._checkpointer is not None
         return builder.compile(checkpointer=self._checkpointer.saver)
 
+    # noinspection PyTypeChecker
     def _wire_node(
         self,
-        builder: StateGraph,
+        builder: RunGraphBuilder,
         node: GraphNode,
         parent_path: str | None,
     ) -> None:

@@ -37,9 +37,7 @@ class _FakeGeminiModel:
         self.instances.append(self)
 
 
-def _install_fake_langchain_google_genai(
-    monkeypatch: pytest.MonkeyPatch, cls: type[Any]
-) -> None:
+def _install_fake_langchain_google_genai(monkeypatch: pytest.MonkeyPatch, cls: type[Any]) -> None:
     module = types.ModuleType("langchain_google_genai")
     monkeypatch.setattr(module, "ChatGoogleGenerativeAI", cls, raising=False)
     monkeypatch.setitem(sys.modules, "langchain_google_genai", module)

@@ -39,12 +39,26 @@ def test_run_happy_path_transitions() -> None:
     assert run.status == RunStatus.COMPLETED
 
 
+def test_in_flight_runs_can_be_cancelled() -> None:
+    running = _run()
+    running.transition(RunStatus.CANCELLED)
+    assert running.status == RunStatus.CANCELLED
+
+    resuming = _run()
+    resuming.status = RunStatus.RESUMING
+    resuming.transition(RunStatus.CANCELLED)
+    assert resuming.status == RunStatus.CANCELLED
+
+
 @pytest.mark.parametrize(
     "start,target",
     [
         (RunStatus.COMPLETED, RunStatus.RESUMING),
         (RunStatus.FAILED, RunStatus.RUNNING),
         (RunStatus.RUNNING, RunStatus.RESUMING),
+        (RunStatus.CANCELLED, RunStatus.RUNNING),
+        (RunStatus.CANCELLED, RunStatus.COMPLETED),
+        (RunStatus.PENDING_APPROVAL, RunStatus.CANCELLED),
     ],
 )
 def test_invalid_run_transitions_raise(start: RunStatus, target: RunStatus) -> None:
