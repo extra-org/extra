@@ -102,7 +102,7 @@ async def run_tool_loop(
             logger.debug("[%s] ← tool_call: %s(%s)", node_path, tc["name"], tc["args"])
             content = await invoke_tool(tc)
             logger.debug("[%s] → tool_result[%s]: %s", node_path, tc["name"], content[:300])
-            messages.append(ToolMessage(content=content, tool_call_id=tc["id"]))
+            messages.append(ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"]))
         response = await invoke_model(model, messages, state)
     return response
 

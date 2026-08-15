@@ -9,7 +9,11 @@ import pytest
 from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.parsers.errors import ParseError
 from agent_engine.parsers.yaml.parser import YAMLParser
-from agent_engine.runtime.execution import ExecutionLimiter, ExecutionLimitExceeded
+from agent_engine.runtime.execution import (
+    ExecutionLimiter,
+    ExecutionLimitExceeded,
+    current_invocation,
+)
 
 _BASE = "system: {name: t}\nagents: {a: {description: d}}\ngraph: {a: }\n"
 
@@ -118,6 +122,39 @@ def test_duplicates_allowed_when_policy_permits() -> None:
     lim.register_tool_call("a", "t", {"x": 1})
     lim.register_tool_call("a", "t", {"x": 1})  # no raise
     assert lim.state.total_tool_calls == 2
+
+
+def test_duplicate_detection_scoped_to_invocation_not_agent() -> None:
+    """Two fresh activations of the same agent (e.g. an orchestrator delegating
+    to `user_management` twice for unrelated reasons) must not collide just
+    because they share an agent id: each starts a conversation with no memory
+    of the other, so a repeat call is legitimate in each, not a duplicate."""
+    lim = ExecutionLimiter(ExecutionPolicy(allow_duplicate_tool_calls=False, max_tool_calls=99))
+
+    reset_a = current_invocation.set("invocation-a")
+    lim.register_tool_call("user_management", "all_user_details", {})
+    current_invocation.reset(reset_a)
+
+    reset_b = current_invocation.set("invocation-b")
+    lim.register_tool_call("user_management", "all_user_details", {})  # must not raise
+    current_invocation.reset(reset_b)
+
+    assert lim.state.total_tool_calls == 2
+
+
+def test_duplicate_still_blocked_within_same_invocation() -> None:
+    """The guard's real job — stopping one agent from looping on the same call
+    within its own conversation — must still hold."""
+    lim = ExecutionLimiter(ExecutionPolicy(allow_duplicate_tool_calls=False, max_tool_calls=99))
+
+    reset = current_invocation.set("invocation-a")
+    try:
+        lim.register_tool_call("user_management", "all_user_details", {})
+        with pytest.raises(ExecutionLimitExceeded) as e:
+            lim.register_tool_call("user_management", "all_user_details", {})
+        assert e.value.limit_name == "duplicate_tool_call"
+    finally:
+        current_invocation.reset(reset)
 
 
 def test_child_agent_calls_capped() -> None:

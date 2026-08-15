@@ -87,8 +87,17 @@ class ExecutionLimiter:
 
     def register_tool_call(self, agent_id: str, tool_name: str, args: object) -> None:
         """Authorize one local/MCP tool call. Raises on a blocked duplicate, the
-        per-run total, or the per-agent limit. Blocked calls are NOT counted."""
-        signature = _signature(agent_id, tool_name, args)
+        per-run total, or the per-agent limit. Blocked calls are NOT counted.
+
+        Duplicate detection is scoped to the current invocation (see
+        ``current_invocation``), not the whole run: two sibling activations of
+        the same agent — e.g. an orchestrator delegating to ``user_management``
+        twice for unrelated reasons — start with a fresh, empty conversation
+        each time and cannot see each other's tool results. Blocking the second
+        one and telling it to "use the previous result" would refer to a result
+        it never received.
+        """
+        signature = _signature(current_invocation.get(), agent_id, tool_name, args)
         if not self._policy.allow_duplicate_tool_calls and signature in self._state.seen_signatures:
             raise ExecutionLimitExceeded(
                 "duplicate_tool_call", 1, 0, agent_id=agent_id, tool_name=tool_name
@@ -137,9 +146,19 @@ current_execution: ContextVar[ExecutionLimiter | None] = ContextVar(
     "current_execution", default=None
 )
 
+#: Identifies one node activation (one agent or orchestrator running its own
+#: model/tool loop) within the run. Set once at the top of that node's ``_run``
+#: and left untouched for every tool call inside it, so an agent's own repeated
+#: call to the same tool is still caught. A sibling activation of the same
+#: agent — a fresh delegation with no memory of the first — gets its own id and
+#: is never confused with it, whether the two run sequentially or, once
+#: fan-out lands, concurrently: each concurrent task gets an isolated copy of
+#: this context var, so parallel siblings never see each other's id.
+current_invocation: ContextVar[str | None] = ContextVar("current_invocation", default=None)
 
-def _signature(agent_id: str, tool_name: str, args: object) -> str:
-    """Opaque, stable signature for duplicate detection: agent + tool + args.
+
+def _signature(invocation_id: str | None, agent_id: str, tool_name: str, args: object) -> str:
+    """Opaque, stable signature for duplicate detection: invocation + agent + tool + args.
 
     Arguments are serialized deterministically but the result is only ever stored
     in a set and compared — never logged."""
@@ -147,7 +166,7 @@ def _signature(agent_id: str, tool_name: str, args: object) -> str:
         serialized = json.dumps(args, sort_keys=True, default=str)
     except (TypeError, ValueError):
         serialized = repr(args)
-    return f"{agent_id}\x1f{tool_name}\x1f{serialized}"
+    return f"{invocation_id}\x1f{agent_id}\x1f{tool_name}\x1f{serialized}"
 
 
 def log_limit(exc: ExecutionLimitExceeded) -> None:

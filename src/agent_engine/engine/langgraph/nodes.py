@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -38,6 +39,7 @@ from agent_engine.runtime.execution import (
     ExecutionLimitExceeded,
     blocked_message,
     current_execution,
+    current_invocation,
     log_limit,
 )
 from agent_engine.runtime.hooks import (
@@ -187,26 +189,33 @@ class AgentNode:
 
     async def _run(self, system_prompt: str, state: GraphState) -> GraphState:
         """Drive the model + tool loop until the model stops requesting tools."""
-        user_msg: str = state.get("message", "")
-        messages = model_context(system_prompt, state.get("history", []), user_msg)
-        logger.debug("[%s] system:\n%s", self._node_path, system_prompt)
-        logger.debug("[%s] → user: %s", self._node_path, user_msg)
+        # One id for this activation of this agent, so duplicate-call detection
+        # covers this conversation only — never a sibling delegation to the same
+        # agent, which starts fresh and shares nothing with this one.
+        invocation_reset = current_invocation.set(uuid.uuid4().hex)
+        try:
+            user_msg: str = state.get("message", "")
+            messages = model_context(system_prompt, state.get("history", []), user_msg)
+            logger.debug("[%s] system:\n%s", self._node_path, system_prompt)
+            logger.debug("[%s] → user: %s", self._node_path, user_msg)
 
-        visited: list[str] = [*state.get("visited", []), self._node_path]
-        emit_route(state, tuple(visited))
+            visited: list[str] = [*state.get("visited", []), self._node_path]
+            emit_route(state, tuple(visited))
 
-        used_tools: list[ToolUsageRecord] = list(state.get("used_tools", []))
+            used_tools: list[ToolUsageRecord] = list(state.get("used_tools", []))
 
-        async def invoke_tool(tc: dict[str, Any]) -> str:
-            return await self._invoke_tool(tc, used_tools)
+            async def invoke_tool(tc: dict[str, Any]) -> str:
+                return await self._invoke_tool(tc, used_tools)
 
-        response = await run_tool_loop(
-            self._bound_model, messages, state, self._node_path, invoke_tool
-        )
-        answer = as_text(response.content)
-        logger.debug("[%s] ← response: %s", self._node_path, answer[:300])
+            response = await run_tool_loop(
+                self._bound_model, messages, state, self._node_path, invoke_tool
+            )
+            answer = as_text(response.content)
+            logger.debug("[%s] ← response: %s", self._node_path, answer[:300])
 
-        return {"visited": visited, "answer": answer, "used_tools": used_tools}
+            return {"visited": visited, "answer": answer, "used_tools": used_tools}
+        finally:
+            current_invocation.reset(invocation_reset)
 
     async def _invoke_tool(self, tc: dict[str, Any], used_tools: list[ToolUsageRecord]) -> str:
         """Resolve, gate, and execute one tool call for both local and MCP tools.
@@ -606,47 +615,54 @@ class OrchestratorNode:
         state: GraphState,
     ) -> GraphState:
         """Drive the orchestrator LLM tool loop and return the synthesised answer."""
-        visited: list[str] = [*state.get("visited", []), self._node_path]
-        used_tools: list[ToolUsageRecord] = list(state.get("used_tools", []))
+        # One id for this activation of this orchestrator — see AgentNode._run.
+        invocation_reset = current_invocation.set(uuid.uuid4().hex)
+        try:
+            visited: list[str] = [*state.get("visited", []), self._node_path]
+            used_tools: list[ToolUsageRecord] = list(state.get("used_tools", []))
 
-        # Build tools here so they share the live `visited` / `used_tools` lists.
-        tools = [self._make_tool(e, state, visited, used_tools) for e in candidates]
-        bound_model = self._model.bind_tools(tools) if tools else self._model
-        if self._fallback_model is not None:
-            bound_fallback = (
-                self._fallback_model.bind_tools(tools) if tools else self._fallback_model
+            # Build tools here so they share the live `visited` / `used_tools` lists.
+            tools = [self._make_tool(e, state, visited, used_tools) for e in candidates]
+            bound_model = self._model.bind_tools(tools) if tools else self._model
+            if self._fallback_model is not None:
+                bound_fallback = (
+                    self._fallback_model.bind_tools(tools) if tools else self._fallback_model
+                )
+                bound_model = bound_model.with_fallbacks(
+                    [bound_fallback], exceptions_to_handle=(Exception,)
+                )
+            tool_by_name = {t.name: t for t in tools}
+
+            user_msg: str = state.get("message", "")
+            messages = model_context(system_prompt, state.get("history", []), user_msg)
+            logger.debug(
+                "[%s] system:\n%s\ntools: %s", self._node_path, system_prompt, list(tool_by_name)
             )
-            bound_model = bound_model.with_fallbacks(
-                [bound_fallback], exceptions_to_handle=(Exception,)
+            logger.debug("[%s] → user: %s", self._node_path, user_msg)
+
+            emit_route(state, tuple(visited))
+
+            async def invoke_tool(tc: dict[str, Any]) -> str:
+                tool = tool_by_name.get(tc["name"])
+                if tool is None:
+                    return f"Unknown agent: {tc['name']}"
+                # Limit orchestrator→child-agent invocations. A blocked call returns a
+                # controlled message instead of running the child.
+                limiter = current_execution.get()
+                if limiter is not None:
+                    try:
+                        limiter.register_child_call(self._node_path, tc["name"])
+                    except ExecutionLimitExceeded as exc:
+                        log_limit(exc)
+                        return blocked_message(exc)
+                return cast(str, await tool.ainvoke(tc["args"]))
+
+            response = await run_tool_loop(
+                bound_model, messages, state, self._node_path, invoke_tool
             )
-        tool_by_name = {t.name: t for t in tools}
+            answer = as_text(response.content)
+            logger.debug("[%s] ← response: %s", self._node_path, answer[:300])
 
-        user_msg: str = state.get("message", "")
-        messages = model_context(system_prompt, state.get("history", []), user_msg)
-        logger.debug(
-            "[%s] system:\n%s\ntools: %s", self._node_path, system_prompt, list(tool_by_name)
-        )
-        logger.debug("[%s] → user: %s", self._node_path, user_msg)
-
-        emit_route(state, tuple(visited))
-
-        async def invoke_tool(tc: dict[str, Any]) -> str:
-            tool = tool_by_name.get(tc["name"])
-            if tool is None:
-                return f"Unknown agent: {tc['name']}"
-            # Limit orchestrator→child-agent invocations. A blocked call returns a
-            # controlled message instead of running the child.
-            limiter = current_execution.get()
-            if limiter is not None:
-                try:
-                    limiter.register_child_call(self._node_path, tc["name"])
-                except ExecutionLimitExceeded as exc:
-                    log_limit(exc)
-                    return blocked_message(exc)
-            return cast(str, await tool.ainvoke(tc["args"]))
-
-        response = await run_tool_loop(bound_model, messages, state, self._node_path, invoke_tool)
-        answer = as_text(response.content)
-        logger.debug("[%s] ← response: %s", self._node_path, answer[:300])
-
-        return {"visited": visited, "answer": answer, "used_tools": used_tools}
+            return {"visited": visited, "answer": answer, "used_tools": used_tools}
+        finally:
+            current_invocation.reset(invocation_reset)
