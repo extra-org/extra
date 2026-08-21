@@ -24,6 +24,7 @@ from agent_engine.engine.approval_streaming_engine import ApprovalStreamingEngin
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.run_status_engine import RunStatusEngine
 from agent_engine.engine.types import RunResult
+from agent_engine.logging_config import log
 from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.hooks import AuthContext, RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
@@ -45,6 +46,7 @@ from agent_manager.domain import (
     Principal,
     Repository,
     Role,
+    TitleGenerator,
     TokenBudgetUsage,
     thread_title,
 )
@@ -81,6 +83,7 @@ class ConversationService:
         system_name: str | None = None,
         config_path: str | None = None,
         run_repository: RunRepository | None = None,
+        title_generator: TitleGenerator | None = None,
     ) -> None:
         self._engine = engine
         self._repository = repository
@@ -91,6 +94,13 @@ class ConversationService:
         self._system_name = system_name
         self._config_path = config_path
         self._run_repository = run_repository
+        self._title_generator = title_generator
+        self._background: set[asyncio.Task[None]] = set()
+
+    async def close(self) -> None:
+        """Let background work finish before the process goes down."""
+        if self._background:
+            await asyncio.gather(*self._background, return_exceptions=True)
 
     async def create(self, principal: Principal, *, session_id: str | None = None) -> str:
         """Create a conversation, or return the caller's own existing one.
@@ -241,16 +251,7 @@ class ConversationService:
             await self._transition_run(run_id, RunStatus.CANCELLED)
             raise ConversationBranchConflict(conversation_id)
         if not prior_context.messages:
-            try:
-                await self._repository.rename_session(conversation_id, thread_title(text))
-            except Exception:
-                # The user message and run are already durable. A cosmetic
-                # title failure must not orphan an accepted turn.
-                logger.warning(
-                    "conversation title update failed",
-                    extra={"conversation_id": conversation_id},
-                    exc_info=True,
-                )
+            await self._name_conversation(conversation_id, text)
 
         return PreparedConversationTurn(
             session_id=conversation_id,
@@ -479,6 +480,58 @@ class ConversationService:
         except asyncio.CancelledError:
             await task
             raise
+
+    async def _name_conversation(self, conversation_id: str, text: str) -> None:
+        """Title a conversation from its opening message, once.
+
+        The trimmed title lands first so the thread is never nameless, and a
+        generated one overwrites it from the background: the caller's first
+        token must not wait on a second model.
+        """
+        await self._rename(conversation_id, thread_title(text))
+        generator = self._title_generator
+        if generator is None:
+            return
+        self._spawn(self._generate_title(generator, conversation_id, text))
+
+    async def _generate_title(
+        self, generator: TitleGenerator, conversation_id: str, text: str
+    ) -> None:
+        try:
+            title = await generator.generate(text, conversation_id)
+        except Exception:
+            log(
+                logger,
+                logging.WARNING,
+                "conversation title generation failed",
+                conversation_id=conversation_id,
+                exc_info=True,
+            )
+            return
+        await self._rename(conversation_id, title)
+
+    async def _rename(self, conversation_id: str, title: str) -> None:
+        """A title is cosmetic; failing to store one must not orphan a turn."""
+        try:
+            await self._repository.rename_session(conversation_id, title)
+        except Exception:
+            log(
+                logger,
+                logging.WARNING,
+                "conversation title update failed",
+                conversation_id=conversation_id,
+                exc_info=True,
+            )
+
+    def _spawn(self, work: Coroutine[Any, Any, None]) -> None:
+        """Hold a background task for its whole life.
+
+        The event loop keeps only a weak reference, so a task nobody owns can be
+        garbage-collected mid-flight and simply never finish.
+        """
+        task = asyncio.create_task(work)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     async def _persist_assistant_turn(
         self,

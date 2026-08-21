@@ -2,6 +2,7 @@
 
 from agent_manager.domain.identity import IdentityNamespace, Principal
 from agent_manager.domain.models import (
+    THREAD_TITLE_LIMIT,
     BudgetSeverity,
     ConversationContext,
     ConversationMessage,
@@ -11,11 +12,14 @@ from agent_manager.domain.models import (
     Role,
     TokenBudgetUsage,
     User,
+    compact_text,
     thread_title,
 )
 from agent_manager.domain.repository import Repository
+from agent_manager.domain.titles import TitleGenerator
 
 __all__ = [
+    "THREAD_TITLE_LIMIT",
     "BudgetSeverity",
     "ConversationContext",
     "ConversationMessage",
@@ -26,7 +30,9 @@ __all__ = [
     "Principal",
     "Repository",
     "Role",
+    "TitleGenerator",
     "TokenBudgetUsage",
     "User",
+    "compact_text",
     "thread_title",
 ]

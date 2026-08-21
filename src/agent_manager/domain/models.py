@@ -7,6 +7,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+THREAD_TITLE_LIMIT = 48
 BUDGET_WARNING_PERCENT = 65.0
 BUDGET_CRITICAL_PERCENT = 85.0
 
@@ -103,8 +104,13 @@ class ConversationContext:
     snapshot: ConversationSnapshot | None = None
 
 
-def thread_title(content: str, *, limit: int = 48) -> str:
-    text = " ".join(content.split())
+def compact_text(content: str) -> str:
+    """One clean line: no newlines, no runs of whitespace."""
+    return " ".join(content.split())
+
+
+def thread_title(content: str, *, limit: int = THREAD_TITLE_LIMIT) -> str:
+    text = compact_text(content)
     if not text:
         return "New chat"
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
