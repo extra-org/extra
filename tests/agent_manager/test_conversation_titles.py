@@ -282,8 +282,10 @@ class RecordingModelFactory:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
-    def __call__(self, provider: str, name: str, **kwargs: Any) -> StubChatModel:
-        self.calls.append((provider, name, kwargs))
+    def __call__(
+        self, provider: str, name: str, temperature: float | None = None, **kwargs: Any
+    ) -> StubChatModel:
+        self.calls.append((provider, name, {"temperature": temperature, **kwargs}))
         return StubChatModel()
 
 
@@ -296,7 +298,13 @@ def test_falls_back_to_the_systems_own_model(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     assert isinstance(titler, ConversationTitler)
-    assert factory.calls == [("anthropic", "system-model", {"max_tokens": MAX_OUTPUT_TOKENS})]
+    assert factory.calls == [
+        (
+            "anthropic",
+            "system-model",
+            {"temperature": None, "region": None, "top_p": None, "max_tokens": MAX_OUTPUT_TOKENS},
+        )
+    ]
 
 
 def test_an_explicit_model_ref_overrides_the_systems_own_model(
@@ -313,6 +321,58 @@ def test_an_explicit_model_ref_overrides_the_systems_own_model(
     assert [(provider, name) for provider, name, _ in factory.calls] == [
         ("anthropic", "claude-haiku-4-5")
     ]
+
+
+def test_the_systems_full_model_config_reaches_the_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Region, temperature, and top_p travel with the model, not just its name.
+
+    A Bedrock deployment's title model needs the same region as its agents;
+    dropping it would make titling fail at startup for a deployment whose
+    agents work fine.
+    """
+    factory = RecordingModelFactory()
+    monkeypatch.setattr("agent_manager.infrastructure.titles.build_chat_model", factory)
+
+    build_titler(
+        model_ref=None,
+        default_model=BaseModelConfig(
+            provider="bedrock",
+            name="claude-haiku-4-5",
+            temperature=0.2,
+            region="us-east-1",
+            top_p=0.9,
+        ),
+    )
+
+    assert factory.calls == [
+        (
+            "bedrock",
+            "claude-haiku-4-5",
+            {
+                "temperature": 0.2,
+                "region": "us-east-1",
+                "top_p": 0.9,
+                "max_tokens": MAX_OUTPUT_TOKENS,
+            },
+        )
+    ]
+
+
+def test_titlings_own_output_cap_overrides_the_deployments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Titling caps its own output regardless of the agents' own configured size."""
+    factory = RecordingModelFactory()
+    monkeypatch.setattr("agent_manager.infrastructure.titles.build_chat_model", factory)
+
+    build_titler(
+        model_ref=None,
+        default_model=BaseModelConfig(provider="anthropic", name="system-model", max_tokens=16000),
+    )
+
+    assert factory.calls[0][2]["max_tokens"] == MAX_OUTPUT_TOKENS
 
 
 @pytest.mark.parametrize("ref", ["claude-haiku-4-5", "anthropic:", ":name", "", "  :  "])

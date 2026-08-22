@@ -125,6 +125,11 @@ def build_titler(
     model = build_chat_model(
         config.provider,
         config.name,
+        config.temperature,
+        region=config.region,
+        top_p=config.top_p,
+        # Ours, not the deployment's: a title is a handful of words regardless
+        # of how large the deployment's own agents are configured to answer.
         max_tokens=MAX_OUTPUT_TOKENS,
     )
     log(logger, logging.INFO, "conversation titling enabled", model=config.name)
