@@ -1062,6 +1062,40 @@ test("thread drawer lists conversations, switches to one, and starts a new chat"
   await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
 });
 
+test("thread drawer keeps conversation rows readable and scrollable", async ({ page }) => {
+  const threads = Array.from({ length: 30 }, (_, index) => ({
+    conversation_id: `conv-${index}`,
+    title: `Conversation ${index}`,
+    last_message_at: "2026-06-01T00:00:00Z",
+  }));
+  await mockConversationApi(page, { threads });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+
+  const handle = await widget(page);
+  const metrics = await handle.evaluate((element) => {
+    const root = element.shadowRoot;
+    const list = root?.querySelector<HTMLElement>(".thread-list");
+    const items = Array.from(root?.querySelectorAll<HTMLElement>(".thread-item") ?? []);
+    if (!list || items.length === 0) throw new Error("Thread drawer did not render");
+
+    return {
+      itemCount: items.length,
+      itemHeights: items.map((item) => item.getBoundingClientRect().height),
+      itemFlexShrink: getComputedStyle(items[0]).flexShrink,
+      listClientHeight: list.clientHeight,
+      listScrollHeight: list.scrollHeight,
+    };
+  });
+
+  expect(metrics.itemCount).toBe(30);
+  expect(metrics.itemFlexShrink).toBe("0");
+  expect(Math.min(...metrics.itemHeights)).toBeGreaterThan(30);
+  expect(metrics.listScrollHeight).toBeGreaterThan(metrics.listClientHeight);
+});
+
 test("thinking dots persist when switching away from an in-flight thread and back", async ({
   page,
 }) => {
