@@ -15,14 +15,18 @@ async function mockConversationApi(page: Page) {
       contentType: "application/json",
       body:
         method === "GET"
-          ? JSON.stringify([])
+          ? JSON.stringify({ items: [], next_cursor: null })
           : JSON.stringify({ conversation_id: "conv-playground", session_id: "conv-playground" }),
     });
   });
 
   await page.route(/\/conversations\?/, async (route) => {
     calls.push(`GET ${new URL(route.request().url()).pathname}`);
-    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], next_cursor: null }),
+    });
   });
 
   await page.route("**/conversations/*/messages", async (route: Route) => {

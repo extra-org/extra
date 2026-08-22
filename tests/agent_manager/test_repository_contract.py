@@ -56,7 +56,7 @@ async def test_create_session_never_reassigns_an_existing_owner(repo: Repository
     stored = await repo.get_session("shared-id")
     assert stored is not None
     assert stored.user_id == "alice"
-    assert await repo.list_sessions("bob") == []
+    assert (await repo.list_sessions("bob")).sessions == []
 
 
 async def test_create_session_writes_nothing_when_the_id_is_taken(repo: Repository) -> None:
@@ -107,7 +107,7 @@ async def test_appending_a_message_never_claims_the_conversation(repo: Repositor
     unowned = await repo.get_session("unowned")
     assert owned is not None and owned.user_id == "alice"
     assert unowned is not None and unowned.user_id is None
-    assert await repo.list_sessions("bob") == []
+    assert (await repo.list_sessions("bob")).sessions == []
 
 
 async def test_messages_in_insertion_order(repo: Repository) -> None:
@@ -468,8 +468,8 @@ async def test_linking_a_visitor_moves_their_sessions_once(repo: Repository) -> 
     assert await repo.link_anonymous_user("anon:v1", "ext:alice") == 1
     moved = await repo.get_session("pre-login")
     assert moved is not None and moved.user_id == "ext:alice"
-    assert [s.session_id for s in await repo.list_sessions("ext:alice")] == ["pre-login"]
-    assert await repo.list_sessions("anon:v1") == []
+    assert [s.session_id for s in (await repo.list_sessions("ext:alice")).sessions] == ["pre-login"]
+    assert (await repo.list_sessions("anon:v1")).sessions == []
 
     visitor = await repo.get_user("anon:v1")
     assert visitor is not None and visitor.linked_to_user_id == "ext:alice"
@@ -477,7 +477,7 @@ async def test_linking_a_visitor_moves_their_sessions_once(repo: Repository) -> 
     # Spent: a replayed pass moves nothing, whoever presents it.
     await repo.upsert_user("ext:bob")
     assert await repo.link_anonymous_user("anon:v1", "ext:bob") == 0
-    assert await repo.list_sessions("ext:bob") == []
+    assert (await repo.list_sessions("ext:bob")).sessions == []
 
 
 async def test_linking_an_unknown_visitor_is_a_no_op(repo: Repository) -> None:

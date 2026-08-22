@@ -114,6 +114,9 @@ export function AgentChatApp({
   const canStop = isExecutionActive;
 
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMoreThreads, setLoadingMoreThreads] = useState(false);
+  const [hasMoreThreads, setHasMoreThreads] = useState(false);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -162,8 +165,8 @@ export function AgentChatApp({
 
   const refreshUsage = useCallback(
     async (cid: string) => {
-      const next = await conversation.loadUsage(cid);
-      setUsageById((prev) => ({ ...prev, [cid]: next }));
+      const u = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: u }));
     },
     [conversation],
   );
@@ -213,9 +216,28 @@ export function AgentChatApp({
   }, [inline]);
 
   const openThreads = useCallback(async () => {
-    setThreads(await conversation.listThreads());
     setThreadsOpen(true);
+    setLoadingMoreThreads(true);
+    const res = await conversation.listThreads(20, null);
+    setThreads(res.items);
+    setNextCursor(res.next_cursor);
+    setHasMoreThreads(res.next_cursor !== null);
+    setLoadingMoreThreads(false);
   }, [conversation]);
+
+  const loadMoreThreads = useCallback(async () => {
+    if (loadingMoreThreads || !hasMoreThreads || !nextCursor) return;
+    setLoadingMoreThreads(true);
+    const res = await conversation.listThreads(20, nextCursor);
+    setThreads((prev) => {
+      const existingIds = new Set(prev.map((t) => t.conversation_id));
+      const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
+      return [...prev, ...newItems];
+    });
+    setNextCursor(res.next_cursor);
+    setHasMoreThreads(res.next_cursor !== null);
+    setLoadingMoreThreads(false);
+  }, [conversation, hasMoreThreads, loadingMoreThreads, nextCursor]);
 
   const openThread = useCallback(
     async (conversationId: string) => {
@@ -228,7 +250,6 @@ export function AgentChatApp({
       inputRef.current?.focus({ preventScroll: true });
     },
     [conversation, entriesById, loadThread, refreshUsage],
-
   );
 
   const startNewThread = useCallback(() => {
@@ -598,6 +619,9 @@ export function AgentChatApp({
             open={threadsOpen}
             threads={threads}
             activeId={getStoredConversationId(config.endpoint)}
+            loadingMore={loadingMoreThreads}
+            hasMore={hasMoreThreads}
+            onLoadMore={() => void loadMoreThreads()}
             onSelect={openThread}
             onNew={startNewThread}
             onClose={() => setThreadsOpen(false)}
@@ -929,6 +953,9 @@ function ThreadDrawer({
   open,
   threads,
   activeId,
+  loadingMore,
+  hasMore,
+  onLoadMore,
   onSelect,
   onNew,
   onClose,
@@ -936,10 +963,20 @@ function ThreadDrawer({
   open: boolean;
   threads: ThreadSummary[];
   activeId: string | null;
+  loadingMore: boolean;
+  hasMore: boolean;
+  onLoadMore: () => void;
   onSelect: (conversationId: string) => void;
   onNew: () => void;
   onClose: () => void;
 }) {
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight < 40 && hasMore && !loadingMore) {
+      onLoadMore();
+    }
+  };
+
   return (
     <div className={`thread-drawer${open ? " open" : ""}`} inert={!open}>
       <div className="thread-drawer-head">
@@ -952,7 +989,7 @@ function ThreadDrawer({
         <SquarePenIcon aria-hidden />
         New chat
       </button>
-      <div className="thread-list">
+      <div className="thread-list" onScroll={handleScroll}>
         {threads.map((thread) => (
           <button
             key={thread.conversation_id}
@@ -964,7 +1001,8 @@ function ThreadDrawer({
             {thread.title || "New chat"}
           </button>
         ))}
-        {threads.length === 0 ? <p className="thread-empty">No conversations yet</p> : null}
+        {threads.length === 0 && !loadingMore ? <p className="thread-empty">No conversations yet</p> : null}
+        {loadingMore ? <p className="thread-empty">Loading...</p> : null}
       </div>
     </div>
   );

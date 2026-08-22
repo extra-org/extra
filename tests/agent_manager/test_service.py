@@ -352,8 +352,8 @@ async def test_reads_of_an_owned_conversation_refuse_other_callers() -> None:
         with pytest.raises(ConversationAccessDenied):
             await service.usage(cid, caller)
 
-    assert await service.list_conversations(BOB) == []
-    assert await service.list_conversations(VISITOR) == []
+    assert (await service.list_conversations(BOB)).sessions == []
+    assert (await service.list_conversations(VISITOR)).sessions == []
 
 
 async def test_create_refuses_a_session_id_owned_by_someone_else() -> None:
@@ -440,8 +440,10 @@ async def test_signing_in_moves_a_visitors_conversations_onto_their_account() ->
     moved = await service.link_anonymous(VISITOR, ALICE)
 
     assert moved == 1
-    assert [s.session_id for s in await service.list_conversations(ALICE)] == ["pre-login"]
-    assert await service.list_conversations(VISITOR) == []
+    assert [s.session_id for s in (await service.list_conversations(ALICE)).sessions] == [
+        "pre-login"
+    ]
+    assert (await service.list_conversations(VISITOR)).sessions == []
     assert [m.content for m in await service.history(before_login, ALICE)] == [
         "how much does it cost?",
         "answer:how much does it cost?",
@@ -456,8 +458,10 @@ async def test_a_visitor_pass_can_only_be_adopted_once() -> None:
     assert await service.link_anonymous(VISITOR, ALICE) == 1
     assert await service.link_anonymous(VISITOR, BOB) == 0
 
-    assert [s.session_id for s in await service.list_conversations(ALICE)] == ["pre-login"]
-    assert await service.list_conversations(BOB) == []
+    assert [s.session_id for s in (await service.list_conversations(ALICE)).sessions] == [
+        "pre-login"
+    ]
+    assert (await service.list_conversations(BOB)).sessions == []
 
 
 async def test_a_visitor_cannot_adopt_another_visitor() -> None:
@@ -475,7 +479,7 @@ async def test_adopting_merges_into_conversations_the_account_already_had() -> N
 
     await service.link_anonymous(VISITOR, ALICE)
 
-    assert {s.session_id for s in await service.list_conversations(ALICE)} == {
+    assert {s.session_id for s in (await service.list_conversations(ALICE)).sessions} == {
         "signed-in",
         "pre-login",
     }

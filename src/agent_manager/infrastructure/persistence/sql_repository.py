@@ -6,12 +6,14 @@ layer depends only on the repository port, so backend details stay here.
 
 from __future__ import annotations
 
+import base64
+import json
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, literal, update
+from sqlalchemy import and_, delete, literal, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -24,6 +26,7 @@ from agent_manager.domain import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    PaginatedSessions,
     Repository,
     Role,
     User,
@@ -34,6 +37,27 @@ from agent_manager.infrastructure.persistence.tables import (
     ConversationSnapshotRow,
     ConversationUserRow,
 )
+
+
+def encode_cursor(last_message_at: datetime | None, session_id: str) -> str:
+    payload = {
+        "t": last_message_at.isoformat() if last_message_at is not None else None,
+        "id": session_id,
+    }
+    raw_bytes = json.dumps(payload).encode("utf-8")
+    return base64.urlsafe_b64encode(raw_bytes).decode("ascii")
+
+
+def decode_cursor(cursor_str: str) -> tuple[datetime | None, str]:
+    try:
+        raw_bytes = base64.urlsafe_b64decode(cursor_str.encode("ascii"))
+        data = json.loads(raw_bytes.decode("utf-8"))
+        t_str = data.get("t")
+        last_message_at = datetime.fromisoformat(t_str) if t_str is not None else None
+        session_id = str(data["id"])
+        return last_message_at, session_id
+    except Exception as exc:
+        raise ValueError(f"Invalid pagination cursor: {cursor_str}") from exc
 
 
 class SqlRepository(Repository):
@@ -151,16 +175,58 @@ class SqlRepository(Repository):
             row = await session.get(ConversationSessionRow, session_id)
         return _session(row) if row else None
 
-    async def list_sessions(self, user_id: str, *, limit: int = 50) -> list[ConversationSession]:
+    async def list_sessions(
+        self, user_id: str, *, limit: int = 50, cursor: str | None = None
+    ) -> PaginatedSessions:
+        conditions: list[Any] = [ConversationSessionRow.user_id == user_id]
+
+        if cursor is not None:
+            cursor_t, cursor_id = decode_cursor(cursor)
+            if cursor_t is not None:
+                conditions.append(
+                    or_(
+                        col(ConversationSessionRow.last_message_at) < cursor_t,
+                        and_(
+                            col(ConversationSessionRow.last_message_at) == cursor_t,
+                            col(ConversationSessionRow.session_id) < cursor_id,
+                        ),
+                        col(ConversationSessionRow.last_message_at).is_(None),
+                    )
+                )
+            else:
+                conditions.append(
+                    and_(
+                        col(ConversationSessionRow.last_message_at).is_(None),
+                        col(ConversationSessionRow.session_id) < cursor_id,
+                    )
+                )
+
         stmt = (
             select(ConversationSessionRow)
-            .where(ConversationSessionRow.user_id == user_id)
-            .order_by(col(ConversationSessionRow.last_message_at).desc())
-            .limit(limit)
+            .where(*conditions)
+            .order_by(
+                col(ConversationSessionRow.last_message_at).desc().nullslast(),
+                col(ConversationSessionRow.session_id).desc(),
+            )
+            .limit(limit + 1)
         )
         async with self._sessions() as session:
-            rows = (await session.exec(stmt)).all()
-        return [_session(row) for row in rows]
+            rows = list((await session.exec(stmt)).all())
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+
+        next_cursor = (
+            encode_cursor(rows[-1].last_message_at, rows[-1].session_id)
+            if has_more and rows
+            else None
+        )
+
+        return PaginatedSessions(
+            sessions=[_session(row) for row in rows],
+            next_cursor=next_cursor,
+        )
 
     async def rename_session(self, session_id: str, title: str) -> None:
         async with self._sessions() as session:

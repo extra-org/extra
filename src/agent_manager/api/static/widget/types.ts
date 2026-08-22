@@ -33,6 +33,11 @@ export interface ThreadSummary {
   last_message_at: string | null;
 }
 
+export interface PaginatedThreads {
+  items: ThreadSummary[];
+  next_cursor: string | null;
+}
+
 export interface ChatMessage {
   message_id: string;
   run_id?: string | null;

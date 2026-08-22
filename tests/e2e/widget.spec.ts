@@ -31,7 +31,7 @@ async function mockConversationApi(
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(options.threads ?? []),
+      body: JSON.stringify({ items: options.threads ?? [], next_cursor: null }),
     });
   });
 
@@ -44,7 +44,7 @@ async function mockConversationApi(
       contentType: "application/json",
       body:
         method === "GET"
-          ? JSON.stringify(options.threads ?? [])
+          ? JSON.stringify({ items: options.threads ?? [], next_cursor: null })
           : JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
     });
   });
@@ -147,7 +147,7 @@ async function mockApprovalApi(
   await page.route("**/conversations", async (route) => {
     const body =
       route.request().method() === "GET"
-        ? []
+        ? { items: [], next_cursor: null }
         : { conversation_id: "conv-approval", session_id: "conv-approval" };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });

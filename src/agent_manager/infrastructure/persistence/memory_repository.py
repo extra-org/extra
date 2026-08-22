@@ -14,12 +14,28 @@ from agent_manager.domain import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    PaginatedSessions,
     Repository,
     Role,
     User,
 )
+from agent_manager.infrastructure.persistence.sql_repository import (
+    decode_cursor,
+    encode_cursor,
+)
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _is_after_cursor(s: ConversationSession, cursor_t: datetime | None, cursor_id: str) -> bool:
+    sid = s.session_id or ""
+    if cursor_t is not None:
+        if s.last_message_at is None:
+            return True
+        if s.last_message_at < cursor_t:
+            return True
+        return s.last_message_at == cursor_t and sid < cursor_id
+    return s.last_message_at is None and sid < cursor_id
 
 
 class MemoryRepository(Repository):
@@ -109,10 +125,31 @@ class MemoryRepository(Repository):
     async def get_session(self, session_id: str) -> ConversationSession | None:
         return self._sessions.get(session_id)
 
-    async def list_sessions(self, user_id: str, *, limit: int = 50) -> list[ConversationSession]:
+    async def list_sessions(
+        self, user_id: str, *, limit: int = 50, cursor: str | None = None
+    ) -> PaginatedSessions:
         sessions = [s for s in self._sessions.values() if s.user_id == user_id]
-        sessions.sort(key=lambda s: s.last_message_at or s.created_at or _EPOCH, reverse=True)
-        return sessions[:limit]
+        sessions.sort(
+            key=lambda s: (
+                s.last_message_at is not None,
+                s.last_message_at or _EPOCH,
+                s.session_id,
+            ),
+            reverse=True,
+        )
+
+        if cursor is not None:
+            cursor_t, cursor_id = decode_cursor(cursor)
+            sessions = [s for s in sessions if _is_after_cursor(s, cursor_t, cursor_id)]
+
+        has_more = len(sessions) > limit
+        result_sessions = sessions[:limit] if has_more else sessions
+        next_cursor = (
+            encode_cursor(result_sessions[-1].last_message_at, result_sessions[-1].session_id)
+            if has_more and result_sessions
+            else None
+        )
+        return PaginatedSessions(sessions=result_sessions, next_cursor=next_cursor)
 
     async def rename_session(self, session_id: str, title: str) -> None:
         session = self._sessions.get(session_id)

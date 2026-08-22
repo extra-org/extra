@@ -52163,15 +52163,21 @@ var AgentChatClient = class {
     const data = await response.json();
     return String(data.conversation_id);
   }
-  async listConversations() {
-    const response = await this.request("/conversations");
+  async listConversations(limit = 20, cursor) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    const response = await this.request(`/conversations?${params.toString()}`);
     const data = await response.json();
-    if (!Array.isArray(data)) return [];
-    return data.map((thread) => ({
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    const items = rawItems.map((thread) => ({
       conversation_id: String(thread.conversation_id),
       title: thread.title ?? null,
       last_message_at: thread.last_message_at ?? null
     }));
+    return {
+      items,
+      next_cursor: data.next_cursor ? String(data.next_cursor) : null
+    };
   }
   async getMessages(conversationId) {
     const response = await this.request(`/conversations/${conversationId}/messages`);
@@ -53392,7 +53398,10 @@ function useConversation(client, endpoint, onReplaced) {
     },
     [client]
   );
-  const listThreads = (0, import_react9.useCallback)(() => client.listConversations().catch(() => []), [client]);
+  const listThreads = (0, import_react9.useCallback)(
+    (limit, cursor) => client.listConversations(limit, cursor).catch(() => ({ items: [], next_cursor: null })),
+    [client]
+  );
   const switchTo = (0, import_react9.useCallback)(
     (conversationId) => setStoredConversationId(endpoint, conversationId),
     [endpoint]
@@ -53480,6 +53489,9 @@ function AgentChatApp({
   const canSubmit = !isExecutionActive && !budgetExceeded && !approvalBlocksComposer;
   const canStop = isExecutionActive;
   const [threads, setThreads] = (0, import_react10.useState)([]);
+  const [nextCursor, setNextCursor] = (0, import_react10.useState)(null);
+  const [loadingMoreThreads, setLoadingMoreThreads] = (0, import_react10.useState)(false);
+  const [hasMoreThreads, setHasMoreThreads] = (0, import_react10.useState)(false);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
@@ -53519,8 +53531,8 @@ function AgentChatApp({
   }, []);
   const refreshUsage = (0, import_react10.useCallback)(
     async (cid) => {
-      const next2 = await conversation.loadUsage(cid);
-      setUsageById((prev) => ({ ...prev, [cid]: next2 }));
+      const u4 = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: u4 }));
     },
     [conversation]
   );
@@ -53561,9 +53573,27 @@ function AgentChatApp({
     launcherRef.current?.focus({ preventScroll: true });
   }, [inline]);
   const openThreads = (0, import_react10.useCallback)(async () => {
-    setThreads(await conversation.listThreads());
     setThreadsOpen(true);
+    setLoadingMoreThreads(true);
+    const res = await conversation.listThreads(20, null);
+    setThreads(res.items);
+    setNextCursor(res.next_cursor);
+    setHasMoreThreads(res.next_cursor !== null);
+    setLoadingMoreThreads(false);
   }, [conversation]);
+  const loadMoreThreads = (0, import_react10.useCallback)(async () => {
+    if (loadingMoreThreads || !hasMoreThreads || !nextCursor) return;
+    setLoadingMoreThreads(true);
+    const res = await conversation.listThreads(20, nextCursor);
+    setThreads((prev) => {
+      const existingIds = new Set(prev.map((t) => t.conversation_id));
+      const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
+      return [...prev, ...newItems];
+    });
+    setNextCursor(res.next_cursor);
+    setHasMoreThreads(res.next_cursor !== null);
+    setLoadingMoreThreads(false);
+  }, [conversation, hasMoreThreads, loadingMoreThreads, nextCursor]);
   const openThread = (0, import_react10.useCallback)(
     async (conversationId) => {
       conversation.switchTo(conversationId);
@@ -53911,6 +53941,9 @@ function AgentChatApp({
                     open: threadsOpen,
                     threads,
                     activeId: getStoredConversationId(config.endpoint),
+                    loadingMore: loadingMoreThreads,
+                    hasMore: hasMoreThreads,
+                    onLoadMore: () => void loadMoreThreads(),
                     onSelect: openThread,
                     onNew: startNewThread,
                     onClose: () => setThreadsOpen(false)
@@ -54160,10 +54193,19 @@ function ThreadDrawer({
   open,
   threads,
   activeId,
+  loadingMore,
+  hasMore,
+  onLoadMore,
   onSelect,
   onNew,
   onClose
 }) {
+  const handleScroll = (e) => {
+    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight < 40 && hasMore && !loadingMore) {
+      onLoadMore();
+    }
+  };
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: `thread-drawer${open ? " open" : ""}`, inert: !open, children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-drawer-head", children: [
       /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Chats" }),
@@ -54173,7 +54215,7 @@ function ThreadDrawer({
       /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SquarePen, { "aria-hidden": true }),
       "New chat"
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-list", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-list", onScroll: handleScroll, children: [
       threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
         "button",
         {
@@ -54185,7 +54227,8 @@ function ThreadDrawer({
         },
         thread.conversation_id
       )),
-      threads.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "No conversations yet" }) : null
+      threads.length === 0 && !loadingMore ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "No conversations yet" }) : null,
+      loadingMore ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "Loading..." }) : null
     ] })
   ] });
 }

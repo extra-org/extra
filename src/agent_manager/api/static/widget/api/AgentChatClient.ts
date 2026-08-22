@@ -2,6 +2,7 @@ import type { TokenSource } from "../auth/tokenSource";
 import type {
   ApprovalDecision,
   ChatMessage,
+  PaginatedThreads,
   TokenBudget,
   SendMessageResponse,
   StreamEvent,
@@ -67,16 +68,22 @@ export class AgentChatClient {
     return String(data.conversation_id);
   }
 
-  async listConversations(): Promise<ThreadSummary[]> {
-    const response = await this.request("/conversations");
+  async listConversations(limit = 20, cursor?: string | null): Promise<PaginatedThreads> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    const response = await this.request(`/conversations?${params.toString()}`);
 
     const data = await response.json();
-    if (!Array.isArray(data)) return [];
-    return data.map((thread) => ({
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    const items: ThreadSummary[] = rawItems.map((thread: any) => ({
       conversation_id: String(thread.conversation_id),
       title: thread.title ?? null,
       last_message_at: thread.last_message_at ?? null,
     }));
+    return {
+      items,
+      next_cursor: data.next_cursor ? String(data.next_cursor) : null,
+    };
   }
 
   async getMessages(conversationId: string): Promise<ChatMessage[]> {

@@ -42,6 +42,7 @@ from agent_manager.application.prepared_conversation_turn import PreparedConvers
 from agent_manager.domain import (
     ConversationMessage,
     ConversationSession,
+    PaginatedSessions,
     Principal,
     Repository,
     Role,
@@ -136,9 +137,9 @@ class ConversationService:
         return TokenBudgetUsage.from_totals(used, self._max_tokens)
 
     async def list_conversations(
-        self, principal: Principal, *, limit: int = 50
-    ) -> list[ConversationSession]:
-        return await self._repository.list_sessions(principal.user_id, limit=limit)
+        self, principal: Principal, *, limit: int = 50, cursor: str | None = None
+    ) -> PaginatedSessions:
+        return await self._repository.list_sessions(principal.user_id, limit=limit, cursor=cursor)
 
     async def send(
         self,
