@@ -53564,6 +53564,10 @@ function AgentChatApp({
     setThreads(await conversation.listThreads());
     setThreadsOpen(true);
   }, [conversation]);
+  const refreshThreadsIfOpen = (0, import_react10.useCallback)(async () => {
+    if (!threadsOpen) return;
+    setThreads(await conversation.listThreads());
+  }, [conversation, threadsOpen]);
   const openThread = (0, import_react10.useCallback)(
     async (conversationId) => {
       conversation.switchTo(conversationId);
@@ -53842,6 +53846,7 @@ function AgentChatApp({
       } finally {
         finishExecution(controller);
         void refreshUsage(resolveConversationId(cid));
+        void refreshThreadsIfOpen();
       }
     },
     [
@@ -53850,6 +53855,7 @@ function AgentChatApp({
       finishExecution,
       onAnswer,
       putEntries,
+      refreshThreadsIfOpen,
       refreshUsage,
       replaceEntry,
       resolveConversationId

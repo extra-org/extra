@@ -217,6 +217,14 @@ export function AgentChatApp({
     setThreadsOpen(true);
   }, [conversation]);
 
+  // The generated title lands on the server sometime during (usually well
+  // before) the turn's own stream finishes. Re-pull the list on every
+  // completed turn, but only while a viewer could actually see it change.
+  const refreshThreadsIfOpen = useCallback(async () => {
+    if (!threadsOpen) return;
+    setThreads(await conversation.listThreads());
+  }, [conversation, threadsOpen]);
+
   const openThread = useCallback(
     async (conversationId: string) => {
       conversation.switchTo(conversationId);
@@ -526,6 +534,7 @@ export function AgentChatApp({
       } finally {
         finishExecution(controller);
         void refreshUsage(resolveConversationId(cid));
+        void refreshThreadsIfOpen();
       }
     },
     [
@@ -534,6 +543,7 @@ export function AgentChatApp({
       finishExecution,
       onAnswer,
       putEntries,
+      refreshThreadsIfOpen,
       refreshUsage,
       replaceEntry,
       resolveConversationId,

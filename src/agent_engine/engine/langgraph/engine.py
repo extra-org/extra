@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
@@ -28,7 +29,7 @@ from agent_engine.approvals.session_approval_repository import SessionApprovalRe
 from agent_engine.approvals.session_approval_store import SessionApprovalStore
 from agent_engine.approvals.tool_execution_manager import ToolExecutionManager
 from agent_engine.core.execution import ExecutionPolicy
-from agent_engine.core.spec import AgentSpec, SystemSpec
+from agent_engine.core.spec import AgentSpec, BaseModelConfig, SystemSpec
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.approval_provider import InterruptApprovalProvider
 from agent_engine.engine.langgraph.checkpointing import (
@@ -38,7 +39,12 @@ from agent_engine.engine.langgraph.checkpointing import (
 from agent_engine.engine.langgraph.execution.run_lifecycle import RunLifecycle
 from agent_engine.engine.langgraph.execution.stream_channel import StreamChannel
 from agent_engine.engine.langgraph.filters import AccessFilter, RouteFilter
-from agent_engine.engine.langgraph.graph.graph_builder import GraphBuilder, ModelFactory, RunGraph
+from agent_engine.engine.langgraph.graph.graph_builder import (
+    GraphBuilder,
+    ModelFactory,
+    RunGraph,
+    build_model,
+)
 from agent_engine.engine.langgraph.graph.traversal import (
     collect_mcp_specs,
     has_protected_nodes,
@@ -213,6 +219,7 @@ class LangGraphEngine(Engine):
         self._callbacks: list[BaseCallbackHandler] = [*build_callbacks(), *(callbacks or [])]
 
         self._app: RunGraph | None = None
+        self._defaults_model: BaseModelConfig | None = None
         self._system_name = ""
         self._filters: list[RouteFilter] = []
         self._mcp_connector: MCPConnector | None = None
@@ -258,6 +265,7 @@ class LangGraphEngine(Engine):
 
     async def build(self, spec: SystemSpec) -> None:
         self._system_name = spec.meta.name
+        self._defaults_model = spec.defaults.model if spec.defaults else None
         self._policy = spec.execution
         register_import_roots(self._base_dir, spec.plugins.import_roots)
         self._hook_manager = HookManager.from_config(
@@ -303,6 +311,50 @@ class LangGraphEngine(Engine):
         if self._mcp_connector is not None:
             self._mcp_connector.clear()
         self._mcp_tools.clear()
+
+    @property
+    def can_complete_text(self) -> bool:
+        return self._defaults_model is not None
+
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        model: BaseModelConfig | None = None,
+        system: str | None = None,
+        max_tokens: int | None = None,
+        trace_name: str | None = None,
+    ) -> str:
+        """One stateless model call, outside the compiled graph.
+
+        `model` defaults to `defaults.model` — the same model a node with no
+        `model:` of its own would get — but any caller with its own
+        `BaseModelConfig` (region, temperature, top_p included) can ask for a
+        different one; this never depends on what a specific caller needs.
+        Built fresh per call, not cached, so a per-call `max_tokens` reaches
+        the provider through its own constructor kwarg rather than relying on
+        every provider integration honoring an invoke-time override.
+        """
+        model_config = model or self._defaults_model
+        if model_config is None:
+            raise RuntimeError(f"{self._system_name or 'this system'} has no default model")
+        overrides: dict[str, object] | None = (
+            {"max_tokens": max_tokens} if max_tokens is not None else None
+        )
+        chat_model = build_model(self._model_factory, model_config, overrides)
+        messages: list[BaseMessage] = []
+        if system:
+            messages.append(SystemMessage(content=system))
+        messages.append(HumanMessage(content=prompt))
+        config = RunnableConfig(callbacks=self._callbacks)
+        if trace_name:
+            # `run_name` is LangChain's own RunnableConfig field: the label
+            # this call shows up as in trace tooling (Langfuse), the same
+            # mechanism `_thread_config` uses for a conversation turn — this
+            # is what tells the two apart there.
+            config["run_name"] = trace_name
+        response = await chat_model.ainvoke(messages, config=config)
+        return response.text
 
     def discovered_mcp_tools(self) -> dict[str, tuple[str, ...]]:
         """Return discovered MCP tool names grouped by server for diagnostics/UIs."""

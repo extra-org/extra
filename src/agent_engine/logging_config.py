@@ -28,8 +28,15 @@ class StructuredFormatter(logging.Formatter):
         return f"{base} {' '.join(pairs)}" if pairs else base
 
 
-def log(logger: logging.Logger, level: int, event: str, **fields: object) -> None:
-    logger.log(level, event, extra={"fields": fields})
+def log(
+    logger: logging.Logger,
+    level: int,
+    event: str,
+    *,
+    exc_info: bool = False,
+    **fields: object,
+) -> None:
+    logger.log(level, event, extra={"fields": fields}, exc_info=exc_info)
 
 
 def configure_logging(level: str | None = None) -> None:
