@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from agent_engine.core.spec import BaseModelConfig
 from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_manager.api.app import _title_generator
@@ -69,12 +70,19 @@ class StubCompletionEngine:
         self,
         prompt: str,
         *,
+        model: BaseModelConfig | None = None,
         system: str | None = None,
         max_tokens: int | None = None,
         trace_name: str | None = None,
     ) -> str:
         self.calls.append(
-            {"prompt": prompt, "system": system, "max_tokens": max_tokens, "trace_name": trace_name}
+            {
+                "prompt": prompt,
+                "model": model,
+                "system": system,
+                "max_tokens": max_tokens,
+                "trace_name": trace_name,
+            }
         )
         return self.answer
 

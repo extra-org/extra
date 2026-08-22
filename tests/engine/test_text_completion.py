@@ -127,4 +127,47 @@ async def test_complete_traces_under_the_given_name() -> None:
 
     _messages, config = chat_model.invocations[0]
     assert config["run_name"] == "conversation_title"
-    assert config["tags"] == ["conversation_title"]
+
+
+async def test_complete_without_a_trace_name_sets_no_run_name() -> None:
+    spec, base_dir = load_test_system()
+    chat_model = RecordingChatModel()
+    factory = RecordingModelFactory(chat_model)
+
+    async with LangGraphEngine(base_dir, model_factory=factory) as engine:
+        await engine.build(spec)
+        await engine.complete("hello")
+
+    _messages, config = chat_model.invocations[0]
+    assert "run_name" not in config
+
+
+async def test_an_explicit_model_overrides_the_default() -> None:
+    """A caller with its own `BaseModelConfig` isn't limited to `defaults.model`."""
+    spec, base_dir = load_test_system()
+    chat_model = RecordingChatModel()
+    factory = RecordingModelFactory(chat_model)
+    explicit_model = ModelConfig(provider="fake", name="explicit-model", temperature=0.9)
+
+    async with LangGraphEngine(base_dir, model_factory=factory) as engine:
+        await engine.build(spec)
+        await engine.complete("hello", model=explicit_model)
+
+    provider, name, temperature, _kwargs = factory.calls[-1]
+    assert (provider, name, temperature) == ("fake", "explicit-model", 0.9)
+
+
+async def test_an_explicit_model_works_even_without_a_default() -> None:
+    spec, base_dir = load_test_system()
+    spec = dataclasses.replace(spec, defaults=None)
+    chat_model = RecordingChatModel()
+    factory = RecordingModelFactory(chat_model)
+    explicit_model = ModelConfig(provider="fake", name="explicit-model")
+
+    async with LangGraphEngine(base_dir, model_factory=factory) as engine:
+        await engine.build(spec)
+        assert not engine.can_complete_text
+
+        result = await engine.complete("hello", model=explicit_model)
+
+    assert result == "A Generated Title"

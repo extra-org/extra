@@ -40,16 +40,33 @@ RunGraphBuilder = StateGraph[GraphState, None, GraphState, GraphState]
 RunGraph = CompiledStateGraph[GraphState, None, GraphState, GraphState]
 
 
-def model_factory_kwargs(
+def build_model(
+    factory: ModelFactory,
+    model: BaseModelConfig,
+    overrides: dict[str, object] | None = None,
+) -> BaseChatModel:
+    """The one call shape every model-construction site in this codebase uses.
+
+    `overrides` wins over `model`'s own value for a key — a caller's per-call
+    need, e.g. a bounded output length for one completion rather than the
+    model's own configured size.
+    """
+    return factory(
+        model.provider,
+        model.name,
+        model.temperature,
+        **_model_factory_kwargs(factory, model, overrides),
+    )
+
+
+def _model_factory_kwargs(
     factory: ModelFactory,
     model: BaseModelConfig,
     overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """The optional kwargs a factory call for `model` should carry.
 
-    `overrides` wins over `model`'s own value for a key (a caller's per-call
-    need, e.g. a bounded output length) and is filtered by the factory's
-    signature the same as everything else, so a narrower test factory never
+    Filtered by the factory's signature, so a narrower test factory never
     receives a kwarg it doesn't declare.
     """
     optional = {key: getattr(model, key) for key in _MODEL_FACTORY_OPTIONAL_KWARGS}
@@ -211,12 +228,7 @@ class GraphBuilder:
         )
 
     def _build_model(self, model: BaseModelConfig) -> BaseChatModel:
-        return self._model_factory(
-            model.provider,
-            model.name,
-            model.temperature,
-            **model_factory_kwargs(self._model_factory, model),
-        )
+        return build_model(self._model_factory, model)
 
     def _build_model_runnable(
         self,

@@ -43,7 +43,7 @@ from agent_engine.engine.langgraph.graph.graph_builder import (
     GraphBuilder,
     ModelFactory,
     RunGraph,
-    model_factory_kwargs,
+    build_model,
 )
 from agent_engine.engine.langgraph.graph.traversal import (
     collect_mcp_specs,
@@ -320,38 +320,40 @@ class LangGraphEngine(Engine):
         self,
         prompt: str,
         *,
+        model: BaseModelConfig | None = None,
         system: str | None = None,
         max_tokens: int | None = None,
         trace_name: str | None = None,
     ) -> str:
         """One stateless model call, outside the compiled graph.
 
-        Uses `defaults.model` verbatim (region, temperature, top_p included) —
-        the same model a node with no `model:` of its own would get. Built
-        fresh per call, not cached, so a per-call `max_tokens` reaches the
-        provider through its own constructor kwarg rather than relying on
+        `model` defaults to `defaults.model` — the same model a node with no
+        `model:` of its own would get — but any caller with its own
+        `BaseModelConfig` (region, temperature, top_p included) can ask for a
+        different one; this never depends on what a specific caller needs.
+        Built fresh per call, not cached, so a per-call `max_tokens` reaches
+        the provider through its own constructor kwarg rather than relying on
         every provider integration honoring an invoke-time override.
         """
-        if self._defaults_model is None:
+        model_config = model or self._defaults_model
+        if model_config is None:
             raise RuntimeError(f"{self._system_name or 'this system'} has no default model")
         overrides: dict[str, object] | None = (
             {"max_tokens": max_tokens} if max_tokens is not None else None
         )
-        model = self._model_factory(
-            self._defaults_model.provider,
-            self._defaults_model.name,
-            self._defaults_model.temperature,
-            **model_factory_kwargs(self._model_factory, self._defaults_model, overrides),
-        )
+        chat_model = build_model(self._model_factory, model_config, overrides)
         messages: list[BaseMessage] = []
         if system:
             messages.append(SystemMessage(content=system))
         messages.append(HumanMessage(content=prompt))
         config = RunnableConfig(callbacks=self._callbacks)
         if trace_name:
+            # `run_name` is LangChain's own RunnableConfig field: the label
+            # this call shows up as in trace tooling (Langfuse), the same
+            # mechanism `_thread_config` uses for a conversation turn — this
+            # is what tells the two apart there.
             config["run_name"] = trace_name
-            config["tags"] = [trace_name]
-        response = await model.ainvoke(messages, config=config)
+        response = await chat_model.ainvoke(messages, config=config)
         return response.text
 
     def discovered_mcp_tools(self) -> dict[str, tuple[str, ...]]:
