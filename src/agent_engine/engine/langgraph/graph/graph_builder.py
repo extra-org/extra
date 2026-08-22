@@ -40,11 +40,20 @@ RunGraphBuilder = StateGraph[GraphState, None, GraphState, GraphState]
 RunGraph = CompiledStateGraph[GraphState, None, GraphState, GraphState]
 
 
-def _model_factory_kwargs(
+def model_factory_kwargs(
     factory: ModelFactory,
     model: BaseModelConfig,
+    overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    """The optional kwargs a factory call for `model` should carry.
+
+    `overrides` wins over `model`'s own value for a key (a caller's per-call
+    need, e.g. a bounded output length) and is filtered by the factory's
+    signature the same as everything else, so a narrower test factory never
+    receives a kwarg it doesn't declare.
+    """
     optional = {key: getattr(model, key) for key in _MODEL_FACTORY_OPTIONAL_KWARGS}
+    optional.update(overrides or {})
     present: dict[str, object] = {
         key: value for key, value in optional.items() if value is not None
     }
@@ -206,7 +215,7 @@ class GraphBuilder:
             model.provider,
             model.name,
             model.temperature,
-            **_model_factory_kwargs(self._model_factory, model),
+            **model_factory_kwargs(self._model_factory, model),
         )
 
     def _build_model_runnable(

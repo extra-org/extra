@@ -84,7 +84,8 @@ class FakeChatModel:
     ) -> Any:
         return FakeRunnableWithFallbacks(self, fallbacks)
 
-    async def ainvoke(self, messages: list[Any]) -> AIMessage:
+    async def ainvoke(self, messages: list[Any], config: Any = None, **kwargs: Any) -> AIMessage:
+        del config, kwargs
         return self._respond(messages)
 
     async def astream(self, messages: list[Any]) -> Any:

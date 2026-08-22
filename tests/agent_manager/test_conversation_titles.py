@@ -1,19 +1,17 @@
-"""Conversation titling — pure: in-memory repository, stub engine, stub model."""
+"""Conversation titling — pure: in-memory repository, stub engine, stub completer."""
 
 from __future__ import annotations
 
 import asyncio
 import dataclasses
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any
 
 import pytest
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
 
-from agent_engine.core.spec import BaseModelConfig
 from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks.models import RunContext
+from agent_manager.api.app import _title_generator
 from agent_manager.application import ConversationService
 from agent_manager.domain import Principal, TitleGenerator
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
@@ -23,8 +21,6 @@ from agent_manager.infrastructure.titles import (
     MAX_TITLE_CHARS,
     TRACE_NAME,
     ConversationTitler,
-    build_titler,
-    parse_model_ref,
 )
 from tests.agent_manager.conftest import RecordingEngine
 
@@ -61,54 +57,58 @@ class BrokenTitleGenerator(TitleGenerator):
         raise RuntimeError("generator unavailable")
 
 
-class StubChatModel:
-    """Records what it was asked and answers with a canned title."""
+class StubCompletionEngine:
+    """A minimal TextCompletionEngine: records what it was asked, answers with a canned title."""
 
-    def __init__(self, answer: str | BaseMessage = "Next Month Invoice Estimate") -> None:
-        self.answer = AIMessage(content=answer) if isinstance(answer, str) else answer
-        self.calls: list[tuple[list[BaseMessage], dict[str, Any]]] = []
+    def __init__(self, answer: str = "Next Month Invoice Estimate") -> None:
+        self.answer = answer
+        self.can_complete_text = True
+        self.calls: list[dict[str, Any]] = []
 
-    async def ainvoke(
-        self, messages: list[BaseMessage], config: dict[str, Any] | None = None, **_: Any
-    ) -> BaseMessage:
-        self.calls.append((messages, dict(config or {})))
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int | None = None,
+        trace_name: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {"prompt": prompt, "system": system, "max_tokens": max_tokens, "trace_name": trace_name}
+        )
         return self.answer
 
 
-class HangingChatModel(StubChatModel):
-    async def ainvoke(
-        self, messages: list[BaseMessage], config: dict[str, Any] | None = None, **_: Any
-    ) -> BaseMessage:
+class HangingCompletionEngine(StubCompletionEngine):
+    async def complete(self, prompt: str, **kwargs: Any) -> str:
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
 
-class FailingChatModel(StubChatModel):
-    async def ainvoke(
-        self, messages: list[BaseMessage], config: dict[str, Any] | None = None, **_: Any
-    ) -> BaseMessage:
+class FailingCompletionEngine(StubCompletionEngine):
+    async def complete(self, prompt: str, **kwargs: Any) -> str:
         raise RuntimeError("provider unavailable")
 
 
-def titler(model: StubChatModel, **kwargs: Any) -> ConversationTitler:
-    return ConversationTitler(cast(BaseChatModel, model), **kwargs)
+def titler(engine: StubCompletionEngine, **kwargs: Any) -> ConversationTitler:
+    return ConversationTitler(engine, **kwargs)
 
 
-async def title_of(model: StubChatModel, text: str, **kwargs: Any) -> str:
-    return await titler(model, **kwargs).generate(text, "c-1")
+async def title_of(engine: StubCompletionEngine, text: str, **kwargs: Any) -> str:
+    return await titler(engine, **kwargs).generate(text, "c-1")
 
 
 async def test_titles_a_long_opening_message_with_the_model() -> None:
-    model = StubChatModel()
+    engine = StubCompletionEngine()
 
-    assert await title_of(model, LONG_QUESTION) == "Next Month Invoice Estimate"
+    assert await title_of(engine, LONG_QUESTION) == "Next Month Invoice Estimate"
 
 
 async def test_short_opening_message_is_its_own_title_without_a_model_call() -> None:
-    model = StubChatModel()
+    engine = StubCompletionEngine()
 
-    assert await title_of(model, "  Reset my\n password  ") == "Reset my password"
-    assert model.calls == []
+    assert await title_of(engine, "  Reset my\n password  ") == "Reset my password"
+    assert engine.calls == []
 
 
 @pytest.mark.parametrize(
@@ -126,7 +126,7 @@ async def test_short_opening_message_is_its_own_title_without_a_model_call() -> 
     ],
 )
 async def test_the_model_answer_is_reduced_to_a_label(answer: str, expected: str) -> None:
-    assert await title_of(StubChatModel(answer), LONG_QUESTION) == expected
+    assert await title_of(StubCompletionEngine(answer), LONG_QUESTION) == expected
 
 
 @pytest.mark.parametrize(
@@ -143,15 +143,15 @@ async def test_the_model_answer_is_reduced_to_a_label(answer: str, expected: str
     ],
 )
 async def test_an_unusable_answer_falls_back_to_the_trim(answer: str) -> None:
-    assert await title_of(StubChatModel(answer), LONG_QUESTION) == LONG_QUESTION[:47] + "…"
+    assert await title_of(StubCompletionEngine(answer), LONG_QUESTION) == LONG_QUESTION[:47] + "…"
 
 
 async def test_a_failing_provider_falls_back_to_the_trim() -> None:
-    assert await title_of(FailingChatModel(), LONG_QUESTION) == LONG_QUESTION[:47] + "…"
+    assert await title_of(FailingCompletionEngine(), LONG_QUESTION) == LONG_QUESTION[:47] + "…"
 
 
 async def test_a_hanging_provider_falls_back_to_the_trim() -> None:
-    title = await title_of(HangingChatModel(), LONG_QUESTION, timeout_seconds=0.01)
+    title = await title_of(HangingCompletionEngine(), LONG_QUESTION, timeout_seconds=0.01)
 
     assert title == LONG_QUESTION[:47] + "…"
 
@@ -168,34 +168,33 @@ async def test_a_hanging_provider_falls_back_to_the_trim() -> None:
 )
 async def test_no_model_answer_ever_raises_or_produces_an_empty_title(answer: str) -> None:
     """Whatever text a model returns, titling degrades — it never crashes the turn."""
-    title = await title_of(StubChatModel(answer), LONG_QUESTION)
+    title = await title_of(StubCompletionEngine(answer), LONG_QUESTION)
 
     assert title
 
 
 async def test_the_opening_message_is_bounded_before_it_reaches_the_model() -> None:
-    model = StubChatModel()
+    engine = StubCompletionEngine()
 
-    await title_of(model, "word " * 1000)
+    await title_of(engine, "word " * 1000)
 
-    (_system, human), _config = model.calls[0]
-    assert len(str(human.content)) == MAX_SOURCE_CHARS
+    assert len(engine.calls[0]["prompt"]) == MAX_SOURCE_CHARS
 
 
-async def test_the_call_is_traced_under_its_own_name() -> None:
-    model = StubChatModel()
+async def test_the_call_is_traced_with_its_own_name_and_output_cap() -> None:
+    engine = StubCompletionEngine()
 
-    await title_of(model, LONG_QUESTION)
+    await title_of(engine, LONG_QUESTION)
 
-    _messages, config = model.calls[0]
-    assert config["run_name"] == TRACE_NAME
-    assert config["metadata"] == {"conversation_id": "c-1"}
+    call = engine.calls[0]
+    assert call["trace_name"] == TRACE_NAME
+    assert call["max_tokens"] == MAX_OUTPUT_TOKENS
 
 
 async def test_generated_title_replaces_the_trim_on_the_first_turn() -> None:
     repository = MemoryRepository()
     service = ConversationService(
-        RecordingEngine(), repository, title_generator=titler(StubChatModel())
+        RecordingEngine(), repository, title_generator=titler(StubCompletionEngine())
     )
     cid = await service.create(ALICE)
 
@@ -215,7 +214,7 @@ async def test_titling_never_touches_the_conversation_or_its_token_budget() -> N
     """
     repository = MemoryRepository()
     service = ConversationService(
-        MeteredEngine(), repository, title_generator=titler(StubChatModel())
+        MeteredEngine(), repository, title_generator=titler(StubCompletionEngine())
     )
     cid = await service.create(ALICE)
 
@@ -231,9 +230,9 @@ async def test_titling_never_touches_the_conversation_or_its_token_budget() -> N
 
 
 async def test_only_the_first_turn_is_titled() -> None:
-    model = StubChatModel()
+    engine = StubCompletionEngine()
     service = ConversationService(
-        RecordingEngine(), MemoryRepository(), title_generator=titler(model)
+        RecordingEngine(), MemoryRepository(), title_generator=titler(engine)
     )
     cid = await service.create(ALICE)
 
@@ -241,7 +240,7 @@ async def test_only_the_first_turn_is_titled() -> None:
     await service.send(cid, f"and {LONG_QUESTION}", ALICE)
     await service.close()
 
-    assert len(model.calls) == 1
+    assert len(engine.calls) == 1
 
 
 async def test_a_failing_generator_leaves_the_trimmed_title_in_place() -> None:
@@ -272,116 +271,29 @@ async def test_without_a_generator_the_trim_is_the_title() -> None:
     assert session.title == LONG_QUESTION[:47] + "…"
 
 
-def test_a_deployment_without_a_model_keeps_trimming() -> None:
-    assert build_titler(model_ref=None, default_model=None) is None
+class FakeEngineWithCompletion:
+    """Structurally satisfies TextCompletionEngine, whether or not it's usable."""
+
+    def __init__(self, *, can_complete_text: bool) -> None:
+        self.can_complete_text = can_complete_text
+
+    async def complete(self, prompt: str, **kwargs: Any) -> str:
+        return "ok"
 
 
-class RecordingModelFactory:
-    """Stands in for `build_chat_model`: returns a stub, remembers what it was asked."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    def __call__(
-        self, provider: str, name: str, temperature: float | None = None, **kwargs: Any
-    ) -> StubChatModel:
-        self.calls.append((provider, name, {"temperature": temperature, **kwargs}))
-        return StubChatModel()
+class PlainEngine:
+    """Has neither `can_complete_text` nor `complete` — no completion capability."""
 
 
-def test_falls_back_to_the_systems_own_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    factory = RecordingModelFactory()
-    monkeypatch.setattr("agent_manager.infrastructure.titles.build_chat_model", factory)
+def test_title_generator_uses_the_engine_when_it_can_complete_text() -> None:
+    generator = _title_generator(FakeEngineWithCompletion(can_complete_text=True))
 
-    titler = build_titler(
-        model_ref=None, default_model=BaseModelConfig(provider="anthropic", name="system-model")
-    )
-
-    assert isinstance(titler, ConversationTitler)
-    assert factory.calls == [
-        (
-            "anthropic",
-            "system-model",
-            {"temperature": None, "region": None, "top_p": None, "max_tokens": MAX_OUTPUT_TOKENS},
-        )
-    ]
+    assert isinstance(generator, ConversationTitler)
 
 
-def test_an_explicit_model_ref_overrides_the_systems_own_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    factory = RecordingModelFactory()
-    monkeypatch.setattr("agent_manager.infrastructure.titles.build_chat_model", factory)
-
-    build_titler(
-        model_ref="anthropic:claude-haiku-4-5",
-        default_model=BaseModelConfig(provider="anthropic", name="system-model"),
-    )
-
-    assert [(provider, name) for provider, name, _ in factory.calls] == [
-        ("anthropic", "claude-haiku-4-5")
-    ]
+def test_title_generator_is_none_when_the_engine_has_no_default_model() -> None:
+    assert _title_generator(FakeEngineWithCompletion(can_complete_text=False)) is None
 
 
-def test_the_systems_full_model_config_reaches_the_factory(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Region, temperature, and top_p travel with the model, not just its name.
-
-    A Bedrock deployment's title model needs the same region as its agents;
-    dropping it would make titling fail at startup for a deployment whose
-    agents work fine.
-    """
-    factory = RecordingModelFactory()
-    monkeypatch.setattr("agent_manager.infrastructure.titles.build_chat_model", factory)
-
-    build_titler(
-        model_ref=None,
-        default_model=BaseModelConfig(
-            provider="bedrock",
-            name="claude-haiku-4-5",
-            temperature=0.2,
-            region="us-east-1",
-            top_p=0.9,
-        ),
-    )
-
-    assert factory.calls == [
-        (
-            "bedrock",
-            "claude-haiku-4-5",
-            {
-                "temperature": 0.2,
-                "region": "us-east-1",
-                "top_p": 0.9,
-                "max_tokens": MAX_OUTPUT_TOKENS,
-            },
-        )
-    ]
-
-
-def test_titlings_own_output_cap_overrides_the_deployments(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Titling caps its own output regardless of the agents' own configured size."""
-    factory = RecordingModelFactory()
-    monkeypatch.setattr("agent_manager.infrastructure.titles.build_chat_model", factory)
-
-    build_titler(
-        model_ref=None,
-        default_model=BaseModelConfig(provider="anthropic", name="system-model", max_tokens=16000),
-    )
-
-    assert factory.calls[0][2]["max_tokens"] == MAX_OUTPUT_TOKENS
-
-
-@pytest.mark.parametrize("ref", ["claude-haiku-4-5", "anthropic:", ":name", "", "  :  "])
-def test_a_malformed_model_reference_is_rejected(ref: str) -> None:
-    with pytest.raises(ValueError, match="provider:name"):
-        parse_model_ref(ref)
-
-
-def test_a_model_reference_names_provider_and_model() -> None:
-    config = parse_model_ref(" anthropic : claude-haiku-4-5 ")
-
-    assert (config.provider, config.name) == ("anthropic", "claude-haiku-4-5")
+def test_title_generator_is_none_for_an_engine_without_the_capability() -> None:
+    assert _title_generator(PlainEngine()) is None

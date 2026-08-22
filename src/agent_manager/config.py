@@ -136,7 +136,6 @@ class Settings(BaseSettings):
     context_max_chars: int | None = None
     context_max_tokens: int | None = None
     snapshot_ttl_seconds: int = 86_400
-    extra_title_model: str | None = None
     host: str = "0.0.0.0"
     port: int = 8100
     # Deny cross-origin by default; each deployment sets its own site(s),

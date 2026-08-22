@@ -1,31 +1,18 @@
 """LLM-written conversation titles.
 
-Deliberately isolated from the conversation it names: this call carries its own
-model and its own trace, and never persists a message. Its tokens therefore stay
-out of `conversation_messages`, so a generated title can neither spend the
-caller's context budget nor reappear as history on the next turn.
+The engine is the only thing here that knows a model exists — it owns
+`defaults.model`, provider construction, and tracing. This module only knows
+how to ask for a title and how to clean up whatever comes back.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
 
-from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
-
-from agent_engine.core.spec import BaseModelConfig
+from agent_engine.engine.text_completion_engine import TextCompletionEngine
 from agent_engine.logging_config import log
-from agent_engine.models.factory import build_chat_model
-from agent_manager.domain import (
-    THREAD_TITLE_LIMIT,
-    TitleGenerator,
-    compact_text,
-    thread_title,
-)
+from agent_manager.domain import THREAD_TITLE_LIMIT, TitleGenerator, compact_text, thread_title
 
 logger = logging.getLogger(__name__)
 
@@ -47,21 +34,17 @@ INSTRUCTIONS = (
 
 
 class ConversationTitler(TitleGenerator):
-    """Names a conversation with a model, trimming the message when it can't.
+    """Names a conversation through the engine, trimming when it can't.
 
-    Every failure — provider error, timeout, empty answer — degrades to the trim
-    rather than propagating, so nothing here can affect the turn being named.
+    Every failure — no model configured, provider error, timeout, empty
+    answer — degrades to the trim rather than propagating, so nothing here can
+    affect the turn being named.
     """
 
     def __init__(
-        self,
-        model: BaseChatModel,
-        *,
-        callbacks: Sequence[BaseCallbackHandler] = (),
-        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        self, engine: TextCompletionEngine, *, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     ) -> None:
-        self._model = model
-        self._callbacks = list(callbacks)
+        self._engine = engine
         self._timeout_seconds = timeout_seconds
 
     async def generate(self, text: str, conversation_id: str) -> str:
@@ -71,20 +54,19 @@ class ConversationTitler(TitleGenerator):
         if len(source) <= THREAD_TITLE_LIMIT:
             return thread_title(source)
 
-        # One boundary, one fallback: a bad answer and a bad connection are the
-        # same problem to a caller, and both resolve to the trimmed message.
+        # One boundary, one fallback: a bad answer, a bad connection, and no
+        # model configured at all are the same problem to a caller.
         try:
             answer = await asyncio.wait_for(
-                self._model.ainvoke(
-                    [
-                        SystemMessage(content=INSTRUCTIONS),
-                        HumanMessage(content=source[:MAX_SOURCE_CHARS]),
-                    ],
-                    config=self._trace_config(conversation_id),
+                self._engine.complete(
+                    source[:MAX_SOURCE_CHARS],
+                    system=INSTRUCTIONS,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    trace_name=TRACE_NAME,
                 ),
                 self._timeout_seconds,
             )
-            title = _as_title(answer.text)
+            title = _as_title(answer)
         except Exception:
             log(
                 logger,
@@ -96,51 +78,6 @@ class ConversationTitler(TitleGenerator):
             title = ""
 
         return title or thread_title(source)
-
-    def _trace_config(self, conversation_id: str) -> RunnableConfig:
-        return RunnableConfig(
-            run_name=TRACE_NAME,
-            tags=[TRACE_NAME],
-            metadata={"conversation_id": conversation_id},
-            callbacks=self._callbacks,
-        )
-
-
-def build_titler(
-    *,
-    model_ref: str | None,
-    default_model: BaseModelConfig | None,
-    callbacks: Sequence[BaseCallbackHandler] = (),
-) -> TitleGenerator | None:
-    """Assemble the titler for one deployment, or `None` to keep trimming.
-
-    `model_ref` ("provider:name") overrides the system's own model, so a
-    deployment running a large model for its agents can title with a small one.
-    A malformed reference is an operator error and fails at boot rather than
-    silently degrading every title.
-    """
-    config = parse_model_ref(model_ref) if model_ref else default_model
-    if config is None:
-        return None
-    model = build_chat_model(
-        config.provider,
-        config.name,
-        config.temperature,
-        region=config.region,
-        top_p=config.top_p,
-        # Ours, not the deployment's: a title is a handful of words regardless
-        # of how large the deployment's own agents are configured to answer.
-        max_tokens=MAX_OUTPUT_TOKENS,
-    )
-    log(logger, logging.INFO, "conversation titling enabled", model=config.name)
-    return ConversationTitler(model, callbacks=callbacks)
-
-
-def parse_model_ref(ref: str) -> BaseModelConfig:
-    provider, separator, name = ref.partition(":")
-    if not separator or not provider.strip() or not name.strip():
-        raise ValueError(f"Title model must read 'provider:name'; got {ref!r}")
-    return BaseModelConfig(provider=provider.strip(), name=name.strip())
 
 
 # Matching (open, close) quote pairs the model may wrap a title in, across the

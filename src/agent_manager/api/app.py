@@ -15,8 +15,8 @@ from fastapi import FastAPI
 
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.engine.text_completion_engine import TextCompletionEngine
 from agent_engine.logging_config import configure_logging
-from agent_engine.observability import build_callbacks
 from agent_engine.parsers.yaml.parser import YAMLParser
 from agent_manager.api.deps import CallerIdentity
 from agent_manager.api.routes import router
@@ -24,7 +24,19 @@ from agent_manager.api.web import mount_web
 from agent_manager.application import ConversationService
 from agent_manager.composition import application_repositories, build_identity_resolver
 from agent_manager.config import Settings
-from agent_manager.infrastructure.titles import build_titler
+from agent_manager.domain import TitleGenerator
+from agent_manager.infrastructure.titles import ConversationTitler
+
+
+def _title_generator(engine: object) -> TitleGenerator | None:
+    """A titler backed by the engine's own default model, or none.
+
+    A system with no `defaults.model` simply doesn't title conversations —
+    checked once at startup rather than failing per-conversation.
+    """
+    if isinstance(engine, TextCompletionEngine) and engine.can_complete_text:
+        return ConversationTitler(engine)
+    return None
 
 
 def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
@@ -63,11 +75,7 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
                 system_name=spec.meta.name,
                 config_path=str(Path(config_path).resolve()),
                 run_repository=repositories.runs,
-                title_generator=build_titler(
-                    model_ref=settings.extra_title_model,
-                    default_model=spec.defaults.model if spec.defaults else None,
-                    callbacks=build_callbacks(),
-                ),
+                title_generator=_title_generator(engine),
             )
             app.state.service = service
             try:
