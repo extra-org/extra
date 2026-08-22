@@ -54345,6 +54345,12 @@ function styles(config) {
       padding: 10px 12px; border-radius: 10px; font-size: 13.5px; color: #3f3f46;
       font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       transition: background .12s; }
+    /* The drawer is a flex column, so its children inherit flex-shrink: 1 and the browser
+       compresses them to fit rather than letting .thread-list overflow. At ~20 conversations the
+       rows fell from their natural 36px to 24.5px with no scrollbar at all, and by 45 they were
+       19px -- padding only, with the titles clipped top and bottom. Opting out restores natural
+       height and lets the list's own overflow-y: auto do its job. */
+    .thread-drawer-head, .thread-new, .thread-item { flex: 0 0 auto; }
     .thread-item:hover { background: #f4f4f5; }
     .thread-item.active { background: #f4f4f5; color: #18181b; font-weight: 600; }
     .thread-empty { color: #a1a1aa; font-size: 13px; text-align: center; padding: 24px 12px; margin: 0; }
