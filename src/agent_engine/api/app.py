@@ -26,6 +26,7 @@ from agent_engine.api.schemas import (
 )
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import (
+    ApprovalAlreadyProcessed,
     ApprovalError,
     InvalidDecision,
     approval_http_status,
@@ -311,15 +312,32 @@ def create_app(
     ) -> InvokeResponse:
         engine = _hitl_engine()
         auth = _auth_context(authorization)
+        caller_session_id = _run_context(session_id, run_id=run_id).conversation_id
         try:
             result = await engine.resume(
                 run_id,
                 approval_id,
                 decision,
                 caller_user_id=user_id,
-                caller_session_id=_run_context(session_id, run_id=run_id).conversation_id,
+                caller_session_id=caller_session_id,
                 access_token=auth.inbound_access_token if auth else None,
             )
+        except ApprovalAlreadyProcessed as exc:
+            # A duplicate decision is usually a client retry after a network
+            # timeout, not an error: the decision it is re-sending already
+            # succeeded. Recover the original result so the retry sees the same
+            # answer it would have seen the first time, matching what
+            # ConversationService already does for the same exception. Only fall
+            # through to the 409 when the result is genuinely unavailable.
+            recovered = await engine.get_processed_result(
+                run_id,
+                approval_id,
+                caller_user_id=user_id,
+                caller_session_id=caller_session_id,
+            )
+            if recovered is None:
+                raise _map_approval_error(exc) from exc
+            result = recovered
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
         except Exception:

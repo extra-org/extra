@@ -230,6 +230,25 @@ def test_approve_with_no_body_at_all_succeeds(client: TestClient) -> None:
     assert response.json()["status"] == "completed"
 
 
+def test_duplicate_approval_recovers_the_original_result(client: TestClient) -> None:
+    """A retried decision returns the first result, not a bare 409.
+
+    A client that times out and retries has no way to read 409 as "your
+    decision already succeeded". ConversationService already recovers via
+    get_processed_result for this case; the HTTP layer must match.
+    """
+    run_id, approval_id = _trigger_pending_approval(client)
+
+    first = client.post(f"/runs/{run_id}/approvals/{approval_id}/approve")
+    assert first.status_code == 200
+
+    duplicate = client.post(f"/runs/{run_id}/approvals/{approval_id}/approve")
+
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == first.json()["status"]
+    assert duplicate.json()["answer"] == first.json()["answer"]
+
+
 def test_reject_with_no_body_at_all_succeeds(client: TestClient) -> None:
     run_id, approval_id = _trigger_pending_approval(client)
 
