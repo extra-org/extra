@@ -155,6 +155,62 @@ stops requesting tools. Each call is recorded in the run's tool-usage repository
 with its `provider` (`"local"` or `"mcp"`), so the origin is tracked for tracing
 even though it is hidden from the model.
 
+### Normalized tool results
+
+A successful tool call is represented inside Extra as a provider-independent
+`NormalizedToolResult`, not as only a string:
+
+```python
+NormalizedToolResult(
+    text="Found 2 invoices",
+    structured={"count": 2},
+    artifact={"source": "billing"},
+)
+```
+
+The fields have separate responsibilities:
+
+- `text` is the existing model-facing result. MCP text blocks are joined with
+  deterministic normalization rules. A structured-only result uses canonical
+  JSON text; a completely empty result uses a stable placeholder.
+- `structured` is machine-readable output, including MCP
+  `structuredContent`. It must be JSON-like and is not copied into a model
+  message as metadata. For a structured-only result, its canonical JSON is
+  deliberately used as the model-facing `text` fallback.
+- `artifact` carries bounded, relevant artifact metadata. Raw in-memory binary
+  bodies and oversized values are omitted and replaced by type/size metadata.
+  The adapter limits depth to 8, each collection to 128 entries, total visited
+  values to 1,024, individual strings to 8,192 characters, cumulative string
+  content to 32,768 characters, keys to 256 characters, and final canonical
+  metadata to 65,536 characters.
+
+`langchain-mcp-adapters` currently exposes MCP `structuredContent` through the
+`ToolMessage.artifact.structured_content` path. Extra reads that provider
+contract once at the tool adapter boundary and passes only its own normalized
+result deeper into the runtime. Local dictionary/list results are normalized by
+the same abstraction; plain string tools remain unchanged.
+
+Only `text` is appended to the LangChain conversation. The complete normalized
+result is available to trusted result hooks and is serialized into the
+idempotency ledger as a versioned, JSON-primitive payload. A replay therefore
+restores the same text, structured value, and artifact metadata without calling
+the provider again. None of the non-text values are added to tool-usage records,
+logs, model messages, callbacks, traces, or errors automatically.
+The structured-only text fallback is the explicit exception: because that JSON
+becomes model text, it is visible wherever ordinary model messages are visible.
+
+The ledger's atomic claim has one execution owner. Concurrent duplicate callers
+wait for that owner and replay its immutable terminal result; terminal rows
+cannot be overwritten. Legacy string ledger values restore as text-only
+results. Custom repository adapters implement the same claim/wait/complete
+contract and must durably serialize the versioned primitive payload.
+
+Structured values are preserved without application-specific schema validation,
+but the runtime enforces its generic JSON-safe shape. A malformed provider
+result becomes a controlled failed tool result and is never converted with
+`repr()` or an arbitrary `str()` fallback. See
+[`ADR 0004`](adr/0004-normalized-structured-tool-results.md).
+
 The engine is driven as an async context manager: `build()` connects MCP servers
 and discovers tools; `close()` (on context exit) releases them. `run()` does not
 connect MCP servers on its own — `build()` must run first.
@@ -222,6 +278,10 @@ separate labelled sections (see below).
 resume updates the existing record instead of adding a second one. Arguments and
 results are never stored: they may carry sensitive or oversized data, and no
 consumer of tool usage needs them.
+
+This tool-usage repository is distinct from the private tool-execution
+idempotency ledger. Tool usage stores no result values; the execution ledger
+stores `NormalizedToolResult` so a replay can reproduce the completed call.
 
 `ToolUsageRepository` is an abstract base class with three operations (`record`,
 `list_for_run`, `list_for_conversation`). The engine ships a process-local adapter
