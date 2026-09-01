@@ -20,12 +20,13 @@ from agent_engine.approvals.in_memory_approval_repository import InMemoryApprova
 from agent_engine.approvals.in_memory_tool_execution_repository import (
     InMemoryToolExecutionRepository,
 )
-from agent_engine.approvals.models import ApprovalStatus, RunRecord, RunStatus
+from agent_engine.approvals.models import ApprovalStatus, RunRecord, RunStatus, ToolExecutionRecord
 from agent_engine.approvals.tool_execution_manager import (
     ToolExecutionManager,
     execution_id_for,
 )
 from agent_engine.runs.in_memory import InMemoryRunRepository
+from agent_engine.runtime.tool_results import NormalizedToolResult
 
 
 def _manager() -> ToolExecutionManager:
@@ -35,26 +36,49 @@ def _manager() -> ToolExecutionManager:
 async def test_idempotency_reports_prior_success() -> None:
     mgr = _manager()
     exec_id = execution_id_for("tc1")
-    assert await mgr.already_executed(exec_id) is None
-    assert (
-        await mgr.begin_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t") is True
+    assert await mgr.restored_result(exec_id) is None
+    claim = await mgr.claim_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t")
+    assert claim.should_execute is True
+    result = NormalizedToolResult(
+        text="Found 2 invoices",
+        structured={"count": 2},
+        artifact={"source": "billing"},
     )
-    # A second begin for the same key is a duplicate.
+    await mgr.finish_execution(exec_id, status="succeeded", result=result)
+    prior = await mgr.restored_result(exec_id)
+    assert prior == result
+    replay = await mgr.claim_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t")
+    assert replay.should_execute is False
+    assert replay.status == "succeeded"
+    assert replay.result == result
     assert (
         await mgr.begin_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t") is False
     )
-    await mgr.finish_execution(exec_id, status="succeeded", result="R")
-    prior = await mgr.already_executed(exec_id)
-    assert prior is not None and prior.result == "R"
 
 
 async def test_idempotency_no_repository_never_dedupes() -> None:
     mgr = ToolExecutionManager()  # no repository
     exec_id = execution_id_for("tc1")
-    assert await mgr.already_executed(exec_id) is None
-    assert (
-        await mgr.begin_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t") is True
+    assert await mgr.restored_result(exec_id) is None
+    claim = await mgr.claim_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t")
+    assert claim.should_execute is True
+
+
+async def test_legacy_text_result_replays_as_text_only() -> None:
+    repository = InMemoryToolExecutionRepository()
+    manager = ToolExecutionManager(execution_repository=repository)
+    exec_id = execution_id_for("legacy")
+    await repository.start(
+        ToolExecutionRecord(
+            execution_id=exec_id,
+            tool_call_id="legacy",
+            run_id="r1",
+            tool_name="t",
+        )
     )
+    await repository.complete(exec_id, status="succeeded", result="legacy text")
+
+    assert await manager.restored_result(exec_id) == NormalizedToolResult.text_only("legacy text")
 
 
 # ------------------------------- ApprovalManager ------------------------------ #

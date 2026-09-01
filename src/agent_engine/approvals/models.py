@@ -17,10 +17,13 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from agent_engine.approvals.errors import InvalidStateTransition
 from agent_engine.runtime.tool_models import ToolProviderName
+from agent_engine.runtime.tool_results import PersistedToolResult
+
+ToolExecutionStatus = Literal["started", "succeeded", "failed"]
 
 
 class RunStatus(StrEnum):
@@ -154,6 +157,6 @@ class ToolExecutionRecord:
     tool_call_id: str
     run_id: str
     tool_name: str
-    status: str = "started"  # started | succeeded | failed
-    result: str | None = None
+    status: ToolExecutionStatus = "started"
+    result: PersistedToolResult | None = None
     created_at: float = field(default_factory=time.time)

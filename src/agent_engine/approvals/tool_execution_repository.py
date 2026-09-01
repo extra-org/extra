@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from agent_engine.approvals.models import ToolExecutionRecord
+from agent_engine.approvals.models import ToolExecutionRecord, ToolExecutionStatus
+from agent_engine.runtime.tool_results import PersistedToolResult
 
 
 class ToolExecutionRepository(ABC):
@@ -17,5 +18,15 @@ class ToolExecutionRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def complete(self, execution_id: str, status: str, result: str) -> None:
+    async def wait_for_completion(self, execution_id: str) -> ToolExecutionRecord:
+        """Wait for the owner of an existing execution to publish its result."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def complete(
+        self,
+        execution_id: str,
+        status: ToolExecutionStatus,
+        result: PersistedToolResult,
+    ) -> None:
         raise NotImplementedError
