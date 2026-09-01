@@ -13,6 +13,8 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
+from agent_engine.runtime.tool_results import JsonValue
+
 # The supported lifecycle points. Adding a point here is the one place that
 # enables a new hook kind across schema validation, loading, and execution.
 HookPoint = Literal[
@@ -236,10 +238,12 @@ class ToolResultContext:
 
     Unlike the observe-only ``after_tool_call`` (which never sees results), this
     hook is given the tool's ``result`` text precisely so it can shape it —
-    truncating oversized MCP output, redacting, normalizing — and **must return a
-    ``ToolResultContext``** carrying the original or modified ``result``. Because it
-    handles raw tool output it is trusted code that may see sensitive content;
-    never log the ``result`` body, only safe metadata (sizes, names, ids).
+    truncating oversized MCP output, redacting, normalizing — alongside optional
+    machine-readable ``structured_result`` and safe ``artifact`` metadata. It
+    **must return a ``ToolResultContext``** carrying the original or modified
+    values. Because it handles raw tool output it is trusted code that may see
+    sensitive content; never log result bodies, only safe metadata (sizes,
+    names, ids).
     """
 
     agent_id: str
@@ -249,7 +253,17 @@ class ToolResultContext:
     server_id: str | None = None
     latency_ms: int | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+    structured_result: JsonValue | None = None
+    artifact: JsonValue | None = None
 
     def with_result(self, result: str) -> ToolResultContext:
-        """Return a copy with ``result`` replaced (immutable update)."""
+        """Replace text while preserving structured output and artifacts."""
         return dataclasses.replace(self, result=result)
+
+    def with_structured_result(self, structured_result: JsonValue | None) -> ToolResultContext:
+        """Return a copy with the machine-readable result replaced."""
+        return dataclasses.replace(self, structured_result=structured_result)
+
+    def with_artifact(self, artifact: JsonValue | None) -> ToolResultContext:
+        """Return a copy with safe artifact metadata replaced."""
+        return dataclasses.replace(self, artifact=artifact)

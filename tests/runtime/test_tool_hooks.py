@@ -229,6 +229,38 @@ async def test_transform_tool_result_truncates_result_reaching_conversation(
     assert result.answer == "Y" * 3
 
 
+async def test_transform_hook_receives_mcp_structured_result_without_losing_it(
+    tmp_path: Path,
+) -> None:
+    spec = _system(
+        _agent("research", mcps=(MCPSpec(id="wiki", url="https://wiki.test/mcp"),)),
+        HookSpec("transform_tool_result", f"{_FIX}:truncate_tool_result"),
+    )
+
+    def fake_mcp_tool(message: str) -> tuple[list[dict[str, str]], dict[str, Any]]:
+        return [{"type": "text", "text": "abcdef"}], {"structured_content": {"count": 2}}
+
+    mcp_tool = StructuredTool.from_function(
+        fake_mcp_tool,
+        name="wiki_search",
+        description="search",
+        response_format="content_and_artifact",
+    )
+
+    def factory(provider: str, name: str, temperature: float | None) -> BaseChatModel:
+        return cast(BaseChatModel, EchoToolResultModel())
+
+    async with LangGraphEngine(tmp_path, model_factory=factory) as engine:
+        await engine.build(spec)
+        engine._mcp_tools["wiki"] = [mcp_tool]
+        engine._app = engine._build_graph(spec)
+        result = await engine.run("go")
+
+    transformed = next(c[1] for c in fixtures.CALLS if c[0] == "transform_tool_result")
+    assert transformed.structured_result == {"count": 2}
+    assert result.answer == "abc"
+
+
 async def test_after_tool_call_receives_provider_and_server_id(
     tmp_path: Path, model_factory: Any
 ) -> None:

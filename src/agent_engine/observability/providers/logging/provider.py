@@ -30,11 +30,11 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 
     def on_tool_start(self, serialized: dict[str, Any], input_str: str, **kwargs: Any) -> None:
         log(logger, logging.INFO, "tool start", name=(serialized or {}).get("name", "?"))
-        log(logger, logging.DEBUG, "tool input", value=input_str[:300])
+        log(logger, logging.DEBUG, "tool input", chars=len(input_str))
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
         log(logger, logging.INFO, "tool end", status="ok")
-        log(logger, logging.DEBUG, "tool output", value=str(output)[:300])
+        log(logger, logging.DEBUG, "tool output", output_type=type(output).__name__)
 
     def on_tool_error(self, error: BaseException, **kwargs: Any) -> None:
         log(logger, logging.WARNING, "tool end", status="error", error=str(error))
