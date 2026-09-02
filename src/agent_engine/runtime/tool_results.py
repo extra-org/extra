@@ -14,11 +14,43 @@ PersistedToolResult: TypeAlias = str | dict[str, object]
 
 _PERSISTENCE_VERSION = 1
 _MAX_JSON_DEPTH = 64
+_MAX_JSON_VALUES = 10_000
+_MAX_JSON_STRING_BYTES = 1_000_000
+_MAX_JSON_KEY_BYTES = 1024
+_MAX_JSON_TOTAL_KEY_BYTES = 256_000
+_MAX_JSON_BYTES = 1_048_576
+_MAX_JSON_INTEGER_BITS = 4096
 _PERSISTED_KEYS = frozenset({"version", "text", "structured", "artifact"})
 
 
 class ToolResultValidationError(ValueError):
     """A tool result cannot satisfy Extra's JSON-safe runtime contract."""
+
+
+@dataclass
+class _JsonBudget:
+    values_left: int = _MAX_JSON_VALUES
+    string_bytes_left: int = _MAX_JSON_STRING_BYTES
+    key_bytes_left: int = _MAX_JSON_TOTAL_KEY_BYTES
+
+    def take_value(self, *, path: str) -> None:
+        if self.values_left <= 0:
+            raise ToolResultValidationError(f"{path} exceeds the JSON value budget")
+        self.values_left -= 1
+
+    def take_string(self, value: str, *, path: str) -> None:
+        size = _utf8_size(value, path=path)
+        if size > self.string_bytes_left:
+            raise ToolResultValidationError(f"{path} exceeds the JSON string budget")
+        self.string_bytes_left -= size
+
+    def take_key(self, key: str, *, path: str) -> None:
+        size = _utf8_size(key, path=path)
+        if size > _MAX_JSON_KEY_BYTES:
+            raise ToolResultValidationError(f"{path} contains an oversized object key")
+        if size > self.key_bytes_left:
+            raise ToolResultValidationError(f"{path} exceeds the JSON object-key budget")
+        self.key_bytes_left -= size
 
 
 @dataclass(frozen=True, init=False)
@@ -125,20 +157,42 @@ def deterministic_json(value: object, *, field_name: str = "tool result") -> str
 
 
 def _canonical_json(value: object, *, field_name: str) -> str:
-    normalized = _json_value(value, path=field_name, depth=0)
-    return json.dumps(
+    normalized = _json_value(
+        value,
+        path=field_name,
+        depth=0,
+        budget=_JsonBudget(),
+    )
+    encoded = json.dumps(
         normalized,
         ensure_ascii=False,
         allow_nan=False,
         sort_keys=True,
         separators=(",", ":"),
     )
+    if _utf8_size(encoded, path=field_name) > _MAX_JSON_BYTES:
+        raise ToolResultValidationError(f"{field_name} exceeds the encoded JSON budget")
+    return encoded
 
 
-def _json_value(value: object, *, path: str, depth: int) -> JsonValue:
+def _json_value(
+    value: object,
+    *,
+    path: str,
+    depth: int,
+    budget: _JsonBudget,
+) -> JsonValue:
     if depth > _MAX_JSON_DEPTH:
         raise ToolResultValidationError(f"{path} exceeds maximum nesting depth")
-    if value is None or isinstance(value, (str, bool, int)):
+    budget.take_value(path=path)
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        budget.take_string(value, path=path)
+        return value
+    if isinstance(value, int):
+        if value.bit_length() > _MAX_JSON_INTEGER_BITS:
+            raise ToolResultValidationError(f"{path} contains an oversized integer")
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -149,11 +203,22 @@ def _json_value(value: object, *, path: str, depth: int) -> JsonValue:
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ToolResultValidationError(f"{path} contains a non-string object key")
-            normalized[key] = _json_value(item, path=f"{path}.<key>", depth=depth + 1)
+            budget.take_key(key, path=path)
+            normalized[key] = _json_value(
+                item,
+                path=f"{path}.<key>",
+                depth=depth + 1,
+                budget=budget,
+            )
         return normalized
     if isinstance(value, (list, tuple)):
         return [
-            _json_value(item, path=f"{path}[{index}]", depth=depth + 1)
+            _json_value(
+                item,
+                path=f"{path}[{index}]",
+                depth=depth + 1,
+                budget=budget,
+            )
             for index, item in enumerate(value)
         ]
     raise ToolResultValidationError(
@@ -165,3 +230,10 @@ def _decode_json(value: str | None) -> JsonValue | None:
     if value is None:
         return None
     return cast(JsonValue, json.loads(value))
+
+
+def _utf8_size(value: str, *, path: str) -> int:
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ToolResultValidationError(f"{path} contains invalid Unicode") from exc

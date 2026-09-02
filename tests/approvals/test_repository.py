@@ -15,6 +15,7 @@ from agent_engine.approvals.models import (
     ApprovalRecord,
     ApprovalStatus,
     ToolExecutionRecord,
+    ToolExecutionStatus,
 )
 from agent_engine.runtime.tool_results import NormalizedToolResult
 
@@ -108,15 +109,19 @@ async def test_execution_complete_records_result() -> None:
         ToolExecutionRecord(execution_id="e1", tool_call_id="tc1", run_id="r1", tool_name="t")
     )
     result = NormalizedToolResult(text="done", structured={"ok": True})
-    await repo.complete("e1", status="succeeded", result=result.to_persisted())
+    await repo.complete(
+        "e1",
+        status=ToolExecutionStatus.SUCCEEDED,
+        result=result.to_persisted(),
+    )
     rec = await repo.get("e1")
-    assert rec is not None and rec.status == "succeeded"
+    assert rec is not None and rec.status == ToolExecutionStatus.SUCCEEDED
     assert rec.result == result.to_persisted()
 
     with pytest.raises(ValueError, match="already terminal"):
         await repo.complete(
             "e1",
-            status="failed",
+            status=ToolExecutionStatus.FAILED,
             result=NormalizedToolResult.text_only("replacement").to_persisted(),
         )
 
@@ -134,8 +139,8 @@ async def test_execution_waiter_receives_the_terminal_snapshot() -> None:
     assert waiter.done() is False
 
     result = NormalizedToolResult("done", structured={"ok": True}).to_persisted()
-    await repo.complete("e1", status="succeeded", result=result)
+    await repo.complete("e1", status=ToolExecutionStatus.SUCCEEDED, result=result)
 
     completed = await waiter
-    assert completed.status == "succeeded"
+    assert completed.status == ToolExecutionStatus.SUCCEEDED
     assert completed.result == result

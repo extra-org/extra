@@ -56,6 +56,18 @@ def test_non_json_structured_values_are_rejected(value: object) -> None:
         NormalizedToolResult("ok", structured=value)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        list(range(10_001)),
+        "x" * 1_000_001,
+    ],
+)
+def test_oversized_structured_values_are_rejected(value: object) -> None:
+    with pytest.raises(ToolResultValidationError, match="budget"):
+        NormalizedToolResult("ok", structured=value)
+
+
 def test_legacy_text_ledger_value_restores_as_text_only() -> None:
     assert NormalizedToolResult.from_persisted("legacy") == NormalizedToolResult.text_only("legacy")
 

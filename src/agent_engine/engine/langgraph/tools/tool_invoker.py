@@ -22,6 +22,7 @@ from langchain_core.tools import BaseTool
 
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.invocation import ToolInvocation
+from agent_engine.approvals.models import ToolExecutionStatus
 from agent_engine.approvals.tool_execution_manager import (
     ToolExecutionClaim,
     ToolExecutionManager,
@@ -222,7 +223,7 @@ class ToolInvoker:
             tool_call_id=call.tool_call_id,
             execution_id=call.exec_id,
         )
-        if claim.status == "succeeded":
+        if claim.status == ToolExecutionStatus.SUCCEEDED:
             await self._usage.record_success(call.identity)
         else:
             await self._usage.record_failure(call.identity, error=claim.result.text)
@@ -309,19 +310,19 @@ class ToolInvoker:
         The failure is returned (not raised) so the model can read it and recover.
         """
         error = str(exc)[:200]
+        result = NormalizedToolResult.text_only(model_text or f"Tool error: {exc}")
+        await self._execution_manager.finish_execution(
+            call.exec_id,
+            status=ToolExecutionStatus.FAILED,
+            result=result,
+        )
         await self._usage.record_failure(call.identity, error=error)
         self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms, error=error)
 
-        try:
-            await self._hook_manager.run_on_tool_error(
-                current_run_context.get(),
-                self._call_context(call, "failed", latency_ms, error=error),
-            )
-        except BaseException:
-            await self._publish_processing_failure(call, "Tool error processing failed")
-            raise
-        result = NormalizedToolResult.text_only(model_text or f"Tool error: {exc}")
-        await self._execution_manager.finish_execution(call.exec_id, status="failed", result=result)
+        await self._hook_manager.run_on_tool_error(
+            current_run_context.get(),
+            self._call_context(call, "failed", latency_ms, error=error),
+        )
         return result
 
     async def _record_success(
@@ -341,18 +342,18 @@ class ToolInvoker:
         )
         normalized = await self._transform_result(call, result, latency_ms)
         await self._execution_manager.finish_execution(
-            call.exec_id, status="succeeded", result=normalized
+            call.exec_id,
+            status=ToolExecutionStatus.SUCCEEDED,
+            result=normalized,
         )
         return normalized
 
     async def _publish_processing_failure(self, call: _ToolCall, message: str) -> None:
         """Unblock duplicate callers without exposing exception payloads."""
-        await asyncio.shield(
-            self._execution_manager.finish_execution(
-                call.exec_id,
-                status="failed",
-                result=NormalizedToolResult.text_only(message),
-            )
+        await self._execution_manager.finish_execution(
+            call.exec_id,
+            status=ToolExecutionStatus.FAILED,
+            result=NormalizedToolResult.text_only(message),
         )
 
     async def _transform_result(

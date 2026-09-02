@@ -20,7 +20,13 @@ from agent_engine.approvals.in_memory_approval_repository import InMemoryApprova
 from agent_engine.approvals.in_memory_tool_execution_repository import (
     InMemoryToolExecutionRepository,
 )
-from agent_engine.approvals.models import ApprovalStatus, RunRecord, RunStatus, ToolExecutionRecord
+from agent_engine.approvals.models import (
+    ApprovalStatus,
+    RunRecord,
+    RunStatus,
+    ToolExecutionRecord,
+    ToolExecutionStatus,
+)
 from agent_engine.approvals.tool_execution_manager import (
     ToolExecutionManager,
     execution_id_for,
@@ -44,12 +50,12 @@ async def test_idempotency_reports_prior_success() -> None:
         structured={"count": 2},
         artifact={"source": "billing"},
     )
-    await mgr.finish_execution(exec_id, status="succeeded", result=result)
+    await mgr.finish_execution(exec_id, status=ToolExecutionStatus.SUCCEEDED, result=result)
     prior = await mgr.restored_result(exec_id)
     assert prior == result
     replay = await mgr.claim_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t")
     assert replay.should_execute is False
-    assert replay.status == "succeeded"
+    assert replay.status == ToolExecutionStatus.SUCCEEDED
     assert replay.result == result
     assert (
         await mgr.begin_execution(exec_id, tool_call_id="tc1", run_id="r1", tool_name="t") is False
@@ -76,7 +82,11 @@ async def test_legacy_text_result_replays_as_text_only() -> None:
             tool_name="t",
         )
     )
-    await repository.complete(exec_id, status="succeeded", result="legacy text")
+    await repository.complete(
+        exec_id,
+        status=ToolExecutionStatus.SUCCEEDED,
+        result="legacy text",
+    )
 
     assert await manager.restored_result(exec_id) == NormalizedToolResult.text_only("legacy text")
 

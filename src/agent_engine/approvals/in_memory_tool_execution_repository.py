@@ -37,7 +37,7 @@ class InMemoryToolExecutionRepository(ToolExecutionRepository):
             record = self._records.get(execution_id)
             if record is None:
                 raise KeyError(f"tool execution not found: {execution_id}")
-            if record.status != "started":
+            if record.status != ToolExecutionStatus.STARTED:
                 return _copy_record(record)
             completed = self._completed[execution_id]
         await completed.wait()
@@ -50,13 +50,13 @@ class InMemoryToolExecutionRepository(ToolExecutionRepository):
         status: ToolExecutionStatus,
         result: PersistedToolResult,
     ) -> None:
-        if status == "started":
+        if status == ToolExecutionStatus.STARTED:
             raise ValueError("completed tool execution must be terminal")
         async with self._lock:
             record = self._records.get(execution_id)
             if record is None:
                 raise KeyError(f"tool execution not found: {execution_id}")
-            if record.status != "started":
+            if record.status != ToolExecutionStatus.STARTED:
                 raise ValueError(f"tool execution is already terminal: {execution_id}")
             record.status = status
             record.result = copy.deepcopy(result)

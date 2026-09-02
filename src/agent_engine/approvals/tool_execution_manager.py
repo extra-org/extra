@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from dataclasses import dataclass
 
@@ -38,7 +39,14 @@ class ToolExecutionClaim:
             if self.status is not None or self.result is not None:
                 raise ValueError("an execution owner cannot already have a terminal result")
             return
-        if self.status not in ("succeeded", "failed") or self.result is None:
+        if (
+            self.status
+            not in (
+                ToolExecutionStatus.SUCCEEDED,
+                ToolExecutionStatus.FAILED,
+            )
+            or self.result is None
+        ):
             raise ValueError("a replay claim must contain one terminal result")
 
 
@@ -58,7 +66,7 @@ class ToolExecutionManager:
         if self._executions is None:
             return None
         record = await self._executions.get(execution_id)
-        if record is not None and record.status == "succeeded":
+        if record is not None and record.status == ToolExecutionStatus.SUCCEEDED:
             return record
         return None
 
@@ -99,7 +107,7 @@ class ToolExecutionManager:
         )
         if created:
             return ToolExecutionClaim(should_execute=True)
-        if record.status == "started":
+        if record.status == ToolExecutionStatus.STARTED:
             record = await self._executions.wait_for_completion(execution_id)
         return ToolExecutionClaim(
             should_execute=False,
@@ -114,7 +122,7 @@ class ToolExecutionManager:
         status: ToolExecutionStatus,
         result: NormalizedToolResult | str,
     ) -> None:
-        if status == "started":
+        if status == ToolExecutionStatus.STARTED:
             raise ValueError("finished tool execution must be terminal")
         if self._executions is not None:
             normalized = (
@@ -122,15 +130,22 @@ class ToolExecutionManager:
                 if isinstance(result, NormalizedToolResult)
                 else NormalizedToolResult.text_only(result)
             )
-            await self._executions.complete(
-                execution_id,
-                status=status,
-                result=normalized.to_persisted(),
+            completion = asyncio.create_task(
+                self._executions.complete(
+                    execution_id,
+                    status=status,
+                    result=normalized.to_persisted(),
+                )
             )
+            try:
+                await asyncio.shield(completion)
+            except asyncio.CancelledError:
+                await asyncio.shield(completion)
+                raise
 
 
 def _restore_result(record: ToolExecutionRecord) -> NormalizedToolResult:
-    if record.status == "started" or record.result is None:
+    if record.status == ToolExecutionStatus.STARTED or record.result is None:
         raise ToolExecutionStateError(
             f"tool execution {record.execution_id} has no terminal result"
         )

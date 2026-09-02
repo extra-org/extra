@@ -75,6 +75,23 @@ class _CapturingExecutionRepository(InMemoryToolExecutionRepository):
         self.completed_result = result
 
 
+class _BlockingCompletionRepository(InMemoryToolExecutionRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.completing = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete(
+        self,
+        execution_id: str,
+        status: ToolExecutionStatus,
+        result: PersistedToolResult,
+    ) -> None:
+        self.completing.set()
+        await self.release.wait()
+        await super().complete(execution_id, status, result)
+
+
 class EchoToolResultModel:
     """Calls the tool once, then answers with exactly the tool result text it
     was given — lets a test see precisely what reached the conversation.
@@ -373,6 +390,25 @@ async def test_non_json_structured_value_fails_without_using_repr_or_logging_dat
     assert runtime_result == NormalizedToolResult.text_only(answer)
 
 
+async def test_oversized_mcp_structured_result_fails_with_controlled_text(
+    tmp_path: Path,
+) -> None:
+    def fake_mcp_tool() -> tuple[list[dict[str, str]], dict[str, Any]]:
+        return [{"type": "text", "text": "valid text"}], {"structured_content": list(range(10_001))}
+
+    mcp_tool = StructuredTool.from_function(
+        fake_mcp_tool,
+        name="oversized",
+        description="oversized",
+        response_format="content_and_artifact",
+    )
+
+    answer, runtime_result, _ = await _run_with_mcp_tool(tmp_path, mcp_tool)
+
+    assert answer == "Tool error: invalid tool result"
+    assert runtime_result == NormalizedToolResult.text_only(answer)
+
+
 def _write_tool(base_dir: Path, tool_id: str) -> None:
     body = f"def {tool_id}(message: str) -> str:\n    return 'did: ' + message\n"
     tools_dir = base_dir / "plugins" / "tools"
@@ -491,6 +527,48 @@ async def test_concurrent_duplicate_calls_share_one_provider_execution() -> None
 
     assert calls == 1
     assert first == second == NormalizedToolResult("done", structured={"ok": True})
+
+
+async def test_cancellation_during_failed_result_write_does_not_strand_duplicate() -> None:
+    calls = 0
+
+    async def failing_tool() -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("provider failed")
+
+    tool = StructuredTool.from_function(
+        coroutine=failing_tool,
+        name="failing_tool",
+        description="fails",
+    )
+    repository = _BlockingCompletionRepository()
+    invoker = _invoker(
+        tool,
+        ToolExecutionManager(execution_repository=repository),
+    )
+    tool_call = {"id": "call-1", "name": tool.name, "args": {}}
+    token = current_run_context.set(RunContext(run_id="run-cancelled-failure"))
+    owner = asyncio.create_task(invoker.invoke(tool_call))
+    try:
+        await repository.completing.wait()
+        duplicate = asyncio.create_task(invoker.invoke(tool_call))
+        owner.cancel()
+        await asyncio.sleep(0)
+        assert duplicate.done() is False
+
+        repository.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await owner
+        replayed = await asyncio.wait_for(duplicate, timeout=1)
+    finally:
+        repository.release.set()
+        if not owner.done():
+            owner.cancel()
+        current_run_context.reset(token)
+
+    assert calls == 1
+    assert replayed == NormalizedToolResult.text_only("Tool error: provider failed")
 
 
 def _invoker(tool: StructuredTool, execution_manager: ToolExecutionManager) -> ToolInvoker:
