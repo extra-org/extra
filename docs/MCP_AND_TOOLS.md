@@ -176,7 +176,10 @@ The fields have separate responsibilities:
 - `structured` is machine-readable output, including MCP
   `structuredContent`. It must be JSON-like and is not copied into a model
   message as metadata. For a structured-only result, its canonical JSON is
-  deliberately used as the model-facing `text` fallback.
+  deliberately used as the model-facing `text` fallback. The shared JSON-safe
+  value policy limits nesting to 64 levels, total values to 10,000, cumulative
+  string data to 1,000,000 UTF-8 bytes, individual keys to 1,024 bytes,
+  cumulative key data to 256,000 bytes, and final canonical JSON to 1 MiB.
 - `artifact` carries bounded, relevant artifact metadata. Raw in-memory binary
   bodies and oversized values are omitted and replaced by type/size metadata.
   The adapter limits depth to 8, each collection to 128 entries, total visited
@@ -186,7 +189,8 @@ The fields have separate responsibilities:
 
 `langchain-mcp-adapters` currently exposes MCP `structuredContent` through the
 `ToolMessage.artifact.structured_content` path. Extra reads that provider
-contract once at the tool adapter boundary and passes only its own normalized
+contract once at the tool adapter boundary and requires version 0.2 or newer,
+where that artifact contract is available. It passes only its own normalized
 result deeper into the runtime. Local dictionary/list results are normalized by
 the same abstraction; plain string tools remain unchanged.
 

@@ -38,7 +38,10 @@ Extra owns a provider-agnostic frozen `NormalizedToolResult` with independent
   changes text only, so truncating text cannot discard structured output.
 - The value object validates JSON-like values, stores canonical JSON privately,
   and returns copies from its accessors. Provider-owned nested objects therefore
-  cannot mutate the authoritative result after normalization.
+  cannot mutate the authoritative result after normalization. Generic depth,
+  value-count, string/key byte, integer-size, and final encoded-size budgets
+  prevent structured payloads from multiplying memory use across hooks,
+  persistence, and replay.
 - The tool-execution repository persists a versioned JSON-primitive payload.
   An atomic claim identifies one execution owner; concurrent duplicates wait
   for a terminal result and replay it without re-invoking the provider. Terminal
@@ -60,6 +63,9 @@ Extra owns a provider-agnostic frozen `NormalizedToolResult` with independent
   and the port adds `wait_for_completion()`. Custom repository adapters must
   serialize all three fields, atomically create claims, reject terminal
   overwrites, and wake duplicate waiters after every owner outcome.
+- Tool execution states use `ToolExecutionStatus`, a `StrEnum` that remains
+  wire-compatible with the existing string values while removing duplicated
+  state literals from the ledger implementation.
 - `ToolResultContext` adds optional `structured_result` and `artifact` fields
   plus immutable update helpers. Existing text-only hooks remain source
   compatible.
@@ -67,6 +73,8 @@ Extra owns a provider-agnostic frozen `NormalizedToolResult` with independent
   engine contract consumed by the model loop.
 
 There is no YAML, HTTP API, widget, or model-facing text contract change.
+The runtime dependency floor for `langchain-mcp-adapters` is 0.2 because the
+normalizer relies on that release's structured-content artifact contract.
 
 ## Consequences
 
