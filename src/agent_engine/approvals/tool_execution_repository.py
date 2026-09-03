@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from agent_engine.approvals.models import ToolExecutionRecord
 
@@ -17,5 +18,11 @@ class ToolExecutionRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def complete(self, execution_id: str, status: str, result: str) -> None:
+    async def complete(
+        self,
+        execution_id: str,
+        status: str,
+        result: str,
+        structured: Any | None = None,
+    ) -> None:
         raise NotImplementedError

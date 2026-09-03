@@ -29,6 +29,10 @@ from agent_engine.approvals.tool_execution_manager import (
 from agent_engine.core.spec import AgentSpec
 from agent_engine.engine.langgraph.tools.agent_tool_binding import AgentToolBinding
 from agent_engine.engine.langgraph.tools.tool_gate import DenyTool, ExecuteTool, ToolGate
+from agent_engine.engine.langgraph.tools.tool_result import (
+    NormalizedToolResult,
+    normalize_tool_result,
+)
 from agent_engine.logging_config import log
 from agent_engine.runtime.execution_limiter import (
     ExecutionLimitExceeded,
@@ -321,25 +325,33 @@ class ToolInvoker:
             current_run_context.get(),
             self._call_context(call, "succeeded", latency_ms),
         )
-        result_text = await self._transform_result(call, _extract_result_text(result), latency_ms)
+        normalized = normalize_tool_result(result)
+        result_text = await self._transform_result(call, normalized, latency_ms)
         await self._execution_manager.finish_execution(
-            call.exec_id, status="succeeded", result=result_text
+            call.exec_id,
+            status="succeeded",
+            result=result_text,
+            structured=normalized.structured,
         )
         return result_text
 
-    async def _transform_result(self, call: _ToolCall, result_text: str, latency_ms: int) -> str:
+    async def _transform_result(
+        self, call: _ToolCall, normalized: NormalizedToolResult, latency_ms: int
+    ) -> str:
         """Let ``transform_tool_result`` hooks reshape the result (e.g. truncate
         oversized MCP output). The context is only built when such a hook exists.
         """
         if not self._hook_manager.has("transform_tool_result"):
-            return result_text
+            return normalized.text
         transformed = await self._hook_manager.run_transform_tool_result(
             current_run_context.get(),
             ToolResultContext(
                 agent_id=self._spec.id,
                 tool_name=call.name,
                 provider=call.provider,
-                result=result_text,
+                result=normalized.text,
+                structured=normalized.structured,
+                artifact=normalized.artifact,
                 server_id=call.server_id,
                 latency_ms=latency_ms,
             ),

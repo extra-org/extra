@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from agent_engine.approvals.models import ToolExecutionRecord
 from agent_engine.approvals.tool_execution_repository import ToolExecutionRepository
@@ -25,9 +26,16 @@ class InMemoryToolExecutionRepository(ToolExecutionRepository):
             self._records[record.execution_id] = record
             return record, True
 
-    async def complete(self, execution_id: str, status: str, result: str) -> None:
+    async def complete(
+        self,
+        execution_id: str,
+        status: str,
+        result: str,
+        structured: Any | None = None,
+    ) -> None:
         async with self._lock:
             record = self._records.get(execution_id)
             if record is not None:
                 record.status = status
                 record.result = result
+                record.structured = structured

@@ -246,10 +246,19 @@ class ToolResultContext:
     tool_name: str
     provider: ToolProvider
     result: str
+    structured: Any | None = None
+    artifact: Any | None = None
     server_id: str | None = None
     latency_ms: int | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
-    def with_result(self, result: str) -> ToolResultContext:
+    def with_result(
+        self,
+        result: str,
+        structured: Any | None = None,
+        artifact: Any | None = None,
+    ) -> ToolResultContext:
         """Return a copy with ``result`` replaced (immutable update)."""
-        return dataclasses.replace(self, result=result)
+        st = structured if structured is not None else self.structured
+        art = artifact if artifact is not None else self.artifact
+        return dataclasses.replace(self, result=result, structured=st, artifact=art)

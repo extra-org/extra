@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 from agent_engine.approvals.models import ToolExecutionRecord
 from agent_engine.approvals.tool_execution_repository import ToolExecutionRepository
@@ -54,6 +55,18 @@ class ToolExecutionManager:
         )
         return created
 
-    async def finish_execution(self, execution_id: str, *, status: str, result: str) -> None:
+    async def finish_execution(
+        self,
+        execution_id: str,
+        *,
+        status: str,
+        result: str,
+        structured: Any | None = None,
+    ) -> None:
         if self._executions is not None:
-            await self._executions.complete(execution_id, status=status, result=result)
+            await self._executions.complete(
+                execution_id,
+                status=status,
+                result=result,
+                structured=structured,
+            )

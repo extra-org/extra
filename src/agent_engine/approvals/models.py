@@ -156,4 +156,5 @@ class ToolExecutionRecord:
     tool_name: str
     status: str = "started"  # started | succeeded | failed
     result: str | None = None
+    structured: Any | None = None
     created_at: float = field(default_factory=time.time)
