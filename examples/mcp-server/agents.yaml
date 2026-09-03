@@ -1,0 +1,33 @@
+system:
+  name: Echo Agent MCP Server
+
+defaults:
+  model:
+    provider: openai
+    name: qwen2.5:14b
+    temperature: 0.0
+
+execution:
+  max_iterations: 4
+  max_tool_calls: 2
+  max_tool_calls_per_agent: 2
+  max_child_agent_calls: 1
+  allow_duplicate_tool_calls: false
+
+tools:
+  echo:
+    description: Echoes the input back. Useful for verifying the MCP wiring.
+
+plugins:
+  import_roots: ["."]
+
+agents:
+  echo_agent:
+    name: Echo Agent
+    description: A minimal agent that answers questions directly.
+    prompts:
+      system: prompts/echo_agent/system.md
+    tools: [echo]
+
+graph:
+  echo_agent:
