@@ -12,6 +12,7 @@ from agent_manager.domain.models import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    MessageFeedback,
     Page,
     PageRequest,
     Role,
@@ -192,3 +193,26 @@ class Repository(ABC):
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
         """Messages oldest-first. With `limit`, the most recent `limit`, still
         oldest-first."""
+
+    @abstractmethod
+    async def update_message_feedback(
+        self,
+        conversation_id: str,
+        message_id: str,
+        feedback: MessageFeedback,
+    ) -> ConversationMessage | None:
+        """Persist a 👍/👎 vote on a single assistant message.
+
+        Returns the updated message, or ``None`` if the message does not exist
+        or does not belong to ``conversation_id``.
+        """
+        ...
+
+    @abstractmethod
+    async def get_message_in_conversation(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> ConversationMessage | None:
+        """Return a message only if it belongs to ``conversation_id``."""
+        ...

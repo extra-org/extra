@@ -43,6 +43,7 @@ from agent_manager.application.prepared_conversation_turn import PreparedConvers
 from agent_manager.domain import (
     ConversationMessage,
     ConversationSession,
+    MessageFeedback,
     Page,
     PageRequest,
     Principal,
@@ -166,6 +167,19 @@ class ConversationService:
         await self._authorize(conversation_id, principal)
         used = await self._repository.get_token_usage(conversation_id)
         return TokenBudgetUsage.from_totals(used, self._max_tokens)
+
+    async def set_message_feedback(
+        self,
+        conversation_id: str,
+        message_id: str,
+        feedback: MessageFeedback,
+        principal: Principal,
+    ) -> ConversationMessage | None:
+        await self._authorize(conversation_id, principal)
+        message = await self._repository.get_message_in_conversation(conversation_id, message_id)
+        if message is None or message.role != Role.ASSISTANT:
+            return None
+        return await self._repository.update_message_feedback(conversation_id, message_id, feedback)
 
     async def list_conversations(
         self, principal: Principal, page: PageRequest | None = None
@@ -397,7 +411,7 @@ class ConversationService:
             try:
                 async for event in engine_stream:
                     if event.type == "final":
-                        await self._persist_durably(
+                        message_id = await self._persist_durably(
                             self._persist_assistant_turn(
                                 session_id=session.session_id,
                                 run_id=run_id,
@@ -409,6 +423,16 @@ class ConversationService:
                                 visited=event.route or (),
                                 used_tools=event.used_tools,
                             )
+                        )
+                        event = RunStreamEvent(
+                            type="final",
+                            content=event.content,
+                            route=event.route,
+                            system_name=event.system_name,
+                            used_tools=event.used_tools,
+                            input_tokens=event.input_tokens,
+                            output_tokens=event.output_tokens,
+                            message_id=message_id,
                         )
                     yield event
             finally:
@@ -470,8 +494,17 @@ class ConversationService:
         try:
             async for event in engine_stream:
                 if event.type == "final":
-                    await self._persist_stream_final(turn, event)
-
+                    message_id = await self._persist_stream_final(turn, event)
+                    event = RunStreamEvent(
+                        type="final",
+                        content=event.content,
+                        route=event.route,
+                        system_name=event.system_name,
+                        used_tools=event.used_tools,
+                        input_tokens=event.input_tokens,
+                        output_tokens=event.output_tokens,
+                        message_id=message_id,
+                    )
                 yield event
         finally:
             if isinstance(engine_stream, AsyncGenerator):
@@ -479,9 +512,9 @@ class ConversationService:
 
     async def _persist_stream_final(
         self, turn: PreparedConversationTurn, final: RunStreamEvent
-    ) -> None:
+    ) -> str:
         """Finish persistence before exposing a terminal answer downstream."""
-        await self._persist_durably(
+        return await self._persist_durably(
             self._persist_assistant_turn(
                 session_id=turn.session_id,
                 run_id=turn.run_id,
@@ -495,7 +528,7 @@ class ConversationService:
             )
         )
 
-    async def _persist_durably(self, persistence: Coroutine[Any, Any, None]) -> None:
+    async def _persist_durably(self, persistence: Coroutine[Any, Any, T]) -> T:
         """Complete one write even if the awaiting task is cancelled.
 
         Every path that exposes a terminal answer goes through here: an abort
@@ -503,7 +536,7 @@ class ConversationService:
         """
         task = asyncio.create_task(persistence)
         try:
-            await asyncio.shield(task)
+            return await asyncio.shield(task)
         except asyncio.CancelledError:
             await task
             raise
@@ -593,7 +626,7 @@ class ConversationService:
         output_tokens: int | None,
         visited: Sequence[str],
         used_tools: Sequence[ToolUsageRecord],
-    ) -> None:
+    ) -> str:
         """Persist one normalized final assistant response."""
         message_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
@@ -619,6 +652,7 @@ class ConversationService:
             ),
             snapshot_ttl_seconds=self._snapshot_ttl_seconds,
         )
+        return message_id
 
     async def _user_message_id_for_run(self, session_id: str, run_id: str) -> str | None:
         message = await self._repository.get_user_message_for_run(session_id, run_id)

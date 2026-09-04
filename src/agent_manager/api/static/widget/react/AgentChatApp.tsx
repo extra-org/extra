@@ -5,6 +5,8 @@ import {
   CopyIcon,
   HistoryIcon,
   SquarePenIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
   XIcon,
 } from "lucide-react";
 import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,6 +73,7 @@ const toEntries = (message: ChatMessage): MessageEntry[] => {
     runId: message.run_id ?? undefined,
     role: message.role === "user" ? "user" : "ai",
     text: message.content,
+    feedback: message.feedback,
   };
   return message.role === "user" && message.status === "cancelled"
     ? [entry, { id: newId(), role: "ai", text: "", status: "cancelled" }]
@@ -709,6 +712,7 @@ export function AgentChatApp({
                 <ChatMessage
                   key={entry.id}
                   entry={entry}
+                  conversationId={activeId}
                   onApproval={(approval, decision) =>
                     void decideApproval(activeId, entry, approval, decision)
                   }
@@ -716,6 +720,26 @@ export function AgentChatApp({
                     void cancelApproval(activeId, entry.id, approval)
                   }
                   onEdit={() => editMessage(entry)}
+                  onFeedback={async (messageId, feedback) => {
+                    putEntries(activeId, (prev) =>
+                      prev.map((entry) =>
+                        entry.messageId === messageId
+                          ? { ...entry, feedback }
+                          : entry,
+                      ),
+                    );
+                    try {
+                      await conversation.setMessageFeedback(activeId, messageId, feedback);
+                    } catch {
+                      putEntries(activeId, (prev) =>
+                        prev.map((entry) =>
+                          entry.messageId === messageId
+                            ? { ...entry, feedback: undefined }
+                            : entry,
+                        ),
+                      );
+                    }
+                  }}
                   editable={canEdit}
                 />
               ))}
@@ -797,15 +821,19 @@ function Launcher({
 
 function ChatMessage({
   entry,
+  conversationId,
   onApproval,
   onCancelApproval,
   onEdit,
+  onFeedback,
   editable,
 }: {
   entry: MessageEntry;
+  conversationId: string;
   onApproval: (approval: PendingApproval, decision: ApprovalDecision) => void;
   onCancelApproval: (approval: PendingApproval) => void;
   onEdit: () => void;
+  onFeedback: (messageId: string, feedback: "thumbs_up" | "thumbs_down") => void;
   editable: boolean;
 }) {
   const from = entry.role === "user" ? "user" : "assistant";
@@ -869,7 +897,7 @@ function ChatMessage({
               <MessageResponse>{entry.text}</MessageResponse>
             </MessageContent>
           ) : null}
-          {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+          {entry.text.trim() ? <MessageActions text={entry.text} feedback={entry.feedback} messageId={entry.messageId} conversationId={conversationId} onFeedback={onFeedback} /> : null}
         </>
       )}
     </Message>
@@ -957,10 +985,60 @@ function ThinkingDots() {
   );
 }
 
-function MessageActions({ text }: { text: string }) {
+function MessageActions({
+  text,
+  feedback,
+  messageId,
+  conversationId,
+  onFeedback,
+}: {
+  text: string;
+  feedback?: "thumbs_up" | "thumbs_down";
+  messageId?: string;
+  conversationId?: string;
+  onFeedback?: (messageId: string, feedback: "thumbs_up" | "thumbs_down") => void;
+}) {
+  const handleThumbsUp = useCallback(() => {
+    if (!messageId || !conversationId || !onFeedback) return;
+    const next = feedback === "thumbs_up" ? null : "thumbs_up";
+    if (next) {
+      void onFeedback(messageId, next);
+    }
+  }, [messageId, conversationId, onFeedback, feedback]);
+
+  const handleThumbsDown = useCallback(() => {
+    if (!messageId || !conversationId || !onFeedback) return;
+    const next = feedback === "thumbs_down" ? null : "thumbs_down";
+    if (next) {
+      void onFeedback(messageId, next);
+    }
+  }, [messageId, conversationId, onFeedback, feedback]);
+
   return (
     <div className="msg-actions">
       <CopyButton text={text} />
+      {messageId && conversationId && onFeedback ? (
+        <div className="feedback-actions">
+          <button
+            aria-label="Thumbs up"
+            aria-pressed={feedback === "thumbs_up"}
+            className={`msg-action feedback-up${feedback === "thumbs_up" ? " active" : ""}`}
+            onClick={handleThumbsUp}
+            type="button"
+          >
+            <ThumbsUpIcon aria-hidden />
+          </button>
+          <button
+            aria-label="Thumbs down"
+            aria-pressed={feedback === "thumbs_down"}
+            className={`msg-action feedback-down${feedback === "thumbs_down" ? " active" : ""}`}
+            onClick={handleThumbsDown}
+            type="button"
+          >
+            <ThumbsDownIcon aria-hidden />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

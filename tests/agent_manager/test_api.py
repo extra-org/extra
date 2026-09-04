@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import cast
@@ -617,6 +618,24 @@ def test_stream_surfaces_sse_events_and_persists_final_answer(client: TestClient
         ("user", "hello"),
         ("assistant", "answer:hello"),
     ]
+
+
+def test_stream_final_event_includes_persisted_message_id(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    with client.stream(
+        "POST", f"/conversations/{cid}/messages/stream", json={"message": "hello"}
+    ) as response:
+        text = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    match = re.search(r"event: final\ndata: (.+?)\n\n", text)
+    assert match is not None
+    final_payload = json.loads(match.group(1))
+    assert final_payload["type"] == "final"
+    assert "message_id" in final_payload
+    assert isinstance(final_payload["message_id"], str)
+    assert len(final_payload["message_id"]) > 0
 
 
 async def test_closing_after_turn_started_cancels_a_run_before_engine_iteration() -> None:
@@ -1280,7 +1299,16 @@ def test_stream_sanitizes_late_engine_error_and_persists_final_answer(
         text = "".join(response.iter_text())
 
     assert response.status_code == 200
-    assert 'event: final\ndata: {"type": "final", "content": "done", "route": ["agent"]}' in text
+    assert "event: final" in text
+    final_match = re.search(r"event: final\ndata: (.+?)\n\n", text)
+    assert final_match is not None
+    final_data = json.loads(final_match.group(1))
+    assert final_data == {
+        "type": "final",
+        "content": "done",
+        "route": ["agent"],
+        "message_id": str(final_data["message_id"]),
+    }
     assert 'event: error\ndata: {"type": "error", "error": "Internal server error"}' in text
     assert "cleanup after final" not in text
     assert "event: done\ndata: [DONE]" in text
@@ -1434,3 +1462,50 @@ def test_tool_error_text_is_sanitized_in_stream_message() -> None:
     assert response.status_code == 200
     assert "Tool execution failed" in response.text
     assert "localhost" not in response.text
+
+
+def test_set_message_feedback_returns_updated_message(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    sent = client.post(f"/conversations/{cid}/messages", json={"message": "hello"})
+    assert sent.status_code == 200
+    messages = client.get(f"/conversations/{cid}/messages").json()
+    assistant = next(m for m in messages if m["role"] == "assistant")
+    message_id = assistant["message_id"]
+
+    response = client.post(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "thumbs_up"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["message_id"] == message_id
+    assert body["feedback"] == "thumbs_up"
+
+
+def test_set_message_feedback_returns_404_for_missing_message(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    response = client.post(
+        f"/conversations/{cid}/messages/no-such-id/feedback",
+        json={"feedback": "thumbs_up"},
+    )
+    assert response.status_code == 404
+
+
+def test_another_caller_cannot_set_feedback_on_anothers_conversation(
+    client: TestClient,
+) -> None:
+    u1 = bearer("u1")
+    cid = client.post("/conversations", headers=u1).json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hello"}, headers=u1)
+    messages = client.get(f"/conversations/{cid}/messages", headers=u1).json()
+    assistant = next(m for m in messages if m["role"] == "assistant")
+    message_id = assistant["message_id"]
+
+    u2 = bearer("u2")
+    response = client.post(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "thumbs_up"},
+        headers=u2,
+    )
+    assert response.status_code == 403

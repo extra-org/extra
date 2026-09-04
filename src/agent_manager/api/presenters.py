@@ -64,6 +64,7 @@ def to_stream_event(event: RunStreamEvent) -> StreamEventOut:
             [client_tool_record(tool) for tool in event.used_tools] if event.used_tools else None
         ),
         run_id=event.run_id,
+        message_id=event.message_id,
         approval_id=event.approval_id,
         agent_id=event.agent_id,
         description=event.description,

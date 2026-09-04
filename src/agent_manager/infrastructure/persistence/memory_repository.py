@@ -15,6 +15,7 @@ from agent_manager.domain import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    MessageFeedback,
     Page,
     PageRequest,
     Repository,
@@ -300,6 +301,31 @@ class MemoryRepository(Repository):
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
         msgs = await self.list_conversation_messages(conversation_id, limit)
         return [Message(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
+
+    async def update_message_feedback(
+        self,
+        conversation_id: str,
+        message_id: str,
+        feedback: MessageFeedback,
+    ) -> ConversationMessage | None:
+        messages = self._messages.get(conversation_id, [])
+        for index, message in enumerate(messages):
+            if message.message_id == message_id:
+                metadata = {**message.metadata, "feedback": feedback.value}
+                updated = replace(message, feedback=feedback, metadata=metadata)
+                messages[index] = updated
+                return updated
+        return None
+
+    async def get_message_in_conversation(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> ConversationMessage | None:
+        for message in self._messages.get(conversation_id, []):
+            if message.message_id == message_id:
+                return message
+        return None
 
     async def get_snapshot(self, session_id: str) -> ConversationSnapshot | None:
         return self._snapshots.get(session_id)

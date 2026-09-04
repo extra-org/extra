@@ -32,6 +32,7 @@ export function reduceStreamEvent(entry: MessageEntry, event: StreamEvent): Mess
         text: event.content ?? entry.text,
         route: event.route ?? entry.route,
         tools: event.used_tools ?? entry.tools,
+        messageId: event.message_id ?? entry.messageId,
       };
     case "pending_approval":
       if (!event.run_id || !event.approval_id || !event.agent_id || !event.tool_name) {

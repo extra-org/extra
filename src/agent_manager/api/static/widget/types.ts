@@ -45,6 +45,7 @@ export interface ChatMessage {
   content: string;
   status: string;
   created_at?: string;
+  feedback?: "thumbs_up" | "thumbs_down";
 }
 
 export type BudgetSeverity = "normal" | "warning" | "critical";
@@ -72,6 +73,7 @@ export interface MessageEntry {
   approvalSubmitting?: boolean;
   approvalCancelling?: boolean;
   approvalError?: string;
+  feedback?: "thumbs_up" | "thumbs_down";
 }
 
 export interface PendingApproval {

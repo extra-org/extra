@@ -21,7 +21,7 @@ from agent_manager.application import (
     ConversationNotFound,
     ConversationService,
 )
-from agent_manager.domain import Principal, Role
+from agent_manager.domain import MessageFeedback, Principal, Role
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
 
@@ -479,3 +479,68 @@ async def test_adopting_merges_into_conversations_the_account_already_had() -> N
         "signed-in",
         "pre-login",
     }
+
+
+async def test_set_message_feedback_persists_and_returns_message() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+    await service.send("s1", "hello", ALICE)
+    history = await service.history("s1", ALICE)
+    assistant_message = next(m for m in history if m.role == Role.ASSISTANT)
+
+    updated = await service.set_message_feedback(
+        "s1", assistant_message.message_id, MessageFeedback.THUMBS_UP, ALICE
+    )
+
+    assert updated is not None
+    assert updated.feedback == MessageFeedback.THUMBS_UP
+    assert updated.metadata.get("feedback") == MessageFeedback.THUMBS_UP.value
+
+
+async def test_set_message_feedback_returns_none_for_missing_message() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+
+    updated = await service.set_message_feedback(
+        "s1", "no-such-id", MessageFeedback.THUMBS_UP, ALICE
+    )
+
+    assert updated is None
+
+
+async def test_set_message_feedback_is_authorized() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+    await service.send("s1", "hello", ALICE)
+
+    with pytest.raises(ConversationAccessDenied):
+        await service.set_message_feedback("s1", "no-such-id", MessageFeedback.THUMBS_UP, BOB)
+
+
+async def test_set_message_feedback_requires_assistant_role() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+    await service.send("s1", "hello", ALICE)
+    history = await service.history("s1", ALICE)
+    user_message = next(m for m in history if m.role == Role.USER)
+
+    updated = await service.set_message_feedback(
+        "s1", user_message.message_id, MessageFeedback.THUMBS_UP, ALICE
+    )
+
+    assert updated is None
+
+
+async def test_set_message_feedback_requires_same_conversation() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+    await service.create(ALICE, session_id="s2")
+    await service.send("s1", "hello", ALICE)
+    history = await service.history("s1", ALICE)
+    assistant_message = next(m for m in history if m.role == Role.ASSISTANT)
+
+    updated = await service.set_message_feedback(
+        "s2", assistant_message.message_id, MessageFeedback.THUMBS_UP, ALICE
+    )
+
+    assert updated is None

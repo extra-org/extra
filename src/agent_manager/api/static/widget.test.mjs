@@ -868,4 +868,48 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
   );
 }
 
+// setMessageFeedback sends conversation_id, message_id and feedback.
+{
+  resetPage();
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith("/feedback")) return jsonResponse({ message_id: "msg-1", feedback: "thumbs_up" });
+    return jsonResponse({ conversation_id: "conv-1" });
+  };
+  const client = new AgentChatClient("https://api.example", new TokenSource("https://api.example"));
+  const convo = await client.createConversation();
+  const response = await client.setMessageFeedback(convo, "msg-1", "thumbs_up");
+  assert.equal(response.message_id, "msg-1");
+  assert.equal(response.feedback, "thumbs_up");
+  assert.ok(
+    calls.some((c) => c.url.endsWith("/conversations/conv-1/messages/msg-1/feedback")),
+    "feedback request is scoped to conversation and message",
+  );
+  const body = JSON.parse(calls.find((c) => c.url.endsWith("/feedback")).options.body);
+  assert.equal(body.feedback, "thumbs_up");
+}
+
+// A final stream event carrying message_id is surfaced to the consumer.
+{
+  const encoded = new TextEncoder().encode(
+    'event: final\ndata: {"type":"final","content":"done","message_id":"assistant-123"}\n\n',
+  );
+  const reads = [{ done: false, value: encoded }, { done: true, value: undefined }];
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: async () => reads.shift(),
+        cancel: async () => {},
+        releaseLock: () => {},
+      }),
+    },
+  });
+  const events = [];
+  for await (const event of client.streamMessage("conv-1", "hello")) events.push(event);
+  assert.deepEqual(events, [{ type: "final", content: "done", message_id: "assistant-123" }]);
+}
+
 console.log("widget self-check: OK");

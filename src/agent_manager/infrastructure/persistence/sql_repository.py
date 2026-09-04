@@ -383,6 +383,35 @@ class SqlRepository(Repository):
             Message(role=row.role, content=row.content, created_at=row.created_at) for row in rows
         ]
 
+    async def update_message_feedback(
+        self,
+        conversation_id: str,
+        message_id: str,
+        feedback: str,
+    ) -> ConversationMessage | None:
+        async with self._sessions() as session:
+            row = await session.get(ConversationMessageRow, message_id)
+            if row is None or row.session_id != conversation_id:
+                return None
+            metadata = dict(row.metadata_json or {})
+            metadata["feedback"] = feedback
+            row.metadata_json = metadata
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+        return _message(row)
+
+    async def get_message_in_conversation(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> ConversationMessage | None:
+        async with self._sessions() as session:
+            row = await session.get(ConversationMessageRow, message_id)
+            if row is None or row.session_id != conversation_id:
+                return None
+        return _message(row)
+
     async def get_snapshot(self, session_id: str) -> ConversationSnapshot | None:
         async with self._sessions() as session:
             row = await session.get(ConversationSnapshotRow, session_id)
@@ -601,6 +630,9 @@ def _session(row: ConversationSessionRow) -> ConversationSession:
 
 
 def _message_row(message: ConversationMessage) -> ConversationMessageRow:
+    metadata = dict(message.metadata)
+    if message.feedback is not None:
+        metadata["feedback"] = message.feedback
     return ConversationMessageRow(
         message_id=message.message_id,
         session_id=message.session_id,
@@ -621,12 +653,13 @@ def _message_row(message: ConversationMessage) -> ConversationMessageRow:
         latency_ms=message.latency_ms,
         status=message.status,
         error_type=message.error_type,
-        metadata_json=dict(message.metadata),
+        metadata_json=metadata,
         created_at=message.created_at,
     )
 
 
 def _message(row: ConversationMessageRow) -> ConversationMessage:
+    metadata = dict(row.metadata_json or {})
     return ConversationMessage(
         message_id=row.message_id,
         session_id=row.session_id,
@@ -647,7 +680,8 @@ def _message(row: ConversationMessageRow) -> ConversationMessage:
         latency_ms=row.latency_ms,
         status=row.status,
         error_type=row.error_type,
-        metadata=dict(row.metadata_json or {}),
+        metadata=metadata,
+        feedback=metadata.get("feedback"),
         created_at=ensure_utc(row.created_at) or row.created_at,
     )
 
@@ -666,6 +700,7 @@ def _message_json(row: ConversationMessageRow) -> dict[str, Any]:
         "status": row.status,
         "created_at": (ensure_utc(row.created_at) or row.created_at).isoformat(),
         "metadata": dict(row.metadata_json or {}),
+        "feedback": (row.metadata_json or {}).get("feedback"),
     }
 
 

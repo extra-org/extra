@@ -52228,6 +52228,16 @@ var AgentChatClient = class {
       severity: data.severity ?? "normal"
     };
   }
+  async setMessageFeedback(conversationId, messageId, feedback) {
+    const response = await this.request(
+      `/conversations/${conversationId}/messages/${messageId}/feedback`,
+      {
+        method: "POST",
+        body: JSON.stringify({ feedback })
+      }
+    );
+    return await response.json();
+  }
   async *streamMessage(conversationId, message, signal, editMessageId) {
     const response = await this.request(`/conversations/${conversationId}/messages/stream`, {
       method: "POST",
@@ -52668,8 +52678,34 @@ var __iconNode11 = [
 ];
 var Square = createLucideIcon("square", __iconNode11);
 
-// node_modules/lucide-react/dist/esm/icons/wrench.mjs
+// node_modules/lucide-react/dist/esm/icons/thumbs-down.mjs
 var __iconNode12 = [
+  [
+    "path",
+    {
+      d: "M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z",
+      key: "m61m77"
+    }
+  ],
+  ["path", { d: "M17 14V2", key: "8ymqnk" }]
+];
+var ThumbsDown = createLucideIcon("thumbs-down", __iconNode12);
+
+// node_modules/lucide-react/dist/esm/icons/thumbs-up.mjs
+var __iconNode13 = [
+  [
+    "path",
+    {
+      d: "M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z",
+      key: "emmmcr"
+    }
+  ],
+  ["path", { d: "M7 10v12", key: "1qc93n" }]
+];
+var ThumbsUp = createLucideIcon("thumbs-up", __iconNode13);
+
+// node_modules/lucide-react/dist/esm/icons/wrench.mjs
+var __iconNode14 = [
   [
     "path",
     {
@@ -52678,14 +52714,14 @@ var __iconNode12 = [
     }
   ]
 ];
-var Wrench = createLucideIcon("wrench", __iconNode12);
+var Wrench = createLucideIcon("wrench", __iconNode14);
 
 // node_modules/lucide-react/dist/esm/icons/x.mjs
-var __iconNode13 = [
+var __iconNode15 = [
   ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
   ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
 ];
-var X = createLucideIcon("x", __iconNode13);
+var X = createLucideIcon("x", __iconNode15);
 
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_react10 = __toESM(require_react(), 1);
@@ -53320,7 +53356,8 @@ function reduceStreamEvent(entry, event) {
         ...entry,
         text: event.content ?? entry.text,
         route: event.route ?? entry.route,
-        tools: event.used_tools ?? entry.tools
+        tools: event.used_tools ?? entry.tools,
+        messageId: event.message_id ?? entry.messageId
       };
     case "pending_approval":
       if (!event.run_id || !event.approval_id || !event.agent_id || !event.tool_name) {
@@ -53471,6 +53508,10 @@ function useConversation(client, endpoint, onReplaced) {
     () => removeStoredConversationId(endpoint),
     [endpoint]
   );
+  const setMessageFeedback = (0, import_react9.useCallback)(
+    (conversationId, messageId, feedback) => client.setMessageFeedback(conversationId, messageId, feedback),
+    [client]
+  );
   return (0, import_react9.useMemo)(
     () => ({
       peekId,
@@ -53484,7 +53525,8 @@ function useConversation(client, endpoint, onReplaced) {
       loadUsage,
       listThreads,
       switchTo,
-      startNew
+      startNew,
+      setMessageFeedback
     }),
     [
       peekId,
@@ -53498,7 +53540,8 @@ function useConversation(client, endpoint, onReplaced) {
       loadUsage,
       listThreads,
       switchTo,
-      startNew
+      startNew,
+      setMessageFeedback
     ]
   );
 }
@@ -53523,7 +53566,8 @@ var toEntries = (message) => {
     messageId: message.message_id,
     runId: message.run_id ?? void 0,
     role: message.role === "user" ? "user" : "ai",
-    text: message.content
+    text: message.content,
+    feedback: message.feedback
   };
   return message.role === "user" && message.status === "cancelled" ? [entry, { id: newId(), role: "ai", text: "", status: "cancelled" }] : [entry];
 };
@@ -54079,9 +54123,28 @@ function AgentChatApp({
                     ChatMessage,
                     {
                       entry,
+                      conversationId: activeId,
                       onApproval: (approval, decision) => void decideApproval(activeId, entry, approval, decision),
                       onCancelApproval: (approval) => void cancelApproval(activeId, entry.id, approval),
                       onEdit: () => editMessage(entry),
+                      onFeedback: async (messageId, feedback) => {
+                        putEntries(
+                          activeId,
+                          (prev) => prev.map(
+                            (entry2) => entry2.messageId === messageId ? { ...entry2, feedback } : entry2
+                          )
+                        );
+                        try {
+                          await conversation.setMessageFeedback(activeId, messageId, feedback);
+                        } catch {
+                          putEntries(
+                            activeId,
+                            (prev) => prev.map(
+                              (entry2) => entry2.messageId === messageId ? { ...entry2, feedback: void 0 } : entry2
+                            )
+                          );
+                        }
+                      },
                       editable: canEdit
                     },
                     entry.id
@@ -54161,9 +54224,11 @@ function Launcher({
 }
 function ChatMessage({
   entry,
+  conversationId,
   onApproval,
   onCancelApproval,
   onEdit,
+  onFeedback,
   editable
 }) {
   const from = entry.role === "user" ? "user" : "assistant";
@@ -54195,7 +54260,7 @@ function ChatMessage({
         }
       ) : null,
       entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }) : null,
-      entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
+      entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text, feedback: entry.feedback, messageId: entry.messageId, conversationId, onFeedback }) : null
     ] })
   ] });
 }
@@ -54276,8 +54341,54 @@ function ThinkingDots() {
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" })
   ] });
 }
-function MessageActions({ text: text10 }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-actions", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(CopyButton, { text: text10 }) });
+function MessageActions({
+  text: text10,
+  feedback,
+  messageId,
+  conversationId,
+  onFeedback
+}) {
+  const handleThumbsUp = (0, import_react10.useCallback)(() => {
+    if (!messageId || !conversationId || !onFeedback) return;
+    const next2 = feedback === "thumbs_up" ? null : "thumbs_up";
+    if (next2) {
+      void onFeedback(messageId, next2);
+    }
+  }, [messageId, conversationId, onFeedback, feedback]);
+  const handleThumbsDown = (0, import_react10.useCallback)(() => {
+    if (!messageId || !conversationId || !onFeedback) return;
+    const next2 = feedback === "thumbs_down" ? null : "thumbs_down";
+    if (next2) {
+      void onFeedback(messageId, next2);
+    }
+  }, [messageId, conversationId, onFeedback, feedback]);
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "msg-actions", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(CopyButton, { text: text10 }),
+    messageId && conversationId && onFeedback ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "feedback-actions", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        "button",
+        {
+          "aria-label": "Thumbs up",
+          "aria-pressed": feedback === "thumbs_up",
+          className: `msg-action feedback-up${feedback === "thumbs_up" ? " active" : ""}`,
+          onClick: handleThumbsUp,
+          type: "button",
+          children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ThumbsUp, { "aria-hidden": true })
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        "button",
+        {
+          "aria-label": "Thumbs down",
+          "aria-pressed": feedback === "thumbs_down",
+          className: `msg-action feedback-down${feedback === "thumbs_down" ? " active" : ""}`,
+          onClick: handleThumbsDown,
+          type: "button",
+          children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ThumbsDown, { "aria-hidden": true })
+        }
+      )
+    ] }) : null
+  ] });
 }
 function CopyButton({ text: text10 }) {
   const [copied, setCopied] = (0, import_react10.useState)(false);
@@ -55127,6 +55238,22 @@ lucide-react/dist/esm/icons/square-pen.mjs:
    *)
 
 lucide-react/dist/esm/icons/square.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/thumbs-down.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/thumbs-up.mjs:
   (**
    * @license lucide-react v1.22.0 - ISC
    *
