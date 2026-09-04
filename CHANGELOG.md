@@ -1,5 +1,153 @@
 # Changelog
 
+## [1.0.0](https://github.com/extra-org/extra/compare/agent-engine-v0.4.1...agent-engine-v1.0.0) (2026-09-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **adr:** GET /conversations response shape changed from flat list [ConversationSummary] to paginated envelope { items: [ConversationSummary], next_cursor: str | null }
+* **manager:** `X-Agent-Chat-User` and the widget's `user` attribute are removed. Every conversation route now requires a verified token; requests without one are 401. Conversations already stored under unverified ids become unreachable rather than exposed.
+
+### Features
+
+* **agent_manager:** add pagination and lazy loading for chat history ([#116](https://github.com/extra-org/extra/issues/116)) ([4e005be](https://github.com/extra-org/extra/commit/4e005be2d4b335b95bf20c629254f856cbff6a0f))
+* **agent_manager:** add pagination and lazy loading for chat history ([#116](https://github.com/extra-org/extra/issues/116)) ([984eb09](https://github.com/extra-org/extra/commit/984eb09ab5e0915da68fc3a2c42002832ece4716))
+* **agent-manager:** auto-generate conversation titles from the first message ([5f7257b](https://github.com/extra-org/extra/commit/5f7257b9c6b50474ec3aa5a6d3bb065262a65976))
+* **agent-manager:** auto-generate conversation titles from the first message ([279b040](https://github.com/extra-org/extra/commit/279b040fb62cc5b0342d9e1a1ad442887ad847d5)), closes [#117](https://github.com/extra-org/extra/issues/117)
+* **approvals:** add can_run_transition predicate ([6c8e0e9](https://github.com/extra-org/extra/commit/6c8e0e9ee269419583619ae8e0192137b50576df))
+* **auth:** carry the caller's own credential through to plugin code ([90aadab](https://github.com/extra-org/extra/commit/90aadab17e1d935e8a97a4085e46931f8f79d451))
+* **auth:** carry the caller's own credential through to plugin code ([52b146d](https://github.com/extra-org/extra/commit/52b146d0ca33c9901d88f980657b9ff272bc9502))
+* **cli:** handle tool approvals in remote chat ([917ba1d](https://github.com/extra-org/extra/commit/917ba1dea1bdb21df25e589fe39364366c5b58e7))
+* **cli:** handle tool approvals in remote chat ([c53199c](https://github.com/extra-org/extra/commit/c53199ca6133270a76deba5bfb1d9c62525dec78))
+* **dev:** native development loop with watch and IDE debugging ([11faa51](https://github.com/extra-org/extra/commit/11faa51cda58ce06d74bacf4527e3477fda7ec16))
+* **dev:** native development loop with watch and IDE debugging ([53ea8bf](https://github.com/extra-org/extra/commit/53ea8bf328a29f539a5c9ae70874333186481ca7))
+* **engine:** add resumable approval lifecycle ([6fa8554](https://github.com/extra-org/extra/commit/6fa8554f6f7fb5f53cee268e201d54791e5865a7))
+* **engine:** make the repository the source of truth for tool usage ([2c13948](https://github.com/extra-org/extra/commit/2c1394859df95459574cb0c1c37c3e4d8f9c31ec))
+* **engine:** preserve structured tool results ([dfedaac](https://github.com/extra-org/extra/commit/dfedaaceea684041271255852d3052c410785804))
+* **engine:** resolve prompt variables for orchestrators, not just agents ([aae8238](https://github.com/extra-org/extra/commit/aae82381e57ffa92e7b79d5fbff8580ca5186869))
+* **engine:** resolve prompt variables for orchestrators, not just agents ([d87b3f5](https://github.com/extra-org/extra/commit/d87b3f5d2968a56700f775100035efd2c5023725))
+* expose manager playground route ([82c405f](https://github.com/extra-org/extra/commit/82c405fd4436675a2fed20fc687705e7e4b09611))
+* **manager:** add immutable conversation lifecycle ([1122e83](https://github.com/extra-org/extra/commit/1122e83c4ff0f5924a62a2a397a241dafb22ee46))
+* **manager:** adopt a visitor's conversations when they sign in ([81c40c1](https://github.com/extra-org/extra/commit/81c40c180484e4ba06761be7294574e06491587c))
+* **manager:** choose the tool-usage backend in the composition root ([3667456](https://github.com/extra-org/extra/commit/36674562544c3b1f60b43c10c8e463317ce17de4))
+* **manager:** require a verified identity on every conversation route ([6e3c9ef](https://github.com/extra-org/extra/commit/6e3c9ef0e0288445681c076689ba6e922fecf1aa))
+* **manager:** resume and persist approval decisions ([ee6d98c](https://github.com/extra-org/extra/commit/ee6d98ccb3ae7b7e1b7bd0a036c2d0b32154e6b5))
+* **runtime:** persist normalized tool execution results ([e1d0427](https://github.com/extra-org/extra/commit/e1d0427b21b10becd611c61845120cbf84af2e46))
+* **tool-usage:** own execution metadata in a dedicated subsystem ([f41df6c](https://github.com/extra-org/extra/commit/f41df6ca597ad97608bc988945cfd02e65b4615c))
+* **widget:** add human approval actions ([ca416af](https://github.com/extra-org/extra/commit/ca416af7c4b5f8c9988fb7bfa93a46a1999df61e))
+* **widget:** report identity failures instead of silently degrading ([b2e28ea](https://github.com/extra-org/extra/commit/b2e28ea1e5058da4091e235a49a90ad5288f56dc))
+* **widget:** report identity failures instead of silently degrading ([9d3d6cc](https://github.com/extra-org/extra/commit/9d3d6ccc18ff00b08cf0f38a6047f6ff545464ff))
+
+
+### Bug Fixes
+
+* **agent_manager:** address review feedback on pagination for PR [#124](https://github.com/extra-org/extra/issues/124) ([#116](https://github.com/extra-org/extra/issues/116)) ([3b2c7b0](https://github.com/extra-org/extra/commit/3b2c7b0355e43d92f4b0350d1393c2ccf53abd0a))
+* **agent-manager:** deliver the generated title over SSE instead of racing it ([71f332e](https://github.com/extra-org/extra/commit/71f332efe8f05ec953b6c662a92084ebf21273eb))
+* **agent-manager:** forward full model config to the title generator ([058d190](https://github.com/extra-org/extra/commit/058d19002a54bab25b32a02c7da8b546213edf79))
+* **agent-manager:** make title delivery lifecycle-safe ([57da8f8](https://github.com/extra-org/extra/commit/57da8f84b512a3dd3ffafc7f3817848cb47eb649))
+* **api:** allow empty body on approve/reject endpoints ([712b7d7](https://github.com/extra-org/extra/commit/712b7d7c5a141f8d32fbc312b46ed334907b4997))
+* **api:** recover the original result on a retried approval decision ([0078ca1](https://github.com/extra-org/extra/commit/0078ca126e8cdc401c53c80de0c3369f94aa7224))
+* **api:** recover the original result on a retried approval decision ([5b0e219](https://github.com/extra-org/extra/commit/5b0e219f90b48bd136fcabb7510171e753241fd3))
+* **api:** sanitize raw tool exception text to generic error in ToolRecord ([4959cfc](https://github.com/extra-org/extra/commit/4959cfcbd92b8064396570e121c96d06535b6f8b))
+* **api:** sanitize raw tool exception text to generic error in ToolRecord ([24cd005](https://github.com/extra-org/extra/commit/24cd005a4ff88bed77ddcfd5a28c87d7472224f8))
+* **api:** santize unexpected failures during approval recovery ([a81c797](https://github.com/extra-org/extra/commit/a81c79797c7f0bfc180d31e48481de800150c348))
+* **approvals:** make run registration atomic ([5b67303](https://github.com/extra-org/extra/commit/5b673037d9e032f5ad6c0f143032601fd45d7ab7))
+* **auth:** accept the host token shapes the sub bug was hiding ([d8e1db1](https://github.com/extra-org/extra/commit/d8e1db1dfcf2db67f3aa9ecf10d36164a4fc5475))
+* **auth:** let an explicit host bearer token outrank the session cookie ([3a49342](https://github.com/extra-org/extra/commit/3a49342d422b82dbd3de039b05718a787272eca3))
+* **auth:** let the host session cookie outrank a visitor pass ([c09d3bf](https://github.com/extra-org/extra/commit/c09d3bfb6f5fae93928354af096c1197bd92dcdd))
+* **auth:** stop unconditionally requiring the sub claim before ClaimMapping runs ([4697e1a](https://github.com/extra-org/extra/commit/4697e1a312c6ea1adc5e6550b3f55098b9aa78c7))
+* **cli:** expect agentctl's local caller id in its digested form ([0f6bb5b](https://github.com/extra-org/extra/commit/0f6bb5be6e57535ac218505f16efbc4e15056b81))
+* **cli:** validate config before serving ([b172b1a](https://github.com/extra-org/extra/commit/b172b1ab8f41cd8c6a1f03b473808c871ed4417d))
+* **cli:** validate config before serving ([5f1442f](https://github.com/extra-org/extra/commit/5f1442f286a7bc6723c33b48a54f0267cf10a48d))
+* **config:** rename AGENT_* env vars to EXTRA_* with backward-compat deprecation warnings ([a2f20d1](https://github.com/extra-org/extra/commit/a2f20d1ce920af463ff6c5e84753d80255978837))
+* **config:** rename AGENT_env vars to EXTRA_ with backward-compat deprecation warning ([c6d2015](https://github.com/extra-org/extra/commit/c6d2015a62665a7a090a6971ffa24f4657a0600a))
+* **engine:** align run repository and stream contracts ([374874f](https://github.com/extra-org/extra/commit/374874f502accdfde3e204638d2d0711011c4e18))
+* **engine:** cancel abandoned streaming runs ([5d9c5f1](https://github.com/extra-org/extra/commit/5d9c5f12d3b222db071563c50922782354956d0f))
+* **engine:** extract clean text from MCP tool results instead of stri… ([c8667a4](https://github.com/extra-org/extra/commit/c8667a4594c3f8b081e12b027f1b88950a71a0b8))
+* **engine:** extract clean text from MCP tool results instead of stringifying content blocks ([763a514](https://github.com/extra-org/extra/commit/763a51418a8ac8a6b01d8f5d8377dcb40403c680))
+* **engine:** unify streamed resume cancellation ([3b82d7b](https://github.com/extra-org/extra/commit/3b82d7b3c7bb9925afb95bd487151941bc183a19))
+* explain why using extra ([d72f8a2](https://github.com/extra-org/extra/commit/d72f8a27ad597164c459e961e6409e877ef7d519))
+* forward the approver's credential on the engine's own approval endpoints ([3593608](https://github.com/extra-org/extra/commit/3593608259db0f7ea96d111afdcb21a8d0e31743))
+* **generate:** report unreferenced tools ([2581c0e](https://github.com/extra-org/extra/commit/2581c0e5e910de24287057f73f323d9a03338a4d))
+* **generate:** report unreferenced tools ([cc80456](https://github.com/extra-org/extra/commit/cc804560ea3774d41df769977621e8a2f0953163))
+* **hitl:** address approval review feedback ([41fc836](https://github.com/extra-org/extra/commit/41fc83622214192d9f585daea7f3230b748aec4d))
+* keep the credential out of AuthContext's repr ([bec5c30](https://github.com/extra-org/extra/commit/bec5c3031b1e1aaf2c6795277029bbb34459c222))
+* **logging:** align uvicorn/third-party logs with structured formatter ([90711ab](https://github.com/extra-org/extra/commit/90711ab77012aa05cf6eee0fb12d38f67c18fb5e))
+* **logging:** make configure_logging own the root handler unconditionally ([861c60f](https://github.com/extra-org/extra/commit/861c60fca7c744b175bcb3d60f79b0fee8a50516))
+* **manager:** adapt cancellation errors after rebase ([f2834b1](https://github.com/extra-org/extra/commit/f2834b13bd787902d22d44a457f24f910049b4e7))
+* **manager:** adapt two upstream tests to the Principal signature ([9d762ac](https://github.com/extra-org/extra/commit/9d762acaeef3a01d66c8fcde62800d53369110ca))
+* **manager:** close two cancellation gaps on the resume and failure paths ([c312837](https://github.com/extra-org/extra/commit/c312837bb52f3cc71e6b8befc5b905d552f2f80a))
+* **manager:** let post-final stream failures propagate ([2e1a392](https://github.com/extra-org/extra/commit/2e1a3928a45266beb8750babba4c9dbcce7d1a87))
+* **manager:** log failed identity verification ([87087eb](https://github.com/extra-org/extra/commit/87087eb3e3df5507c81b598aca4997cf73139e8d))
+* **manager:** persist and sanitize final stream failures ([73be056](https://github.com/extra-org/extra/commit/73be05632974599c50fd343e45619939c494e2b2))
+* **manager:** share one token resolution, and bundle what the HTTP edge needs ([08f23f6](https://github.com/extra-org/extra/commit/08f23f69260faee784f7acf9a060382fd0f39761))
+* **parser:** reject unknown and misplaced YAML keys during spec validation ([016f89d](https://github.com/extra-org/extra/commit/016f89d2cc87849320c3f711495f870d1715925b))
+* **parser:** reject unknown and misplaced YAML keys during spec validation ([c981c57](https://github.com/extra-org/extra/commit/c981c57a7a71a469180c3e575122b046f94348f1))
+* **runs:** expire terminal in-memory run records ([8193ad8](https://github.com/extra-org/extra/commit/8193ad8c759b6cfc4947bf2de83edc3ea4ae0530))
+* **runs:** expire terminal in-memory run records ([e4b2484](https://github.com/extra-org/extra/commit/e4b2484e2dd8f6f2e6cccaf8d3d9790ed68334bf))
+* **runtime:** address structured result review findings ([a92b9a1](https://github.com/extra-org/extra/commit/a92b9a1b9c5afb552bd124fef9ca024fe081c21e))
+* **runtime:** preserve successful result on cancellation ([828b6de](https://github.com/extra-org/extra/commit/828b6defd7ea00ef92fe3ab7870e21e7984f4d77))
+* **test:** resolve mypy typecheck errors in test_repository_contract.py ([a8f8352](https://github.com/extra-org/extra/commit/a8f83522d79688268abb6de4b753503ed0c354db))
+* **tests:** annotate yield fixture as Iterator[None] ([3e27ab0](https://github.com/extra-org/extra/commit/3e27ab0e985a0f37434d75cc4cf7f4781909a162))
+* **tool-usage:** address review feedback ([00d587c](https://github.com/extra-org/extra/commit/00d587ceb4e291ab4bb5b53135bda3cbfb8ac79a))
+* type run status as RunStatus end to end ([143adcd](https://github.com/extra-org/extra/commit/143adcdaf4b28581ea9ec66a69909209dda85d6a))
+* **widget:** add drawer error notice and retry UI, and expand contract tests ([b5e7578](https://github.com/extra-org/extra/commit/b5e757837e7fe28de1dd0f2b10fb2fa1a2bb3a06))
+* **widget:** always clear visitor pass after successful cookie-mode link ([5429976](https://github.com/extra-org/extra/commit/542997689c775db29ea2e08f3e60afd1b431c482))
+* **widget:** avoid crypto.randomUUID crash outside secure contexts ([46a98ce](https://github.com/extra-org/extra/commit/46a98ce118a99b9a249bef86c52aae484e95a8c9))
+* **widget:** avoid crypto.randomUUID crash outside secure contexts ([da666bc](https://github.com/extra-org/extra/commit/da666bc004bdd013862c3d466e519cd111413a96))
+* **widget:** enable zero-code cookie mode visitor history hand-off ([68c776f](https://github.com/extra-org/extra/commit/68c776f0ffa0f0256042f90b97eee3af2e76de51))
+* **widget:** ensure same-SPA cookie login hand-off and await visitor pass claim ([41ce7ae](https://github.com/extra-org/extra/commit/41ce7aed1b3578d4ec9069a0aaee6abaa32ef67b))
+* **widget:** express an off boolean by absence, as HTML means it ([590dff7](https://github.com/extra-org/extra/commit/590dff75aa8ee9024079c5c263cea96b27b39c3f))
+* **widget:** hide internal tool provider labels ([5166956](https://github.com/extra-org/extra/commit/51669564e712adcc1406d754f8c8b0f652fe20f0))
+* **widget:** hide tool provider labels ([3a5f3a2](https://github.com/extra-org/extra/commit/3a5f3a209d880ce8854995c0c417faac3089a218))
+* **widget:** honour an explicit require-identity="false", and stop claiming an outcome ([d5d56a1](https://github.com/extra-org/extra/commit/d5d56a1bce762d216cfbce567af9cbf37123615c))
+* **widget:** keep active resume controls available ([572740c](https://github.com/extra-org/extra/commit/572740cd9cb06bb503b613294402f92b9a3813f0))
+* **widget:** merge anonymous visitor history in cookie authentication mode ([#104](https://github.com/extra-org/extra/issues/104)) ([18a4c04](https://github.com/extra-org/extra/commit/18a4c04d5e3243374f5d2ae46a117e61ac296a3f))
+* **widget:** merge anonymous visitor history in cookie authentication mode ([#104](https://github.com/extra-org/extra/issues/104)) ([4682781](https://github.com/extra-org/extra/commit/4682781418a556c0cad7aa67c95c6d6a144c7eda))
+* **widget:** merge anonymous visitor history in cookie authentication mode ([#104](https://github.com/extra-org/extra/issues/104)) ([8b3884b](https://github.com/extra-org/extra/commit/8b3884bb4c4725e0a17637f1aa298573c4642591))
+* **widget:** prevent per-request token resolution race in cookie mode while keeping same-SPA cookie login hand-off ([408cb43](https://github.com/extra-org/extra/commit/408cb4398f54d22108c304029a3d4294ba1951e3))
+* **widget:** re-resolve identity when a SPA signs a user in ([5ea7134](https://github.com/extra-org/extra/commit/5ea7134e60b4345d768b5621894997a46b22c2ba))
+* **widget:** re-resolve identity when a SPA signs a user in ([2d8a037](https://github.com/extra-org/extra/commit/2d8a037469ad9a09d5c0bd0cbefe96a3bbdc5032))
+* **widget:** replace magic cooldown with event-driven cookie tracking and deterministic history hand-off ([852be0c](https://github.com/extra-org/extra/commit/852be0ce285c84af4b8040fc72720f29ac7fd2d7))
+* **widget:** restrict automatic visitor pass claim in tokenSource to cookie mode ([e29329d](https://github.com/extra-org/extra/commit/e29329d5dd87e1021b71e3187384a4e09cd998c7))
+* **widget:** throttle unauthenticated claimVisitorHistory retries in cookie mode ([8d05239](https://github.com/extra-org/extra/commit/8d05239f78e748d7ccfd249ddae931284e6d64ec))
+
+
+### Performance Improvements
+
+* **manager:** make reading history cost one branch walk and one run lookup ([2600ee2](https://github.com/extra-org/extra/commit/2600ee2d0150a0c939c81168c745875545131fbd))
+* **parser:** optimize _validate_unknown_keys loop ([d821d6b](https://github.com/extra-org/extra/commit/d821d6b5620d476b722c4dcc2712f4635e0aec1f))
+
+
+### Reverts
+
+* **manager:** restore the persistent SQLite default ([0d8b4ae](https://github.com/extra-org/extra/commit/0d8b4ae9957d020d930f02636586a95834c5dbbf))
+
+
+### Documentation
+
+* **adr:** add ADR 0003 for chat history keyset pagination ([ace375d](https://github.com/extra-org/extra/commit/ace375d21d67e1e54b5b5b28fec54c291ffcfb04))
+* **adr:** rename ADR 0003 to 0003-cursor-pagination-and-list-response-envelope.md ([df28800](https://github.com/extra-org/extra/commit/df2880072a58e4f1f9c02d2899f352e7ba184d83))
+* align architecture with modular packages ([28dd390](https://github.com/extra-org/extra/commit/28dd390b0606a8793fe8fbb92a567c4eaa8e950e))
+* **hitl:** document approval actions and lifecycle ([6e221ac](https://github.com/extra-org/extra/commit/6e221aca1c6318c30cd332596b7dd753794c8efa))
+* **lifecycle:** record cancellation and branch contracts ([cac3c15](https://github.com/extra-org/extra/commit/cac3c15b9bea92b68fd57412d55652d48d752ecb))
+* make the identity page a task, not a reference ([59a7fce](https://github.com/extra-org/extra/commit/59a7fce906d8312a9a24f103207e9ef873bd7a6f))
+* **readme:** address PR [#47](https://github.com/extra-org/extra/issues/47) review — product hero, graph value, runnable quick start ([24de784](https://github.com/extra-org/extra/commit/24de784d39bd8accde18e7dc9796aae2806b53c5))
+* **readme:** reposition around "Make your product queryable" ([1f39527](https://github.com/extra-org/extra/commit/1f39527c38ebd47b470bab0136a87b82f216ed33))
+* refine README mark the word zero in the subtitle ([651591e](https://github.com/extra-org/extra/commit/651591efd0b60464ca7b7f73e2f6b8678e4527c1))
+* refine README messaging and simplify value proposition ([20362d8](https://github.com/extra-org/extra/commit/20362d894656be6ee0d64043846487603ba4a239))
+* refine README quick start section ([0552bb4](https://github.com/extra-org/extra/commit/0552bb4011fae3118b9a6dbc8c1a1a699245b4e2))
+* refine README remove agentctl command ([d499f85](https://github.com/extra-org/extra/commit/d499f857ecf2d0b81fe9c75cf4aef243fee61e18))
+* refine the hero README messaging and simplify value proposition ([59e5bd9](https://github.com/extra-org/extra/commit/59e5bd9661d779754c5dc038532ef9272dd55b71))
+* restore architectural rationale flagged in review ([bf9d25b](https://github.com/extra-org/extra/commit/bf9d25b140b8fa2cecc561edb681e9159783b5f1))
+* **runs:** document repository coordination boundary ([7f099a1](https://github.com/extra-org/extra/commit/7f099a193e131c5debdb928e638715e46763de6c))
+* **runtime:** define structured tool result contract ([6206ec1](https://github.com/extra-org/extra/commit/6206ec1204dbbf45d995d58c8638763717e1f582))
+* **runtime:** document review-driven result safeguards ([91f90c3](https://github.com/extra-org/extra/commit/91f90c32b068557cbca1aa5cdaa3958e995901fd))
+* simplify README messaging and clarify Extra's AI specialist architecture ([127199b](https://github.com/extra-org/extra/commit/127199bafda4dbea29875f61188a8bb7001f20a4))
+* state what begin_execution's boolean return means ([15a9ad4](https://github.com/extra-org/extra/commit/15a9ad4846d89f7b6661723eee5750b84a55dae0))
+* **tool-usage:** record the execution-metadata architecture ([f9d88e9](https://github.com/extra-org/extra/commit/f9d88e9e371cc7c4feaa2d13b57b88ca6c668e88))
+* trim the identity page to the happy path ([d604aeb](https://github.com/extra-org/extra/commit/d604aebf4ad5e3af7f9b67db60420f924ace6a87))
+
 ## [0.4.1](https://github.com/extra-org/extra/compare/agent-engine-v0.4.0...agent-engine-v0.4.1) (2026-08-01)
 
 
