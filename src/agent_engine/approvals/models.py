@@ -21,6 +21,7 @@ from typing import Any
 
 from agent_engine.approvals.errors import InvalidStateTransition
 from agent_engine.runtime.tool_models import ToolProviderName
+from agent_engine.runtime.tool_results import PersistedToolResult
 
 
 class RunStatus(StrEnum):
@@ -37,6 +38,12 @@ class ApprovalStatus(StrEnum):
     RESUMING = "resuming"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class ToolExecutionStatus(StrEnum):
+    STARTED = "started"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
 
 
 # Allowed forward transitions. Anything not listed is rejected. Terminal run
@@ -154,6 +161,6 @@ class ToolExecutionRecord:
     tool_call_id: str
     run_id: str
     tool_name: str
-    status: str = "started"  # started | succeeded | failed
-    result: str | None = None
+    status: ToolExecutionStatus = ToolExecutionStatus.STARTED
+    result: PersistedToolResult | None = None
     created_at: float = field(default_factory=time.time)

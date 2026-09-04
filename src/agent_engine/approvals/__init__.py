@@ -68,12 +68,15 @@ from agent_engine.approvals.models import (
     RunRecord,
     RunStatus,
     ToolExecutionRecord,
+    ToolExecutionStatus,
 )
 from agent_engine.approvals.sanitization import mask_arguments, mask_sensitive
 from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
 from agent_engine.approvals.session_approval_store import SessionApprovalStore
 from agent_engine.approvals.tool_execution_manager import (
+    ToolExecutionClaim,
     ToolExecutionManager,
+    ToolExecutionStateError,
     execution_id_for,
 )
 from agent_engine.approvals.tool_execution_repository import ToolExecutionRepository
@@ -110,9 +113,12 @@ __all__ = [
     "SessionApprovalRepository",
     "SessionApprovalScope",
     "SessionApprovalStore",
+    "ToolExecutionClaim",
     "ToolExecutionManager",
     "ToolExecutionRecord",
     "ToolExecutionRepository",
+    "ToolExecutionStateError",
+    "ToolExecutionStatus",
     "ToolInvocation",
     "ToolNoLongerExists",
     "UnauthorizedApprover",

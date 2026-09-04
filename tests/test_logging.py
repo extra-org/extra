@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from langchain_core.messages import ToolMessage
+
 from agent_engine.logging_config import (
     StructuredFormatter,
     configure_logging,
@@ -70,6 +72,26 @@ def test_tool_event_emits_structured_record(caplog):
 
     record = next(r for r in caplog.records if r.msg == "tool start")
     assert record.fields == {"name": "search"}
+
+
+def test_tool_callback_logs_only_safe_result_metadata(caplog):
+    sensitive = "structured-value-must-stay-private"
+    handler = LoggingCallbackHandler()
+
+    with caplog.at_level(logging.DEBUG, logger="agent_engine.trace"):
+        handler.on_tool_start({"name": "search"}, sensitive)
+        handler.on_tool_end(
+            ToolMessage(
+                content="complete",
+                tool_call_id="call-1",
+                artifact={"structured_content": {"private": sensitive}},
+            )
+        )
+
+    fields = [getattr(record, "fields", {}) for record in caplog.records]
+    assert all(sensitive not in repr(value) for value in fields)
+    assert {"chars": len(sensitive)} in fields
+    assert {"output_type": "ToolMessage"} in fields
 
 
 def test_log_helper_attaches_fields(caplog):

@@ -40,7 +40,7 @@ explicit-ref mode) and whether a returned value is used.
 | `on_run_error` | when a run fails | the `BaseException` | ignored (never masks the error) |
 | `before_tool_call` | before every local or MCP tool call | `ToolRequestContext` | ignored (observe-only) |
 | `after_tool_call` | after a local or MCP tool call **succeeds** | `ToolCallContext` (status `succeeded`) | ignored |
-| `transform_tool_result` | after a tool **succeeds**, before its result is appended to the conversation | `ToolResultContext` (carries the `result`) | updated `ToolResultContext` (or `None`) |
+| `transform_tool_result` | after a tool **succeeds**, before its result is appended to the conversation | `ToolResultContext` (carries text, structured result, and artifact metadata) | updated `ToolResultContext` (or `None`) |
 | `on_tool_error` | when a local or MCP tool call **fails** | `ToolCallContext` (status `failed`) | ignored |
 | `before_mcp_request` | before every outgoing MCP HTTP request | `McpRequestContext` | updated `McpRequestContext` (or `None`) |
 | `after_mcp_response` | after every MCP HTTP response | `McpResponseContext` | ignored (observe-only) |
@@ -343,16 +343,26 @@ EngineContext(system_name, metadata)
 RunEndContext(run_id, system_name, status, visited, used_tool_count, metadata)
 ToolRequestContext(agent_id, tool_name, provider, server_id, metadata)
 ToolCallContext(agent_id, tool_name, provider, server_id, status, latency_ms, error, metadata)
-ToolResultContext(agent_id, tool_name, provider, result, server_id, latency_ms, metadata)
+ToolResultContext(agent_id, tool_name, provider, result, server_id, latency_ms, metadata, structured_result, artifact)
 McpRequestContext(server_id, url, operation, tool_name, headers, metadata)
 McpResponseContext(server_id, url, status_code, operation, tool_name, latency_ms, metadata)
 ```
 
-All are frozen dataclasses. `RunContext.replace(**changes)` and
-`McpRequestContext.with_headers({...})` and `ToolResultContext.with_result(...)`
-return updated copies; the `headers` and `metadata` dicts may also be mutated in
-place. Hooks never receive raw graph
-state.
+All are frozen dataclasses. `RunContext.replace(**changes)`,
+`McpRequestContext.with_headers({...})`, and the
+`ToolResultContext.with_result(...)`, `with_structured_result(...)`, and
+`with_artifact(...)` helpers return updated copies; the `headers` and `metadata`
+dicts may also be mutated in place. `with_result(...)` changes only model-facing
+text and preserves structured output and artifact metadata. Hooks never receive
+raw graph state.
+
+`ToolResultContext.result` remains a string for existing hooks.
+`structured_result` carries provider-independent machine-readable output, and
+`artifact` contains structurally bounded metadata after binary and oversized
+bodies have been omitted. Structural bounds do not identify application
+secrets: hook implementations may inspect, redact, or replace these trusted
+runtime values but must not log their contents. See
+[`ADR 0004`](adr/0004-normalized-structured-tool-results.md).
 
 ---
 

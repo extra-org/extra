@@ -15,7 +15,9 @@ from agent_engine.approvals.models import (
     ApprovalRecord,
     ApprovalStatus,
     ToolExecutionRecord,
+    ToolExecutionStatus,
 )
+from agent_engine.runtime.tool_results import NormalizedToolResult
 
 pytestmark = pytest.mark.asyncio
 
@@ -97,7 +99,8 @@ async def test_execution_idempotency_start_is_create_if_absent() -> None:
     second, created2 = await repo.start(rec)
     assert created1 is True
     assert created2 is False  # duplicate attempt detected
-    assert first is second
+    assert first == second
+    assert first is not second  # callers cannot mutate the repository's record
 
 
 async def test_execution_complete_records_result() -> None:
@@ -105,6 +108,39 @@ async def test_execution_complete_records_result() -> None:
     await repo.start(
         ToolExecutionRecord(execution_id="e1", tool_call_id="tc1", run_id="r1", tool_name="t")
     )
-    await repo.complete("e1", status="succeeded", result="done")
+    result = NormalizedToolResult(text="done", structured={"ok": True})
+    await repo.complete(
+        "e1",
+        status=ToolExecutionStatus.SUCCEEDED,
+        result=result.to_persisted(),
+    )
     rec = await repo.get("e1")
-    assert rec is not None and rec.status == "succeeded" and rec.result == "done"
+    assert rec is not None and rec.status == ToolExecutionStatus.SUCCEEDED
+    assert rec.result == result.to_persisted()
+
+    with pytest.raises(ValueError, match="already terminal"):
+        await repo.complete(
+            "e1",
+            status=ToolExecutionStatus.FAILED,
+            result=NormalizedToolResult.text_only("replacement").to_persisted(),
+        )
+
+    unchanged = await repo.get("e1")
+    assert unchanged == rec
+
+
+async def test_execution_waiter_receives_the_terminal_snapshot() -> None:
+    repo = InMemoryToolExecutionRepository()
+    await repo.start(
+        ToolExecutionRecord(execution_id="e1", tool_call_id="tc1", run_id="r1", tool_name="t")
+    )
+    waiter = asyncio.create_task(repo.wait_for_completion("e1"))
+    await asyncio.sleep(0)
+    assert waiter.done() is False
+
+    result = NormalizedToolResult("done", structured={"ok": True}).to_persisted()
+    await repo.complete("e1", status=ToolExecutionStatus.SUCCEEDED, result=result)
+
+    completed = await waiter
+    assert completed.status == ToolExecutionStatus.SUCCEEDED
+    assert completed.result == result
