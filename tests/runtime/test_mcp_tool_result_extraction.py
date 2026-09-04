@@ -571,6 +571,48 @@ async def test_cancellation_during_failed_result_write_does_not_strand_duplicate
     assert replayed == NormalizedToolResult.text_only("Tool error: provider failed")
 
 
+async def test_cancellation_during_successful_result_write_preserves_success() -> None:
+    calls = 0
+
+    async def successful_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "completed"
+
+    tool = StructuredTool.from_function(
+        coroutine=successful_tool,
+        name="successful_tool",
+        description="succeeds",
+    )
+    repository = _BlockingCompletionRepository()
+    invoker = _invoker(
+        tool,
+        ToolExecutionManager(execution_repository=repository),
+    )
+    tool_call = {"id": "call-1", "name": tool.name, "args": {}}
+    token = current_run_context.set(RunContext(run_id="run-cancelled-success"))
+    owner = asyncio.create_task(invoker.invoke(tool_call))
+    try:
+        await repository.completing.wait()
+        duplicate = asyncio.create_task(invoker.invoke(tool_call))
+        owner.cancel()
+        await asyncio.sleep(0)
+        assert duplicate.done() is False
+
+        repository.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await owner
+        replayed = await asyncio.wait_for(duplicate, timeout=1)
+    finally:
+        repository.release.set()
+        if not owner.done():
+            owner.cancel()
+        current_run_context.reset(token)
+
+    assert calls == 1
+    assert replayed == NormalizedToolResult.text_only("completed")
+
+
 def _invoker(tool: StructuredTool, execution_manager: ToolExecutionManager) -> ToolInvoker:
     return ToolInvoker(
         spec=AgentSpec(

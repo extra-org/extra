@@ -291,11 +291,7 @@ class ToolInvoker:
                 model_text="Tool error: invalid tool result",
             )
 
-        try:
-            return await self._record_success(call, normalized, _elapsed_ms(start))
-        except BaseException:
-            await self._publish_processing_failure(call, "Tool result processing failed")
-            raise
+        return await self._record_success(call, normalized, _elapsed_ms(start))
 
     async def _record_error(
         self,
@@ -334,13 +330,18 @@ class ToolInvoker:
         """Record a successful call, fire ``after_tool_call`` and result-transform
         hooks, persist the result to the idempotency ledger, and return it.
         """
-        await self._usage.record_success(call.identity)
-        self._log_call(logging.INFO, "tool call ended", call, ms=latency_ms)
-        await self._hook_manager.run_after_tool_call(
-            current_run_context.get(),
-            self._call_context(call, "succeeded", latency_ms),
-        )
-        normalized = await self._transform_result(call, result, latency_ms)
+        try:
+            await self._usage.record_success(call.identity)
+            self._log_call(logging.INFO, "tool call ended", call, ms=latency_ms)
+            await self._hook_manager.run_after_tool_call(
+                current_run_context.get(),
+                self._call_context(call, "succeeded", latency_ms),
+            )
+            normalized = await self._transform_result(call, result, latency_ms)
+        except BaseException:
+            await self._publish_processing_failure(call, "Tool result processing failed")
+            raise
+
         await self._execution_manager.finish_execution(
             call.exec_id,
             status=ToolExecutionStatus.SUCCEEDED,
