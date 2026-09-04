@@ -21,6 +21,7 @@ from typing import Any, ClassVar
 import pytest
 from click.testing import CliRunner
 
+from agent_engine.approvals.models import RunStatus
 from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks import RunContext
 from agentctl.diagnostics import ValidationResult
@@ -261,7 +262,7 @@ def test_extra_chat_tool_default_user_id(tmp_path: Path, monkeypatch: pytest.Mon
 
     asyncio.run(server._handle_chat("hello", "sess-1", ""))
 
-    assert sent == [("hello", "ext:3477cdab157537bd83c95a3c0b0e4883")]
+    assert sent == [("hello", "anon:local-user")]
 
 
 def test_extra_chat_tool_returns_used_tools(
@@ -318,6 +319,140 @@ def test_extra_chat_tool_returns_used_tools(
     ]
 
 
+def test_extra_chat_tool_exposes_completed_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A normal response should include status=completed and no pending_approval."""
+    spec = _write_spec(tmp_path)
+
+    from agent_manager.domain.identity import Principal
+
+    async def fake_send(
+        self_inner: object,
+        conversation_id: str,
+        text: str,
+        principal: Principal,
+    ) -> RunResult:
+        return RunResult(
+            system_name="Fake System",
+            visited=["fake_agent"],
+            answer="done",
+        )
+
+    from agent_manager.application import ConversationService
+
+    monkeypatch.setattr(ConversationService, "send", fake_send)
+
+    from agentctl.mcp_serve import create_server
+
+    server = create_server(str(spec), None)
+    server._repositories = _FakeRepositories()  # type: ignore[assignment]
+    server._engine = FakeRuntimeEngine(Path("."))  # type: ignore[assignment]
+    server._service = ConversationService(server._engine, _FakeRepository())  # type: ignore[arg-type]
+
+    result = asyncio.run(server._handle_chat("hi", "sess-1", "u1"))
+
+    assert result["status"] == "completed"
+    assert "pending_approval" not in result
+    assert result["answer"] == "done"
+
+
+def test_extra_chat_tool_exposes_pending_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the run suspends at an approval, the response must expose it."""
+    spec = _write_spec(tmp_path)
+
+    from agent_engine.engine.types import PendingApproval
+    from agent_manager.domain.identity import Principal
+
+    pending = PendingApproval(
+        run_id="run-1",
+        approval_id="approval-1",
+        agent_id="fake_agent",
+        tool_name="dangerous_tool",
+        description="do something risky",
+        provider="local",
+        arguments={"x": 1},
+    )
+
+    async def fake_send(
+        self_inner: object,
+        conversation_id: str,
+        text: str,
+        principal: Principal,
+    ) -> RunResult:
+        return RunResult(
+            system_name="Fake System",
+            visited=["fake_agent"],
+            answer="",
+            status=RunStatus.PENDING_APPROVAL,
+            pending_approval=pending,
+        )
+
+    from agent_manager.application import ConversationService
+
+    monkeypatch.setattr(ConversationService, "send", fake_send)
+
+    from agentctl.mcp_serve import create_server
+
+    server = create_server(str(spec), None)
+    server._repositories = _FakeRepositories()  # type: ignore[assignment]
+    server._engine = FakeRuntimeEngine(Path("."))  # type: ignore[assignment]
+    server._service = ConversationService(server._engine, _FakeRepository())  # type: ignore[arg-type]
+
+    result = asyncio.run(server._handle_chat("do it", "sess-1", "u1"))
+
+    assert result["status"] == "pending_approval"
+    assert result["answer"] == ""
+    assert result["pending_approval"]["run_id"] == "run-1"
+    assert result["pending_approval"]["approval_id"] == "approval-1"
+    assert result["pending_approval"]["tool_name"] == "dangerous_tool"
+
+
+def test_decide_approval_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The decide_approval tool should delegate to ConversationService."""
+    spec = _write_spec(tmp_path)
+
+    from agent_engine.engine.types import RunResult as _RunResult
+    from agent_manager.domain.identity import Principal
+
+    decide_calls: list[tuple[str, str, str, str]] = []
+
+    async def fake_decide(
+        self_inner: object,
+        conversation_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+        principal: Principal,
+    ) -> _RunResult:
+        decide_calls.append((conversation_id, run_id, approval_id, decision))
+        return _RunResult(
+            system_name="Fake System",
+            visited=["fake_agent"],
+            answer="approved-result",
+            status=RunStatus.COMPLETED,
+        )
+
+    from agent_manager.application import ConversationService
+
+    monkeypatch.setattr(ConversationService, "decide_approval", fake_decide)
+
+    from agentctl.mcp_serve import create_server
+
+    server = create_server(str(spec), None)
+    server._repositories = _FakeRepositories()  # type: ignore[assignment]
+    server._engine = FakeRuntimeEngine(Path("."))  # type: ignore[assignment]
+    server._service = ConversationService(server._engine, _FakeRepository())  # type: ignore[arg-type]
+
+    result = asyncio.run(server._handle_decide_approval("sess-1", "run-1", "approval-1", "approve"))
+
+    assert result["status"] == "completed"
+    assert result["answer"] == "approved-result"
+    assert decide_calls == [("sess-1", "run-1", "approval-1", "allow_once")]
+
+
 def test_extra_chat_tool_response_is_json_serialisable(tmp_path: Path) -> None:
     """The dict shape returned by ``_handle_chat`` must round-trip through JSON."""
 
@@ -327,6 +462,7 @@ def test_extra_chat_tool_response_is_json_serialisable(tmp_path: Path) -> None:
     create_server(str(spec), None)  # construction must succeed
     payload = {
         "session_id": "abc",
+        "status": "completed",
         "answer": "hi",
         "visited": ["root"],
         "used_tools": [{"name": "echo", "provider": "local"}],
@@ -383,6 +519,8 @@ class _FakeRepositories:
     def __init__(self) -> None:
         self.conversations = _FakeRepository()
         self.session_approvals = object()
+        self.tool_usage = object()
+        self.runs = object()
 
     async def __aenter__(self) -> _FakeRepositories:
         return self
@@ -429,8 +567,6 @@ def test_mcp_client_can_call_extra_chat_over_stdio(
         "import sys\n"
         f"sys.path.insert(0, {str(src_path)!r})\n"
         f"sys.path.insert(0, {str(repo_root)!r})\n"
-        "from agent_manager.infrastructure.persistence.database import upgrade_database\n"
-        "upgrade_database()\n"
         "from tests.cli.test_mcp_serve_command import FakeRuntimeEngine\n"
         "import agentctl.mcp_serve as _mod\n"
         "_mod.LangGraphEngine = FakeRuntimeEngine\n"
