@@ -62,6 +62,7 @@ class ToolExecutionManager:
         status: str,
         result: str,
         structured: Any | None = None,
+        artifact: Any | None = None,
     ) -> None:
         if self._executions is not None:
             await self._executions.complete(
@@ -69,4 +70,5 @@ class ToolExecutionManager:
                 status=status,
                 result=result,
                 structured=structured,
+                artifact=artifact,
             )

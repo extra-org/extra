@@ -32,6 +32,7 @@ class InMemoryToolExecutionRepository(ToolExecutionRepository):
         status: str,
         result: str,
         structured: Any | None = None,
+        artifact: Any | None = None,
     ) -> None:
         async with self._lock:
             record = self._records.get(execution_id)
@@ -39,3 +40,4 @@ class InMemoryToolExecutionRepository(ToolExecutionRepository):
                 record.status = status
                 record.result = result
                 record.structured = structured
+                record.artifact = artifact

@@ -189,7 +189,7 @@ class ToolInvoker:
 
         cached = await self._cached_result(call)
         if cached is not None:
-            return cached
+            return cached.text
 
         return await self._execute(call)
 
@@ -239,7 +239,7 @@ class ToolInvoker:
             return blocked_message(exc)
         return None
 
-    async def _cached_result(self, call: _ToolCall) -> str | None:
+    async def _cached_result(self, call: _ToolCall) -> NormalizedToolResult | None:
         """Return a prior successful result for this exact call, if any.
 
         Guards against a second side effect when a graph re-entry after resume
@@ -260,7 +260,11 @@ class ToolInvoker:
             execution_id=call.exec_id,
         )
         await self._usage.record_success(call.identity)
-        return cached.result
+        return NormalizedToolResult(
+            text=cached.result,
+            structured=cached.structured,
+            artifact=getattr(cached, "artifact", None),
+        )
 
     async def _execute(self, call: _ToolCall) -> str:
         """Run the provider exactly once, wrapped in the idempotency ledger and the
@@ -326,23 +330,24 @@ class ToolInvoker:
             self._call_context(call, "succeeded", latency_ms),
         )
         normalized = normalize_tool_result(result)
-        result_text = await self._transform_result(call, normalized, latency_ms)
+        final_result = await self._transform_result(call, normalized, latency_ms)
         await self._execution_manager.finish_execution(
             call.exec_id,
             status="succeeded",
-            result=result_text,
-            structured=normalized.structured,
+            result=final_result.text,
+            structured=final_result.structured,
+            artifact=final_result.artifact,
         )
-        return result_text
+        return final_result.text
 
     async def _transform_result(
         self, call: _ToolCall, normalized: NormalizedToolResult, latency_ms: int
-    ) -> str:
+    ) -> NormalizedToolResult:
         """Let ``transform_tool_result`` hooks reshape the result (e.g. truncate
         oversized MCP output). The context is only built when such a hook exists.
         """
         if not self._hook_manager.has("transform_tool_result"):
-            return normalized.text
+            return normalized
         transformed = await self._hook_manager.run_transform_tool_result(
             current_run_context.get(),
             ToolResultContext(
@@ -356,7 +361,11 @@ class ToolInvoker:
                 latency_ms=latency_ms,
             ),
         )
-        return transformed.result
+        return NormalizedToolResult(
+            text=transformed.result,
+            structured=transformed.structured,
+            artifact=transformed.artifact,
+        )
 
     def _call_context(
         self,

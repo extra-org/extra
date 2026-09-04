@@ -228,6 +228,9 @@ class ToolCallContext:
     metadata: dict[str, object] = field(default_factory=dict)
 
 
+_UNSET = object()
+
+
 @dataclass(frozen=True)
 class ToolResultContext:
     """A successful tool call's result, passed to ``transform_tool_result`` hooks
@@ -255,10 +258,10 @@ class ToolResultContext:
     def with_result(
         self,
         result: str,
-        structured: Any | None = None,
-        artifact: Any | None = None,
+        structured: Any | None = _UNSET,
+        artifact: Any | None = _UNSET,
     ) -> ToolResultContext:
         """Return a copy with ``result`` replaced (immutable update)."""
-        st = structured if structured is not None else self.structured
-        art = artifact if artifact is not None else self.artifact
+        st = self.structured if structured is _UNSET else structured
+        art = self.artifact if artifact is _UNSET else artifact
         return dataclasses.replace(self, result=result, structured=st, artifact=art)

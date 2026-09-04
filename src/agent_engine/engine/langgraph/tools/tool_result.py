@@ -68,39 +68,36 @@ def normalize_tool_result(raw_result: Any) -> NormalizedToolResult:
                     structured = artifact["structuredContent"]
                 elif hasattr(artifact, "structuredContent"):
                     structured = artifact.structuredContent
-                elif isinstance(artifact, (dict, list)):
-                    structured = artifact
-                else:
-                    structured = artifact
         elif isinstance(raw_result, dict):
             artifact = raw_result.get("artifact")
             if "content" in raw_result:
                 text = _as_text(raw_result["content"])
             if "structuredContent" in raw_result:
                 structured = raw_result["structuredContent"]
+            elif isinstance(artifact, dict) and "structuredContent" in artifact:
+                structured = artifact["structuredContent"]
             elif "content" not in raw_result and "artifact" not in raw_result:
                 structured = raw_result
-
-            if not text and structured is not None:
-                try:
-                    text = json.dumps(structured)
-                except Exception:
-                    text = str(structured)
         elif is_dataclass(raw_result) and not isinstance(raw_result, type):
             structured = asdict(raw_result)
-            text = json.dumps(structured)
         elif hasattr(raw_result, "model_dump") and callable(raw_result.model_dump):
             structured = raw_result.model_dump()
-            text = json.dumps(structured)
         elif hasattr(raw_result, "dict") and callable(raw_result.dict):
             structured = raw_result.dict()
-            text = json.dumps(structured)
+        elif isinstance(raw_result, (bytes, bytearray)):
+            text = raw_result.decode("utf-8", errors="replace")
         else:
-            text = str(raw_result) if raw_result is not None else ""
+            text = ""
     except Exception as exc:
         logger.warning("Failed to extract structured content from tool result: %s", exc)
-        text = _as_text(raw_result) if raw_result is not None else ""
+        text = ""
         structured = None
         artifact = None
+
+    if not text.strip() and structured is not None:
+        try:
+            text = json.dumps(structured, default=str)
+        except Exception:
+            text = ""
 
     return NormalizedToolResult(text=text, structured=structured, artifact=artifact)

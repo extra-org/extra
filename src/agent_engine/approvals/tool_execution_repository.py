@@ -24,5 +24,6 @@ class ToolExecutionRepository(ABC):
         status: str,
         result: str,
         structured: Any | None = None,
+        artifact: Any | None = None,
     ) -> None:
         raise NotImplementedError

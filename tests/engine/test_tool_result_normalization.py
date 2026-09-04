@@ -97,7 +97,7 @@ def test_normalize_local_dataclass() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execution_manager_persists_and_restores_structured_result() -> None:
+async def test_execution_manager_persists_and_restores_structured_and_artifact() -> None:
     repo = InMemoryToolExecutionRepository()
     manager = ToolExecutionManager(execution_repository=repo)
 
@@ -110,15 +110,40 @@ async def test_execution_manager_persists_and_restores_structured_result() -> No
         status="succeeded",
         result="Found items",
         structured={"items": ["a", "b"]},
+        artifact={"meta": "v1"},
     )
 
     record = await manager.already_executed(exec_id)
     assert record is not None
     assert record.result == "Found items"
     assert record.structured == {"items": ["a", "b"]}
+    assert record.artifact == {"meta": "v1"}
 
 
-def test_tool_result_context_with_result_preserves_structured() -> None:
+def test_normalize_structured_only_tool_message() -> None:
+    msg = ToolMessage(
+        content=[],
+        tool_call_id="call_structured_only",
+        artifact={"structuredContent": {"balance": 1250}},
+    )
+    res = normalize_tool_result(msg)
+    assert res.structured == {"balance": 1250}
+    assert res.text == '{"balance": 1250}'
+
+
+def test_normalize_auxiliary_artifact_not_conflated_with_structured() -> None:
+    msg = ToolMessage(
+        content="Generated report PDF",
+        tool_call_id="call_aux_artifact",
+        artifact={"file_id": "abc_123", "mime_type": "application/pdf"},
+    )
+    res = normalize_tool_result(msg)
+    assert res.text == "Generated report PDF"
+    assert res.structured is None
+    assert res.artifact == {"file_id": "abc_123", "mime_type": "application/pdf"}
+
+
+def test_tool_result_context_with_result_preserves_and_clears_structured() -> None:
     ctx = ToolResultContext(
         agent_id="a1",
         tool_name="t1",
@@ -128,8 +153,14 @@ def test_tool_result_context_with_result_preserves_structured() -> None:
         artifact={"meta": "v1"},
     )
 
-    # Truncate text
+    # Truncate text while preserving structured and artifact
     updated = ctx.with_result("Truncated text")
     assert updated.result == "Truncated text"
     assert updated.structured == {"data": [1, 2, 3]}
     assert updated.artifact == {"meta": "v1"}
+
+    # Explicitly clear structured and artifact
+    cleared = ctx.with_result("Cleared text", structured=None, artifact=None)
+    assert cleared.result == "Cleared text"
+    assert cleared.structured is None
+    assert cleared.artifact is None
