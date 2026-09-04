@@ -13,6 +13,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_manager.application import ConversationService
 from agent_manager.composition import ApplicationRepositories, application_repositories
@@ -24,8 +25,13 @@ DEFAULT_USER_ID = "local-user"
 
 
 def _principal_for(user_id: str) -> Principal:
-    """Build a host-verified :class:`Principal` for the caller-supplied id."""
-    return Principal.external(user_id)
+    """Build an anonymous :class:`Principal` for the caller-supplied id.
+
+    The MCP caller is an external process connected over stdio, not the host
+    product that vouches for real identities. ``user_id`` is therefore treated
+    as an opaque conversation label rather than a host-verified external id.
+    """
+    return Principal.anonymous(user_id)
 
 
 class ExtraMCPServer:
@@ -43,10 +49,10 @@ class ExtraMCPServer:
         self._engine: LangGraphEngine | None = None
         self._service: ConversationService | None = None
 
-        self._register_tool()
+        self._register_tools()
 
-    def _register_tool(self) -> None:
-        """Register the single ``extra_chat`` tool, capturing ``self``."""
+    def _register_tools(self) -> None:
+        """Register ``extra_chat`` and ``decide_approval`` tools, capturing ``self``."""
 
         @self._server.tool()
         async def extra_chat(
@@ -64,11 +70,31 @@ class ExtraMCPServer:
             """
             return await self._handle_chat(message, session_id, user_id)
 
+        @self._server.tool()
+        async def decide_approval(
+            session_id: str,
+            run_id: str,
+            approval_id: str,
+            decision: str = "approve",
+        ) -> dict[str, Any]:
+            """Approve or reject a pending tool-call approval.
+
+            ``session_id`` identifies the conversation. ``run_id`` and
+            ``approval_id`` come from the ``pending_approval`` block returned
+            by ``extra_chat`` when the run is suspended. ``decision`` accepts
+            ``approve`` (allow this invocation once), ``allow_for_session``
+            (allow and stop asking for this tool in this conversation), and
+            ``reject`` (do not run; store nothing).
+            """
+            return await self._handle_decide_approval(session_id, run_id, approval_id, decision)
+
     async def _setup(self) -> None:
         assert self._repositories is not None
         engine = LangGraphEngine(
             self._base_dir,
             session_approval_repository=self._repositories.session_approvals,
+            tool_usage_repository=self._repositories.tool_usage,
+            run_repository=self._repositories.runs,
         )
         # Assign the engine before ``build`` so a build failure still
         # triggers ``close`` in the outer ``run`` cleanup block.
@@ -83,6 +109,7 @@ class ExtraMCPServer:
             snapshot_ttl_seconds=self._settings.snapshot_ttl_seconds,
             system_name=self._spec.meta.name,
             config_path=str(self._config_path),
+            run_repository=self._repositories.runs,
         )
         await self._server.run_stdio_async()
 
@@ -96,8 +123,43 @@ class ExtraMCPServer:
         if not effective_session_id:
             effective_session_id = await service.create(principal)
         result = await service.send(effective_session_id, message, principal)
-        return {
+        payload: dict[str, Any] = {
             "session_id": effective_session_id,
+            "status": result.status.value,
+            "answer": result.answer,
+            "visited": list(result.visited),
+            "used_tools": [
+                {k: v for k, v in asdict(tool).items() if v is not None}
+                for tool in result.used_tools
+            ],
+        }
+        if result.pending_approval is not None:
+            payload["pending_approval"] = asdict(result.pending_approval)
+        return payload
+
+    async def _handle_decide_approval(
+        self,
+        session_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+    ) -> dict[str, Any]:
+        service = self._service
+        if service is None:
+            raise RuntimeError("MCP server has not finished initializing")
+        effective_user_id = DEFAULT_USER_ID
+        principal = _principal_for(effective_user_id)
+        parsed_decision = parse_decision(decision, default=ApprovalDecision.DENY)
+        result = await service.decide_approval(
+            session_id,
+            run_id,
+            approval_id,
+            parsed_decision,
+            principal,
+        )
+        return {
+            "session_id": session_id,
+            "status": result.status.value,
             "answer": result.answer,
             "visited": list(result.visited),
             "used_tools": [

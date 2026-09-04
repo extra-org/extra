@@ -293,6 +293,9 @@ def mcp() -> None:
 def mcp_serve(config: str, env: str | None) -> None:
     """Run the Extra agent system as an MCP server (stdio transport)."""
     load_env(config, env)
+    from agent_manager.infrastructure.persistence.database import upgrade_database
+
+    upgrade_database()
     from agentctl.diagnostics import format_validation_report, validate_spec
 
     validation = validate_spec(config)
