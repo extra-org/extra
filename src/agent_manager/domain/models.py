@@ -108,6 +108,7 @@ class ConversationMessage:
     status: str = "succeeded"
     error_type: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    feedback: str | None = None
 
 
 @dataclass(frozen=True)

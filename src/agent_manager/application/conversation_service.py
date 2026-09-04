@@ -167,6 +167,16 @@ class ConversationService:
         used = await self._repository.get_token_usage(conversation_id)
         return TokenBudgetUsage.from_totals(used, self._max_tokens)
 
+    async def set_message_feedback(
+        self,
+        conversation_id: str,
+        message_id: str,
+        feedback: str,
+        principal: Principal,
+    ) -> ConversationMessage | None:
+        await self._authorize(conversation_id, principal)
+        return await self._repository.update_message_feedback(message_id, feedback)
+
     async def list_conversations(
         self, principal: Principal, page: PageRequest | None = None
     ) -> Page[ConversationSession]:
