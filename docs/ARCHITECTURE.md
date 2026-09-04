@@ -604,8 +604,14 @@ system (`agent_engine/runtime/hooks/`,
 start/stop, run start/end/error, tool error, and `transform_tool_result` (lets
 trusted code truncate/redact/normalize a tool result before it reaches the
 model) — for auth, policy, audit, and context enrichment, distinct from
-LLM-invoked tools. Per-tool `input_policy` (trusted parameter injection) is
-still not implemented — see §11.
+LLM-invoked tools. Tool results cross the runtime through a provider-independent
+normalized value whose model text, structured data, and safe artifact metadata
+remain separate and survive versioned, concurrency-safe idempotent replay. Only
+the text projection enters the LangChain conversation; structured values remain
+available to trusted hooks and the execution ledger (see
+[`ADR 0004`](adr/0004-normalized-structured-tool-results.md)). Per-tool
+`input_policy` (trusted parameter injection) is still not implemented — see
+§11.
 
 **Shared tool usage (✅ done, not in the original task list):**
 `agent_engine/tool_usage/` owns execution metadata: a `ToolUsageRepository` port

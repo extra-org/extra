@@ -18,6 +18,7 @@ from agent_engine.runtime.execution_limiter import (
     log_limit,
 )
 from agent_engine.runtime.streaming import current_streams
+from agent_engine.runtime.tool_results import NormalizedToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ async def run_tool_loop(
     model: Any,
     context: ModelContext,
     node_path: str,
-    invoke_tool: Callable[[dict[str, Any]], Awaitable[str]],
+    invoke_tool: Callable[[dict[str, Any]], Awaitable[str | NormalizedToolResult]],
     *,
     refresh_execution_context: ExecutionContextRefresher | None = None,
 ) -> Any:
@@ -68,21 +69,28 @@ async def run_tool_loop(
         context.append(response)
         for tool_call in response.tool_calls:
             logger.debug(
-                "[%s] ← tool_call: %s(%s)",
+                "[%s] ← tool_call: %s(arguments=%d)",
                 node_path,
                 tool_call["name"],
-                tool_call["args"],
+                len(tool_call.get("args") or {}),
             )
-            content = await invoke_tool(tool_call)
+            raw_result = await invoke_tool(tool_call)
+            result = (
+                raw_result
+                if isinstance(raw_result, NormalizedToolResult)
+                else NormalizedToolResult.text_only(raw_result)
+            )
             logger.debug(
-                "[%s] → tool_result[%s]: %s",
+                "[%s] → tool_result[%s] chars=%d structured=%s artifact=%s",
                 node_path,
                 tool_call["name"],
-                content[:300],
+                len(result.text),
+                result.has_structured,
+                result.has_artifact,
             )
             context.append(
                 ToolMessage(
-                    content=content,
+                    content=result.text,
                     tool_call_id=tool_call["id"],
                     name=tool_call["name"],
                 )

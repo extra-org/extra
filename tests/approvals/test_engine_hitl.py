@@ -28,6 +28,13 @@ from agent_engine.approvals.in_memory_approval_repository import InMemoryApprova
 from agent_engine.approvals.in_memory_session_approval_repository import (
     InMemorySessionApprovalRepository,
 )
+from agent_engine.approvals.in_memory_tool_execution_repository import (
+    InMemoryToolExecutionRepository,
+)
+from agent_engine.approvals.tool_execution_manager import (
+    ToolExecutionManager,
+    execution_id_for,
+)
 from agent_engine.core.spec import (
     AgentSpec,
     BasePromptSet,
@@ -40,6 +47,7 @@ from agent_engine.core.spec import (
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runtime.hooks import RunContext
+from agent_engine.tool_usage.models import stable_tool_call_id
 
 _MODEL = ModelConfig(provider="fake", name="fake", temperature=None)
 
@@ -238,6 +246,18 @@ def _write_counting_tool(base_dir: Path, tool_id: str, counter: Path) -> None:
     )
 
 
+def _write_structured_counting_tool(base_dir: Path, tool_id: str, counter: Path) -> None:
+    tools_dir = base_dir / "plugins" / "tools"
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    (tools_dir / f"{tool_id}.py").write_text(
+        f"def {tool_id}(message: str) -> dict:\n"
+        f"    with open({str(counter)!r}, 'a') as f:\n"
+        "        f.write('x')\n"
+        "    return {'status': 'sent', 'message': message}\n",
+        encoding="utf-8",
+    )
+
+
 def _spec(tool_id: str, *, auto_mode: bool = False) -> SystemSpec:
     agent = AgentSpec(
         id="writer",
@@ -318,6 +338,41 @@ async def test_allow_once_resumes_same_run_and_executes_once(tmp_path: Path) -> 
     assert resumed.visited == ["writer"]  # same run, agent not re-selected as a new route
     assert (resumed.input_tokens, resumed.output_tokens) == (6, 3)
     assert recovered == resumed
+
+
+async def test_hitl_resume_persists_structured_local_result(tmp_path: Path) -> None:
+    counter = tmp_path / "calls.log"
+    tool_name = "send_structured"
+    _write_structured_counting_tool(tmp_path, tool_name, counter)
+    manager = ToolExecutionManager(execution_repository=InMemoryToolExecutionRepository())
+    async with LangGraphEngine(
+        tmp_path,
+        model_factory=_factory,
+        execution_manager=manager,
+    ) as engine:
+        await engine.build(_spec(tool_name))
+        pending = await engine.run("hi", context=RunContext(run_id="run-structured"))
+        assert pending.pending_approval is not None
+
+        resumed = await engine.resume(
+            "run-structured",
+            pending.pending_approval.approval_id,
+            "allow once",
+        )
+
+    tool_call_id = stable_tool_call_id(
+        "run-structured",
+        "writer",
+        "local",
+        None,
+        tool_name,
+        {"message": "go"},
+    )
+    persisted = await manager.restored_result(execution_id_for(tool_call_id))
+    assert resumed.status == "completed"
+    assert _executions(counter) == 1
+    assert persisted is not None
+    assert persisted.structured == {"message": "go", "status": "sent"}
 
 
 async def test_retrying_first_decision_recovers_second_pending_approval(tmp_path: Path) -> None:

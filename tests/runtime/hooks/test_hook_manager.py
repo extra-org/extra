@@ -398,9 +398,19 @@ def test_has_reports_declared_points() -> None:
 async def test_transform_tool_result_returns_modified_result() -> None:
     mgr = _manager(HookSpec("transform_tool_result", f"{_FIX}:truncate_tool_result"))
     out = await mgr.run_transform_tool_result(
-        None, ToolResultContext("a", "t", "mcp", result="abcdefgh")
+        None,
+        ToolResultContext(
+            "a",
+            "t",
+            "mcp",
+            result="abcdefgh",
+            structured_result={"count": 2},
+            artifact={"source": "billing"},
+        ),
     )
     assert out.result == "abc"  # truncated to the configured limit
+    assert out.structured_result == {"count": 2}
+    assert out.artifact == {"source": "billing"}
 
 
 async def test_transform_tool_result_warn_failure_keeps_original() -> None:

@@ -12,25 +12,28 @@ model loop, and lets the invoker be constructed and tested on its own.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.invocation import ToolInvocation
+from agent_engine.approvals.models import ToolExecutionStatus
 from agent_engine.approvals.tool_execution_manager import (
+    ToolExecutionClaim,
     ToolExecutionManager,
     execution_id_for,
 )
 from agent_engine.core.spec import AgentSpec
 from agent_engine.engine.langgraph.tools.agent_tool_binding import AgentToolBinding
 from agent_engine.engine.langgraph.tools.tool_gate import DenyTool, ExecuteTool, ToolGate
-from agent_engine.engine.langgraph.tools.tool_result import (
-    NormalizedToolResult,
+from agent_engine.engine.langgraph.tools.tool_result_normalizer import (
+    ProviderToolResultError,
+    ToolResultNormalizationError,
     normalize_tool_result,
 )
 from agent_engine.logging_config import log
@@ -49,6 +52,7 @@ from agent_engine.runtime.hooks import (
 )
 from agent_engine.runtime.hooks.models import ToolStatus
 from agent_engine.runtime.tool_models import ToolProviderName
+from agent_engine.runtime.tool_results import NormalizedToolResult
 from agent_engine.tool_usage.models import ToolCallIdentity, stable_tool_call_id
 from agent_engine.tool_usage.tracker import ToolUsageTracker
 
@@ -99,35 +103,6 @@ def _elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
 
-def _extract_result_text(result: object) -> str:
-    """Turn a tool's return value into the text the model reads.
-
-    A ``response_format="content_and_artifact"`` tool (every MCP tool) returns
-    ``ToolMessage.content`` as either a plain string or a list of MCP content
-    blocks (``{"type": "text", "text": ...}``) rather than a single string.
-    ``str()`` on that list produces its Python repr — visible punctuation and
-    key names — instead of the text itself, so each shape needs its own
-    handling rather than one blind stringification.
-    """
-    content = result.content if isinstance(result, ToolMessage) else result
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(_block_text(block) for block in content)
-    return str(content)
-
-
-def _block_text(block: object) -> str:
-    """Read the text out of one MCP content block (each block is a flat dict —
-    none of the standard block types nest another list of blocks inside).
-    """
-    if not isinstance(block, dict):
-        return str(block)
-    if block.get("type") == "text":
-        return str(block.get("text", ""))
-    return f"[unsupported {block.get('type', 'content')} block]"
-
-
 class ToolInvoker:
     """Runs one agent's tool calls: gate, execute, record.
 
@@ -156,11 +131,11 @@ class ToolInvoker:
         self._usage = usage_tracker
         self._system_namespace = system_namespace
 
-    async def invoke(self, tc: dict[str, Any]) -> str:
+    async def invoke(self, tc: dict[str, Any]) -> NormalizedToolResult:
         """Resolve, gate, and execute one tool call for both local and MCP tools.
 
         The pipeline short-circuits at the first step that stops the call, each
-        returning a model-facing string:
+        returning a normalized result whose text is model-facing:
 
         1. resolve the tool (unknown name → error);
         2. enforce execution limits (blocked → controlled message);
@@ -171,25 +146,21 @@ class ToolInvoker:
         5. execute with the ``before/after/on_error`` lifecycle hooks.
 
         Every outcome that reached a decision — executed, failed, or denied — is
-        recorded against the run before the text is returned.
+        recorded against the run before the result is returned.
         """
         tool = self._binding.get(tc["name"])
         if tool is None:
-            return f"Unknown tool: {tc['name']}"
+            return NormalizedToolResult.text_only(f"Unknown tool: {tc['name']}")
         call = self._describe_call(tool, tc)
 
         blocked = self._enforce_limits(call)
         if blocked is not None:
-            return blocked
+            return NormalizedToolResult.text_only(blocked)
 
         gate = await self._gate_tool_call(call)
         if isinstance(gate, DenyTool):
             await self._usage.record_denied(call.identity)
-            return gate.message
-
-        cached = await self._cached_result(call)
-        if cached is not None:
-            return cached.text
+            return NormalizedToolResult.text_only(gate.message)
 
         return await self._execute(call)
 
@@ -239,17 +210,10 @@ class ToolInvoker:
             return blocked_message(exc)
         return None
 
-    async def _cached_result(self, call: _ToolCall) -> NormalizedToolResult | None:
-        """Return a prior successful result for this exact call, if any.
-
-        Guards against a second side effect when a graph re-entry after resume
-        replays the node with the same ``tool_call_id`` (the primary
-        duplicate-execution protection). Re-recording the same identity is an
-        upsert, so the replay does not add a second usage record either.
-        """
-        cached = await self._execution_manager.already_executed(call.exec_id)
-        if cached is None or cached.result is None:
-            return None
+    async def _replay(self, call: _ToolCall, claim: ToolExecutionClaim) -> NormalizedToolResult:
+        """Return the terminal result published by another execution owner."""
+        if claim.result is None or claim.status is None:
+            raise RuntimeError("replayed tool execution has no terminal result")
         log(
             logger,
             logging.INFO,
@@ -259,37 +223,41 @@ class ToolInvoker:
             tool_call_id=call.tool_call_id,
             execution_id=call.exec_id,
         )
-        await self._usage.record_success(call.identity)
-        return NormalizedToolResult(
-            text=cached.result,
-            structured=cached.structured,
-            artifact=getattr(cached, "artifact", None),
-        )
+        if claim.status == ToolExecutionStatus.SUCCEEDED:
+            await self._usage.record_success(call.identity)
+        else:
+            await self._usage.record_failure(call.identity, error=claim.result.text)
+        return claim.result
 
-    async def _execute(self, call: _ToolCall) -> str:
-        """Run the provider exactly once, wrapped in the idempotency ledger and the
-        ``before_tool_call`` hook, dispatching to the success or error recorder.
-        """
-        await self._execution_manager.begin_execution(
+    async def _execute(self, call: _ToolCall) -> NormalizedToolResult:
+        """Claim, run, normalize, and publish one logical tool invocation."""
+        claim = await self._execution_manager.claim_execution(
             call.exec_id,
             tool_call_id=call.tool_call_id,
             run_id=call.run_id,
             tool_name=call.name,
         )
+        if not claim.should_execute:
+            return await self._replay(call, claim)
+
         self._log_call(logging.INFO, "tool call started", call)
-        await self._hook_manager.run_before_tool_call(
-            current_run_context.get(),
-            ToolRequestContext(
-                agent_id=self._spec.id,
-                tool_name=call.name,
-                provider=call.provider,
-                server_id=call.server_id,
-            ),
-        )
+        try:
+            await self._hook_manager.run_before_tool_call(
+                current_run_context.get(),
+                ToolRequestContext(
+                    agent_id=self._spec.id,
+                    tool_name=call.name,
+                    provider=call.provider,
+                    server_id=call.server_id,
+                ),
+            )
+        except BaseException:
+            await self._publish_processing_failure(call, "Tool execution blocked before invocation")
+            raise
 
         start = time.perf_counter()
         try:
-            result = await call.tool.ainvoke(
+            provider_result = await call.tool.ainvoke(
                 {
                     "type": "tool_call",
                     "id": call.tool_call_id,
@@ -297,16 +265,53 @@ class ToolInvoker:
                     "args": call.args,
                 }
             )
+        except asyncio.CancelledError:
+            await self._publish_processing_failure(call, "Tool execution was cancelled")
+            raise
         except Exception as exc:
             return await self._record_error(call, exc, _elapsed_ms(start))
-        return await self._record_success(call, result, _elapsed_ms(start))
+        except BaseException:
+            await self._publish_processing_failure(call, "Tool execution was interrupted")
+            raise
 
-    async def _record_error(self, call: _ToolCall, exc: Exception, latency_ms: int) -> str:
+        try:
+            normalized = normalize_tool_result(provider_result)
+        except ProviderToolResultError as exc:
+            return await self._record_error(
+                call,
+                exc,
+                _elapsed_ms(start),
+                model_text=exc.model_text,
+            )
+        except ToolResultNormalizationError as exc:
+            return await self._record_error(
+                call,
+                exc,
+                _elapsed_ms(start),
+                model_text="Tool error: invalid tool result",
+            )
+
+        return await self._record_success(call, normalized, _elapsed_ms(start))
+
+    async def _record_error(
+        self,
+        call: _ToolCall,
+        exc: Exception,
+        latency_ms: int,
+        *,
+        model_text: str | None = None,
+    ) -> NormalizedToolResult:
         """Record a failed call, fire ``on_tool_error``, and return the error text.
 
         The failure is returned (not raised) so the model can read it and recover.
         """
         error = str(exc)[:200]
+        result = NormalizedToolResult.text_only(model_text or f"Tool error: {exc}")
+        await self._execution_manager.finish_execution(
+            call.exec_id,
+            status=ToolExecutionStatus.FAILED,
+            result=result,
+        )
         await self._usage.record_failure(call.identity, error=error)
         self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms, error=error)
 
@@ -314,56 +319,71 @@ class ToolInvoker:
             current_run_context.get(),
             self._call_context(call, "failed", latency_ms, error=error),
         )
-        await self._execution_manager.finish_execution(
-            call.exec_id, status="failed", result=f"Tool error: {exc}"
-        )
-        return f"Tool error: {exc}"
+        return result
 
-    async def _record_success(self, call: _ToolCall, result: object, latency_ms: int) -> str:
+    async def _record_success(
+        self,
+        call: _ToolCall,
+        result: NormalizedToolResult,
+        latency_ms: int,
+    ) -> NormalizedToolResult:
         """Record a successful call, fire ``after_tool_call`` and result-transform
         hooks, persist the result to the idempotency ledger, and return it.
         """
-        await self._usage.record_success(call.identity)
-        self._log_call(logging.INFO, "tool call ended", call, ms=latency_ms)
-        await self._hook_manager.run_after_tool_call(
-            current_run_context.get(),
-            self._call_context(call, "succeeded", latency_ms),
-        )
-        normalized = normalize_tool_result(result)
-        final_result = await self._transform_result(call, normalized, latency_ms)
+        try:
+            await self._usage.record_success(call.identity)
+            self._log_call(logging.INFO, "tool call ended", call, ms=latency_ms)
+            await self._hook_manager.run_after_tool_call(
+                current_run_context.get(),
+                self._call_context(call, "succeeded", latency_ms),
+            )
+            normalized = await self._transform_result(call, result, latency_ms)
+        except BaseException:
+            await self._publish_processing_failure(call, "Tool result processing failed")
+            raise
+
         await self._execution_manager.finish_execution(
             call.exec_id,
-            status="succeeded",
-            result=final_result.text,
-            structured=final_result.structured,
-            artifact=final_result.artifact,
+            status=ToolExecutionStatus.SUCCEEDED,
+            result=normalized,
         )
-        return final_result.text
+        return normalized
+
+    async def _publish_processing_failure(self, call: _ToolCall, message: str) -> None:
+        """Unblock duplicate callers without exposing exception payloads."""
+        await self._execution_manager.finish_execution(
+            call.exec_id,
+            status=ToolExecutionStatus.FAILED,
+            result=NormalizedToolResult.text_only(message),
+        )
 
     async def _transform_result(
-        self, call: _ToolCall, normalized: NormalizedToolResult, latency_ms: int
+        self,
+        call: _ToolCall,
+        result: NormalizedToolResult,
+        latency_ms: int,
     ) -> NormalizedToolResult:
         """Let ``transform_tool_result`` hooks reshape the result (e.g. truncate
         oversized MCP output). The context is only built when such a hook exists.
         """
         if not self._hook_manager.has("transform_tool_result"):
-            return normalized
+            return result
         transformed = await self._hook_manager.run_transform_tool_result(
             current_run_context.get(),
             ToolResultContext(
                 agent_id=self._spec.id,
                 tool_name=call.name,
                 provider=call.provider,
-                result=normalized.text,
-                structured=normalized.structured,
-                artifact=normalized.artifact,
+                result=result.text,
+                structured_result=result.structured,
+                artifact=result.artifact,
                 server_id=call.server_id,
                 latency_ms=latency_ms,
             ),
         )
         return NormalizedToolResult(
             text=transformed.result,
-            structured=transformed.structured,
+            structured=transformed.structured_result,
             artifact=transformed.artifact,
         )
 
