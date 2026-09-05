@@ -272,9 +272,7 @@ class ToolResultContext:
         """Return a copy with ``result`` replaced (immutable update)."""
         st = self.structured_result if structured is _UNSET else structured
         art = self.artifact if artifact is _UNSET else artifact
-        return dataclasses.replace(
-            self, result=result, structured_result=st, artifact=art
-        )
+        return dataclasses.replace(self, result=result, structured_result=st, artifact=art)
 
     def with_structured_result(self, structured_result: JsonValue | None) -> ToolResultContext:
         """Return a copy with the machine-readable result replaced."""

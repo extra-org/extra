@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from agent_engine.approvals.models import ToolExecutionRecord, ToolExecutionStatus
 from agent_engine.runtime.tool_results import PersistedToolResult

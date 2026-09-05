@@ -10,11 +10,13 @@ from langchain_core.messages import ToolMessage
 from agent_engine.approvals.in_memory_tool_execution_repository import (
     InMemoryToolExecutionRepository,
 )
+from agent_engine.approvals.models import ToolExecutionStatus
 from agent_engine.approvals.tool_execution_manager import ToolExecutionManager
 from agent_engine.engine.langgraph.tools.tool_result import (
     normalize_tool_result,
 )
 from agent_engine.runtime.hooks.models import ToolResultContext
+from agent_engine.runtime.tool_results import NormalizedToolResult
 
 
 def test_normalize_plain_string_tool() -> None:
@@ -105,19 +107,22 @@ async def test_execution_manager_persists_and_restores_structured_and_artifact()
     await manager.begin_execution(
         exec_id, tool_call_id="tc_1", run_id="run_1", tool_name="test_tool"
     )
-    await manager.finish_execution(
-        exec_id,
-        status="succeeded",
-        result="Found items",
+    result = NormalizedToolResult(
+        text="Found items",
         structured={"items": ["a", "b"]},
         artifact={"meta": "v1"},
     )
+    await manager.finish_execution(
+        exec_id,
+        status=ToolExecutionStatus.SUCCEEDED,
+        result=result,
+    )
 
-    record = await manager.already_executed(exec_id)
-    assert record is not None
-    assert record.result == "Found items"
-    assert record.structured == {"items": ["a", "b"]}
-    assert record.artifact == {"meta": "v1"}
+    restored = await manager.restored_result(exec_id)
+    assert restored is not None
+    assert restored.text == "Found items"
+    assert restored.structured == {"items": ["a", "b"]}
+    assert restored.artifact == {"meta": "v1"}
 
 
 def test_normalize_structured_only_tool_message() -> None:
@@ -149,7 +154,7 @@ def test_tool_result_context_with_result_preserves_and_clears_structured() -> No
         tool_name="t1",
         provider="mcp",
         result="Long raw output text",
-        structured={"data": [1, 2, 3]},
+        structured_result={"data": [1, 2, 3]},
         artifact={"meta": "v1"},
     )
 
