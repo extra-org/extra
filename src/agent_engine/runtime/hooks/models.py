@@ -230,6 +230,9 @@ class ToolCallContext:
     metadata: dict[str, object] = field(default_factory=dict)
 
 
+_UNSET = object()
+
+
 @dataclass(frozen=True)
 class ToolResultContext:
     """A successful tool call's result, passed to ``transform_tool_result`` hooks
@@ -250,15 +253,26 @@ class ToolResultContext:
     tool_name: str
     provider: ToolProvider
     result: str
+    structured_result: JsonValue | None = None
+    artifact: JsonValue | None = None
     server_id: str | None = None
     latency_ms: int | None = None
     metadata: dict[str, object] = field(default_factory=dict)
-    structured_result: JsonValue | None = None
-    artifact: JsonValue | None = None
 
-    def with_result(self, result: str) -> ToolResultContext:
-        """Replace text while preserving structured output and artifacts."""
-        return dataclasses.replace(self, result=result)
+    @property
+    def structured(self) -> JsonValue | None:
+        return self.structured_result
+
+    def with_result(
+        self,
+        result: str,
+        structured: Any | None = _UNSET,
+        artifact: Any | None = _UNSET,
+    ) -> ToolResultContext:
+        """Return a copy with ``result`` replaced (immutable update)."""
+        st = self.structured_result if structured is _UNSET else structured
+        art = self.artifact if artifact is _UNSET else artifact
+        return dataclasses.replace(self, result=result, structured_result=st, artifact=art)
 
     def with_structured_result(self, structured_result: JsonValue | None) -> ToolResultContext:
         """Return a copy with the machine-readable result replaced."""
