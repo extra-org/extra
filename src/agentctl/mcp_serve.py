@@ -13,8 +13,9 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from agent_engine.approvals.decision import ApprovalDecision, parse_decision
+from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.engine.types import RunResult
 from agent_manager.application import ConversationService
 from agent_manager.composition import ApplicationRepositories, application_repositories
 from agent_manager.config import Settings
@@ -76,6 +77,7 @@ class ExtraMCPServer:
             run_id: str,
             approval_id: str,
             decision: str = "approve",
+            user_id: str = "",
         ) -> dict[str, Any]:
             """Approve or reject a pending tool-call approval.
 
@@ -86,7 +88,9 @@ class ExtraMCPServer:
             (allow and stop asking for this tool in this conversation), and
             ``reject`` (do not run; store nothing).
             """
-            return await self._handle_decide_approval(session_id, run_id, approval_id, decision)
+            return await self._handle_decide_approval(
+                session_id, run_id, approval_id, decision, user_id
+            )
 
     async def _setup(self) -> None:
         assert self._repositories is not None
@@ -123,8 +127,48 @@ class ExtraMCPServer:
         if not effective_session_id:
             effective_session_id = await service.create(principal)
         result = await service.send(effective_session_id, message, principal)
+        return self._serialize_run_result(result, effective_session_id)
+
+    async def _handle_decide_approval(
+        self,
+        session_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+        user_id: str = "",
+    ) -> dict[str, Any]:
+        service = self._service
+        if service is None:
+            raise RuntimeError("MCP server has not finished initializing")
+        effective_user_id = user_id or DEFAULT_USER_ID
+        principal = _principal_for(effective_user_id)
+        normalized = decision.strip().lower()
+        mapping = {
+            "approve": ApprovalDecision.ALLOW_ONCE,
+            "reject": ApprovalDecision.DENY,
+            "allow_for_session": ApprovalDecision.ALLOW_FOR_SESSION,
+        }
+        if normalized not in mapping:
+            raise ValueError(
+                f"Invalid decision {decision!r}. Use 'approve', 'reject', or 'allow_for_session'."
+            )
+        parsed_decision = mapping[normalized]
+        result = await service.decide_approval(
+            session_id,
+            run_id,
+            approval_id,
+            parsed_decision,
+            principal,
+        )
+        return self._serialize_run_result(result, session_id)
+
+    def _serialize_run_result(
+        self,
+        result: RunResult,
+        session_id: str,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "session_id": effective_session_id,
+            "session_id": session_id,
             "status": result.status.value,
             "answer": result.answer,
             "visited": list(result.visited),
@@ -136,37 +180,6 @@ class ExtraMCPServer:
         if result.pending_approval is not None:
             payload["pending_approval"] = asdict(result.pending_approval)
         return payload
-
-    async def _handle_decide_approval(
-        self,
-        session_id: str,
-        run_id: str,
-        approval_id: str,
-        decision: str,
-    ) -> dict[str, Any]:
-        service = self._service
-        if service is None:
-            raise RuntimeError("MCP server has not finished initializing")
-        effective_user_id = DEFAULT_USER_ID
-        principal = _principal_for(effective_user_id)
-        parsed_decision = parse_decision(decision, default=ApprovalDecision.DENY)
-        result = await service.decide_approval(
-            session_id,
-            run_id,
-            approval_id,
-            parsed_decision,
-            principal,
-        )
-        return {
-            "session_id": session_id,
-            "status": result.status.value,
-            "answer": result.answer,
-            "visited": list(result.visited),
-            "used_tools": [
-                {k: v for k, v in asdict(tool).items() if v is not None}
-                for tool in result.used_tools
-            ],
-        }
 
     async def run(self) -> None:
         try:
