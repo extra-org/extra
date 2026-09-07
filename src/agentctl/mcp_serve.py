@@ -144,10 +144,10 @@ class ExtraMCPServer:
         principal = _principal_for(effective_user_id)
         try:
             parsed_decision = parse_decision(decision)
-        except InvalidDecision:
+        except InvalidDecision as err:
             raise ValueError(
                 f"Invalid decision {decision!r}. Use 'approve', 'reject', or 'allow_for_session'."
-            )
+            ) from err
         result = await service.decide_approval(
             session_id,
             run_id,
