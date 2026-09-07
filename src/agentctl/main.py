@@ -10,6 +10,7 @@ import click
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.generate.generator import Generator
 from agent_engine.parsers.yaml.parser import YAMLParser
+from agentctl.mcp_serve import create_server
 from agentctl.session import SpecError, load_and_validate, load_env
 
 LOCAL_USER_ID = "local-user"
@@ -279,6 +280,31 @@ def chat(
     else:
         assert url is not None
         asyncio.run(run_remote_chat(url, stream, session_id=session_id))
+
+
+@cli.group()
+def mcp() -> None:
+    """MCP server commands."""
+
+
+@mcp.command(name="serve")
+@click.option("--config", required=True, help="Path to agents.yml")
+@click.option("--env", default=None, help="Path to .env file")
+def mcp_serve(config: str, env: str | None) -> None:
+    """Run the Extra agent system as an MCP server (stdio transport)."""
+    load_env(config, env)
+    from agent_manager.infrastructure.persistence.database import upgrade_database
+
+    upgrade_database()
+    from agentctl.diagnostics import format_validation_report, validate_spec
+
+    validation = validate_spec(config)
+    if not validation.ok:
+        click.echo(format_validation_report(validation), err=True)
+        sys.exit(1)
+
+    server = create_server(config, env)
+    asyncio.run(server.run())
 
 
 if __name__ == "__main__":
