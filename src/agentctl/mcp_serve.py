@@ -13,7 +13,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.decision import InvalidDecision, parse_decision
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.engine.types import RunResult
 from agent_manager.application import ConversationService
@@ -142,17 +142,12 @@ class ExtraMCPServer:
             raise RuntimeError("MCP server has not finished initializing")
         effective_user_id = user_id or DEFAULT_USER_ID
         principal = _principal_for(effective_user_id)
-        normalized = decision.strip().lower()
-        mapping = {
-            "approve": ApprovalDecision.ALLOW_ONCE,
-            "reject": ApprovalDecision.DENY,
-            "allow_for_session": ApprovalDecision.ALLOW_FOR_SESSION,
-        }
-        if normalized not in mapping:
+        try:
+            parsed_decision = parse_decision(decision)
+        except InvalidDecision:
             raise ValueError(
                 f"Invalid decision {decision!r}. Use 'approve', 'reject', or 'allow_for_session'."
             )
-        parsed_decision = mapping[normalized]
         result = await service.decide_approval(
             session_id,
             run_id,

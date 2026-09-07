@@ -453,6 +453,136 @@ def test_decide_approval_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert decide_calls == [("sess-1", "run-1", "approval-1", "allow_once")]
 
 
+def test_decide_approval_preserves_user_id_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same user_id supplied to extra_chat must reach decide_approval."""
+    spec = _write_spec(tmp_path)
+
+    from agent_manager.domain.identity import Principal
+
+    chat_principals: list[Principal] = []
+    decide_principals: list[Principal] = []
+
+    async def fake_send(
+        self_inner: object,
+        conversation_id: str,
+        text: str,
+        principal: Principal,
+    ) -> RunResult:
+        chat_principals.append(principal)
+        return RunResult(
+            system_name="Fake System",
+            visited=["fake_agent"],
+            answer="hi",
+        )
+
+    async def fake_decide(
+        self_inner: object,
+        conversation_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+        principal: Principal,
+    ) -> RunResult:
+        decide_principals.append(principal)
+        return RunResult(
+            system_name="Fake System",
+            visited=["fake_agent"],
+            answer="approved-result",
+            status=RunStatus.COMPLETED,
+        )
+
+    from agent_manager.application import ConversationService
+
+    monkeypatch.setattr(ConversationService, "send", fake_send)
+    monkeypatch.setattr(ConversationService, "decide_approval", fake_decide)
+
+    from agentctl.mcp_serve import create_server
+
+    server = create_server(str(spec), None)
+    server._repositories = _FakeRepositories()  # type: ignore[assignment]
+    server._engine = FakeRuntimeEngine(Path("."))  # type: ignore[assignment]
+    server._service = ConversationService(server._engine, _FakeRepository())  # type: ignore[arg-type]
+
+    asyncio.run(server._handle_chat("hello", "sess-1", "alice"))
+    asyncio.run(server._handle_decide_approval("sess-1", "run-1", "approval-1", "approve", "alice"))
+
+    assert len(chat_principals) == 1
+    assert len(decide_principals) == 1
+    assert chat_principals[0].external_id == decide_principals[0].external_id == "alice"
+
+
+def test_decide_approval_preserves_chained_pending_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed run that hits another approval must still expose it."""
+    spec = _write_spec(tmp_path)
+
+    from agent_engine.engine.types import PendingApproval
+    from agent_manager.domain.identity import Principal
+
+    pending_b = PendingApproval(
+        run_id="run-2",
+        approval_id="approval-2",
+        agent_id="fake_agent",
+        tool_name="another_tool",
+        description="more risk",
+        provider="local",
+        arguments={},
+    )
+
+    async def fake_decide(
+        self_inner: object,
+        conversation_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+        principal: Principal,
+    ) -> RunResult:
+        return RunResult(
+            system_name="Fake System",
+            visited=["fake_agent"],
+            answer="",
+            status=RunStatus.PENDING_APPROVAL,
+            pending_approval=pending_b,
+        )
+
+    from agent_manager.application import ConversationService
+
+    monkeypatch.setattr(ConversationService, "decide_approval", fake_decide)
+
+    from agentctl.mcp_serve import create_server
+
+    server = create_server(str(spec), None)
+    server._repositories = _FakeRepositories()  # type: ignore[assignment]
+    server._engine = FakeRuntimeEngine(Path("."))  # type: ignore[assignment]
+    server._service = ConversationService(server._engine, _FakeRepository())  # type: ignore[arg-type]
+
+    result = asyncio.run(server._handle_decide_approval("sess-1", "run-1", "approval-1", "approve"))
+
+    assert result["status"] == "pending_approval"
+    assert result["pending_approval"]["run_id"] == "run-2"
+    assert result["pending_approval"]["approval_id"] == "approval-2"
+    assert result["pending_approval"]["tool_name"] == "another_tool"
+
+
+def test_decide_approval_rejects_invalid_decision(tmp_path: Path) -> None:
+    """Invalid decision strings must raise an explicit error."""
+    spec = _write_spec(tmp_path)
+
+    from agent_manager.application import ConversationService
+    from agentctl.mcp_serve import create_server
+
+    server = create_server(str(spec), None)
+    server._repositories = _FakeRepositories()  # type: ignore[assignment]
+    server._engine = FakeRuntimeEngine(Path("."))  # type: ignore[assignment]
+    server._service = ConversationService(server._engine, _FakeRepository())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="Invalid decision 'aproove'"):
+        asyncio.run(server._handle_decide_approval("sess-1", "run-1", "approval-1", "aproove"))
+
+
 def test_extra_chat_tool_response_is_json_serialisable(tmp_path: Path) -> None:
     """The dict shape returned by ``_handle_chat`` must round-trip through JSON."""
 
