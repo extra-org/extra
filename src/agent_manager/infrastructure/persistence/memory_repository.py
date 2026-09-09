@@ -301,6 +301,20 @@ class MemoryRepository(Repository):
         msgs = await self.list_conversation_messages(conversation_id, limit)
         return [Message(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
 
+    async def update_message_feedback(
+        self,
+        message_id: str,
+        feedback: str,
+    ) -> ConversationMessage | None:
+        for _sid, messages in list(self._messages.items()):
+            for index, message in enumerate(messages):
+                if message.message_id == message_id:
+                    metadata = {**message.metadata, "feedback": feedback}
+                    updated = replace(message, feedback=feedback, metadata=metadata)
+                    messages[index] = updated
+                    return updated
+        return None
+
     async def get_snapshot(self, session_id: str) -> ConversationSnapshot | None:
         return self._snapshots.get(session_id)
 

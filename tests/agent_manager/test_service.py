@@ -479,3 +479,37 @@ async def test_adopting_merges_into_conversations_the_account_already_had() -> N
         "signed-in",
         "pre-login",
     }
+
+
+async def test_set_message_feedback_persists_and_returns_message() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+    await service.send("s1", "hello", ALICE)
+    history = await service.history("s1", ALICE)
+    assistant_message = next(m for m in history if m.role == Role.ASSISTANT)
+
+    updated = await service.set_message_feedback(
+        "s1", assistant_message.message_id, "thumbs_up", ALICE
+    )
+
+    assert updated is not None
+    assert updated.feedback == "thumbs_up"
+    assert updated.metadata.get("feedback") == "thumbs_up"
+
+
+async def test_set_message_feedback_returns_none_for_missing_message() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+
+    updated = await service.set_message_feedback("s1", "no-such-id", "thumbs_up", ALICE)
+
+    assert updated is None
+
+
+async def test_set_message_feedback_is_authorized() -> None:
+    service, _ = _service()
+    await service.create(ALICE, session_id="s1")
+    await service.send("s1", "hello", ALICE)
+
+    with pytest.raises(ConversationAccessDenied):
+        await service.set_message_feedback("s1", "no-such-id", "thumbs_up", BOB)

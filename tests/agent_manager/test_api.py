@@ -1434,3 +1434,50 @@ def test_tool_error_text_is_sanitized_in_stream_message() -> None:
     assert response.status_code == 200
     assert "Tool execution failed" in response.text
     assert "localhost" not in response.text
+
+
+def test_set_message_feedback_returns_updated_message(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    sent = client.post(f"/conversations/{cid}/messages", json={"message": "hello"})
+    assert sent.status_code == 200
+    messages = client.get(f"/conversations/{cid}/messages").json()
+    assistant = next(m for m in messages if m["role"] == "assistant")
+    message_id = assistant["message_id"]
+
+    response = client.post(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "thumbs_up"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["message_id"] == message_id
+    assert body["feedback"] == "thumbs_up"
+
+
+def test_set_message_feedback_returns_404_for_missing_message(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    response = client.post(
+        f"/conversations/{cid}/messages/no-such-id/feedback",
+        json={"feedback": "thumbs_up"},
+    )
+    assert response.status_code == 404
+
+
+def test_another_caller_cannot_set_feedback_on_anothers_conversation(
+    client: TestClient,
+) -> None:
+    u1 = bearer("u1")
+    cid = client.post("/conversations", headers=u1).json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hello"}, headers=u1)
+    messages = client.get(f"/conversations/{cid}/messages", headers=u1).json()
+    assistant = next(m for m in messages if m["role"] == "assistant")
+    message_id = assistant["message_id"]
+
+    u2 = bearer("u2")
+    response = client.post(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "thumbs_up"},
+        headers=u2,
+    )
+    assert response.status_code == 403
