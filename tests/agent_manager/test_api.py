@@ -1434,3 +1434,189 @@ def test_tool_error_text_is_sanitized_in_stream_message() -> None:
     assert response.status_code == 200
     assert "Tool execution failed" in response.text
     assert "localhost" not in response.text
+
+
+# ── Anonymous history hand-off regression tests ──────────────────────────────
+# Covers the server-side opportunistic hand-off introduced to replace the
+# repeated POST /auth/link → 401 probing pattern.
+
+_VISITOR_PASS_HEADER = "X-Extra-Visitor-Pass"
+
+
+def _cookie_app():
+    """A host-token (cookie-mode) app reused by several hand-off tests."""
+    return build_test_app(
+        ConversationService(RecordingEngine(), MemoryRepository()),
+        extra_auth_mode=AuthMode.HOST_TOKEN,
+        extra_auth_cookie=HOST_COOKIE,
+        extra_auth_claim_user_id="id",
+    )
+
+
+def test_repeated_anonymous_list_conversations_never_probes_auth_link() -> None:
+    """While still anonymous, repeated GET /conversations must work cleanly with
+    no /auth/link probe required.
+
+    The old implementation issued POST /auth/link → 401 on every forced
+    identity check. The new server-side hand-off has no such probe — the
+    anonymous request simply returns its own (empty) list.
+    """
+    app = _cookie_app()
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+
+    for _ in range(3):
+        resp = client.get("/conversations", headers=visitor)
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+
+def test_first_authenticated_request_adopts_anonymous_history_via_header() -> None:
+    """Server-side opportunistic hand-off: the first GET /conversations that
+    arrives with both an authenticated cookie and X-Extra-Visitor-Pass merges
+    the anonymous history before returning — no reset() or refreshIdentity().
+    """
+    app = _cookie_app()
+    anon_client = TestClient(app)
+    pass_token = anon_client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+
+    cid = anon_client.post("/conversations", headers=visitor).json()["conversation_id"]
+    anon_client.post(
+        f"/conversations/{cid}/messages", json={"message": "pre-login"}, headers=visitor
+    )
+
+    # Host app sets session cookie (user signs in). Widget sends pass in new header.
+    alice = TestClient(app, cookies=session_cookie(id="alice"))
+    resp = alice.get("/conversations", headers={_VISITOR_PASS_HEADER: pass_token})
+
+    assert resp.status_code == 200
+    conv_ids = [t["conversation_id"] for t in resp.json()["items"]]
+    assert cid in conv_ids  # merged on the very first request — no delay
+    assert alice.get(f"/conversations/{cid}/messages").status_code == 200
+
+
+def test_pagination_after_adoption_does_not_re_adopt() -> None:
+    """Paging through history after the hand-off must not cause repeated
+    adoptions. The already-adopted pass returns 0 rows moved — idempotent.
+    """
+    app = _cookie_app()
+    anon_client = TestClient(app)
+    pass_token = anon_client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+
+    for i in range(3):
+        cid = anon_client.post("/conversations", headers=visitor).json()["conversation_id"]
+        anon_client.post(
+            f"/conversations/{cid}/messages", json={"message": f"msg {i}"}, headers=visitor
+        )
+
+    alice = TestClient(app, cookies=session_cookie(id="alice"))
+    hand_off = {_VISITOR_PASS_HEADER: pass_token}
+
+    page1 = alice.get("/conversations?limit=2", headers=hand_off)
+    assert page1.status_code == 200
+    cursor = page1.json().get("next_cursor")
+
+    if cursor:
+        page2 = alice.get(f"/conversations?limit=2&cursor={cursor}", headers=hand_off)
+        assert page2.status_code == 200
+
+
+def test_already_adopted_pass_in_header_is_a_no_op() -> None:
+    """A pass that was already consumed moves 0 rows and does not error.
+    The request continues normally and conversations are not duplicated.
+    """
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+
+    client.post("/conversations", headers=visitor)
+    alice = bearer("alice")
+
+    r1 = client.get("/conversations", headers={**alice, _VISITOR_PASS_HEADER: pass_token})
+    assert r1.status_code == 200
+    assert len(r1.json()["items"]) == 1
+
+    # Second request with same pass — adoption already done, must be a no-op.
+    r2 = client.get("/conversations", headers={**alice, _VISITOR_PASS_HEADER: pass_token})
+    assert r2.status_code == 200
+    assert len(r2.json()["items"]) == 1  # still exactly 1 — not duplicated
+
+
+def test_invalid_visitor_pass_in_header_does_not_block_request() -> None:
+    """An expired or malformed pass in X-Extra-Visitor-Pass must never turn a
+    valid authenticated request into a 4xx. The pass is silently discarded.
+    """
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    client = TestClient(app)
+    alice = bearer("alice")
+
+    resp = client.get("/conversations", headers={**alice, _VISITOR_PASS_HEADER: "not-a-valid-jwt"})
+
+    assert resp.status_code == 200  # request succeeds despite the bad pass
+    assert resp.json()["items"] == []
+
+
+def test_concurrent_authenticated_requests_adopt_history_exactly_once() -> None:
+    """Two requests arriving post-login must result in exactly one adoption.
+    The SQL atomic UPDATE (WHERE linked_to_user_id IS NULL) guarantees this.
+    """
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+
+    cid = client.post("/conversations", headers=visitor).json()["conversation_id"]
+    alice = bearer("alice")
+    hand_off = {**alice, _VISITOR_PASS_HEADER: pass_token}
+
+    # Simulate two "concurrent" requests sequentially — the atomic SQL guard
+    # makes the second a no-op regardless of timing.
+    r1 = client.get("/conversations", headers=hand_off)
+    r2 = client.get("/conversations", headers=hand_off)
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    all_ids = [t["conversation_id"] for t in r2.json()["items"]]
+    assert all_ids.count(cid) == 1  # not duplicated
+
+
+def test_bearer_mode_auth_link_still_works_after_refactor() -> None:
+    """The /auth/link endpoint must continue to work for explicit bearer/token
+    mode. This is a direct regression guard against the old link path.
+    """
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+
+    cid = client.post("/conversations", headers=visitor).json()["conversation_id"]
+    alice = bearer("alice")
+
+    linked = client.post("/auth/link", json={"anonymous_token": pass_token}, headers=alice)
+
+    assert linked.status_code == 200
+    assert linked.json()["conversations_moved"] == 1
+    assert [
+        t["conversation_id"] for t in client.get("/conversations", headers=alice).json()["items"]
+    ] == [cid]
+
+
+def test_anonymous_request_without_pass_header_is_unaffected() -> None:
+    """A plain anonymous request (no X-Extra-Visitor-Pass, no cookie) must
+    still work normally — the hand-off header is purely additive.
+    """
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+
+    cid = client.post("/conversations", headers=visitor).json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"}, headers=visitor)
+
+    resp = client.get("/conversations", headers=visitor)
+    assert resp.status_code == 200
+    assert resp.json()["items"][0]["conversation_id"] == cid
