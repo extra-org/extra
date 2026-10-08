@@ -43,8 +43,8 @@ export class AgentChatClient {
 
   /** A 401 usually means the token expired: renew once and retry. The rejected
    *  attempt changed nothing, so replaying is safe. */
-  private async request(path: string, init?: RequestInit, options?: { forceCheck?: boolean }): Promise<Response> {
-    let response = await this.send(path, init, await this.tokens.current({ forceCheck: options?.forceCheck }));
+  private async request(path: string, init?: RequestInit): Promise<Response> {
+    let response = await this.send(path, init, await this.tokens.current());
     if (response.status === 401) {
       response = await this.send(path, init, await this.tokens.renew());
     }
@@ -57,6 +57,10 @@ export class AgentChatClient {
   private send(path: string, init: RequestInit | undefined, token: string | null) {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
+    // Carry the visitor pass on every request so the server can opportunistically
+    // adopt anonymous history the moment it sees an authenticated principal.
+    const pass = this.tokens.visitorPass;
+    if (pass) headers["X-Extra-Visitor-Pass"] = pass;
     // `include` lets a same-origin deployment authenticate by the host's own
     // cookie, which the widget can never read.
     return fetch(`${this.endpoint}${path}`, { ...init, headers, credentials: "include" });
@@ -71,7 +75,7 @@ export class AgentChatClient {
   async listConversations(limit = 20, cursor?: string | null): Promise<PaginatedThreads> {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
-    const response = await this.request(`/conversations?${params.toString()}`, undefined, { forceCheck: true });
+    const response = await this.request(`/conversations?${params.toString()}`);
 
     const data = await response.json();
     const rawItems: Array<{ conversation_id: string; title?: string | null; last_message_at?: string | null }> =

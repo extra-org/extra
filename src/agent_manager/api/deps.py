@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 BEARER_PREFIX = "Bearer "
 UNAUTHENTICATED_DETAIL = "a verified identity is required"
+VISITOR_PASS_HEADER = "X-Extra-Visitor-Pass"
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ def get_caller_identity(request: Request) -> CallerIdentity:
     return request.app.state.caller_identity
 
 
-def get_principal(request: Request) -> Principal:
+async def get_principal(request: Request) -> Principal:
     """The proven caller every conversation route authorizes against.
 
     A bearer token where the caller supplied one, otherwise the host's session
@@ -43,16 +44,62 @@ def get_principal(request: Request) -> Principal:
     host's own origin: cross-site requests cannot read a JSON response, and the
     widget's `application/json` writes are preflighted against a CORS allowlist
     that denies by default.
+
+    After resolving an authenticated (non-anonymous) principal, the dependency
+    opportunistically adopts any anonymous history the widget attached via the
+    X-Extra-Visitor-Pass header. Failures are logged and silently swallowed so
+    an adoption hiccup never blocks the actual request.
     """
     identity = get_caller_identity(request)
     token = _select_token(request, identity)
     if token is None:
         raise HTTPException(status_code=401, detail=UNAUTHENTICATED_DETAIL)
     try:
-        return identity.resolver.resolve(token)
+        principal = identity.resolver.resolve(token)
     except TokenError as exc:
         logger.warning("token verification failed: %s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from None
+
+    # Server-side opportunistic hand-off.
+    # When both an authenticated principal AND a visitor pass arrive on the same
+    # request, adopt the anonymous history before the route runs. This removes
+    # the need for the frontend to repeatedly probe /auth/link in cookie mode.
+    if not principal.is_anonymous:
+        raw_pass = request.headers.get(VISITOR_PASS_HEADER)
+        if raw_pass:
+            await _try_adopt_visitor_history(request, raw_pass, principal, identity)
+
+    return principal
+
+
+async def _try_adopt_visitor_history(
+    request: Request,
+    raw_pass: str,
+    principal: Principal,
+    identity: CallerIdentity,
+) -> None:
+    """Opportunistically adopt anonymous history. Failures never block the request.
+
+    Invalid/expired pass: TokenError is caught and logged at DEBUG — the
+    authenticated request continues normally and the stale pass is effectively
+    discarded.
+
+    Temporary DB failure: Exception is caught and logged at WARNING — the pass
+    is NOT marked consumed so the next request will retry automatically.
+
+    Already-adopted pass: link_anonymous_user runs an atomic UPDATE WHERE
+    linked_to_user_id IS NULL, which affects 0 rows and returns cleanly.
+    """
+    try:
+        visitor = identity.resolver.anonymous.resolve(raw_pass)
+    except TokenError:
+        logger.debug("X-Extra-Visitor-Pass is invalid or expired; ignoring")
+        return
+    try:
+        service = get_service(request)
+        await service.link_anonymous(visitor, principal)
+    except Exception:
+        logger.warning("opportunistic anonymous history adoption failed", exc_info=True)
 
 
 Service = Annotated[ConversationService, Depends(get_service)]
