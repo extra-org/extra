@@ -164,6 +164,21 @@ export class AgentChatClient {
     };
   }
 
+  async setMessageFeedback(
+    conversationId: string,
+    messageId: string,
+    feedback: "thumbs_up" | "thumbs_down",
+  ): Promise<{ message_id: string; feedback: string | null }> {
+    const response = await this.request(
+      `/conversations/${conversationId}/messages/${messageId}/feedback`,
+      {
+        method: "POST",
+        body: JSON.stringify({ feedback }),
+      },
+    );
+    return await response.json();
+  }
+
   async *streamMessage(
     conversationId: string,
     message: string,

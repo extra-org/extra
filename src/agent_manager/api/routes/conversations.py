@@ -22,6 +22,8 @@ from agent_manager.api.schemas import (
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
+    MessageFeedbackRequest,
+    MessageFeedbackResponse,
     MessageOut,
     PaginatedConversationsResponse,
     SendMessageRequest,
@@ -84,6 +86,7 @@ async def list_messages(
             content=message.content,
             status=message.status,
             created_at=message.created_at,
+            feedback=message.feedback,
         )
         for message in messages
     ]
@@ -103,6 +106,28 @@ async def get_usage(
         percent=usage.percent,
         severity=usage.severity,
     )
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/feedback",
+    response_model=MessageFeedbackResponse,
+)
+async def set_message_feedback(
+    conversation_id: str,
+    message_id: str,
+    body: MessageFeedbackRequest,
+    service: Service,
+    caller: Caller,
+) -> MessageFeedbackResponse:
+    with as_http_error():
+        updated = await service.set_message_feedback(
+            conversation_id, message_id, body.feedback, caller
+        )
+    if updated is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="message not found")
+    return MessageFeedbackResponse(message_id=updated.message_id, feedback=updated.feedback)
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=SendMessageResponse)

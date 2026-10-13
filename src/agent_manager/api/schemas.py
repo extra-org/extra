@@ -59,6 +59,16 @@ class MessageOut(BaseModel):
     content: str
     status: str
     created_at: datetime
+    feedback: str | None = None
+
+
+class MessageFeedbackRequest(BaseModel):
+    feedback: str = Field(..., pattern="^(thumbs_up|thumbs_down)$")
+
+
+class MessageFeedbackResponse(BaseModel):
+    message_id: str
+    feedback: str | None = None
 
 
 class SendMessageRequest(BaseModel):

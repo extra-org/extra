@@ -56,6 +56,11 @@ export interface Conversation {
   listThreads(limit?: number, cursor?: string | null): Promise<PaginatedThreads>;
   switchTo(conversationId: string): void;
   startNew(): void;
+  setMessageFeedback(
+    conversationId: string,
+    messageId: string,
+    feedback: "thumbs_up" | "thumbs_down",
+  ): Promise<{ message_id: string; feedback: string | null }>;
 }
 
 /** A stored conversation the server will not serve us: gone (404), or owned by
@@ -199,6 +204,12 @@ export function useConversation(
     [endpoint],
   );
 
+  const setMessageFeedback = useCallback(
+    (conversationId: string, messageId: string, feedback: "thumbs_up" | "thumbs_down") =>
+      client.setMessageFeedback(conversationId, messageId, feedback),
+    [client],
+  );
+
   return useMemo(
     () => ({
       peekId,
@@ -213,6 +224,7 @@ export function useConversation(
       listThreads,
       switchTo,
       startNew,
+      setMessageFeedback,
     }),
     [
       peekId,
@@ -227,6 +239,7 @@ export function useConversation(
       listThreads,
       switchTo,
       startNew,
+      setMessageFeedback,
     ],
   );
 }
