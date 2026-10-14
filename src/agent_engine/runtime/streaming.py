@@ -32,6 +32,11 @@ class TokenUsage:
         """
         return self.input_tokens or None, self.output_tokens or None
 
+    def reset(self) -> None:
+        """Forget counted tokens once they are persisted, so no path adds them twice."""
+        self.input_tokens = 0
+        self.output_tokens = 0
+
 
 @dataclass(frozen=True)
 class StreamSinks:

@@ -37,6 +37,24 @@ One `conversation_id` owns an immutable message tree.
   contract into both engine and conversation service. Preparing a turn registers
   its run before `turn_started`, so disconnecting before engine iteration can
   still make the run terminal rather than leaving it `running` forever.
+- The manager retains each run's cumulative reported tokens in a conversation
+  usage ledger before exposing an approval pause or after execution cleanup,
+  including failure, cancellation, and resume. The engine persists usage a leg
+  reported before it failed or was cancelled, and counts each leg once.
+  A usage write and counter reset finish before cancellation cleanup continues,
+  including a cancellation after storage committed but before readback returned.
+  Pending-approval stream events expose the cumulative usage of completed legs.
+  Observations update the highest total for that run, rather than adding
+  execution legs again. A completed answer's message carries its run's charge,
+  so cleanup retention is best effort and a ledger failure never discards the
+  answer or replaces the turn's error. Budget queries take the
+  largest of the ledger total, historical message usage, and available engine
+  run totals per run across all branches. A batched run lookup recovers missed
+  charges after a retention failure and retries their durable retention; the
+  known charge applies even while that retry fails. SQL run charges return the
+  updated row inside the write transaction, without a fallible post-commit read.
+  This preserves legacy messages without counting a final answer
+  twice, and keeps charges after process-local run records expire.
 - The manager prepares and persists the turn before returning the streaming
   response. Its first SSE frame is `turn_started`, carrying the authoritative
   `run_id` and `message_id`; graph execution is owned by the response generator.
@@ -79,6 +97,13 @@ message, which is already a stable domain identity.
   `parent_message_id` from the head in a recursive CTE that also carries the
   limit, and run lifecycle state is projected through one batched lookup, so
   reading history costs neither a full-session scan nor a query per run.
+- Lifetime token accounting adds the internal repository operations
+  `record_run_token_usage` and `get_token_usage_by_run`, and the
+  `conversation_run_token_usage` table.
+  Migration `0006` backfills available engine run totals associated with every
+  conversation branch, including pending and cancelled runs without answers.
+  The only HTTP change is additive: `pending_approval` stream events now carry
+  `input_tokens` and `output_tokens`. There is no YAML contract change.
 
 ## Consequences
 

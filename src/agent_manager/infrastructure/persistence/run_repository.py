@@ -79,10 +79,17 @@ class SqlRunRepository(RunRepository):
         if output_tokens is not None:
             values["output_tokens"] = func.coalesce(RunRecordRow.output_tokens, 0) + output_tokens
         async with self._sessions() as session, session.begin():
-            await session.exec(
-                update(RunRecordRow).where(col(RunRecordRow.run_id) == run_id).values(**values)
+            # Return the charged row in the write transaction. A separate read
+            # after commit could fail and cause the caller to add the leg twice.
+            result = await session.exec(
+                update(RunRecordRow)
+                .where(col(RunRecordRow.run_id) == run_id)
+                .values(**values)
+                .returning(RunRecordRow)
             )
-        return await self.get(run_id)
+            row = result.scalar_one_or_none()
+            record = _record(row) if row is not None else None
+        return record
 
 
 def _rowcount(result: Any) -> int:

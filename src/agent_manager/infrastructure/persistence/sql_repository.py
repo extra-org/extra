@@ -11,7 +11,9 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, literal, or_, update
+from sqlalchemy import and_, case, delete, func, literal, or_, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -37,6 +39,7 @@ from agent_manager.domain.pagination import (
 )
 from agent_manager.infrastructure.persistence.tables import (
     ConversationMessageRow,
+    ConversationRunTokenUsageRow,
     ConversationSessionRow,
     ConversationSnapshotRow,
     ConversationUserRow,
@@ -396,10 +399,40 @@ class SqlRepository(Repository):
                 session, session_id, snapshot_ttl_seconds=snapshot_ttl_seconds
             )
 
-    async def get_token_usage(self, conversation_id: str) -> int:
+    async def record_run_token_usage(
+        self, conversation_id: str, run_id: str, total_tokens: int
+    ) -> None:
+        if total_tokens < 0:
+            raise ValueError("total_tokens must be non-negative")
+        async with self._sessions() as session, session.begin():
+            await session.exec(
+                run_token_usage_upsert(
+                    session.get_bind().dialect.name, conversation_id, run_id, total_tokens
+                )
+            )
+
+    async def get_token_usage_by_run(self, conversation_id: str) -> dict[str | None, int]:
         async with self._sessions() as session:
-            rows = await self._message_rows(session, conversation_id, None)
-        return sum((r.input_tokens or 0) + (r.output_tokens or 0) for r in rows)
+            messages = await session.exec(
+                select(
+                    ConversationMessageRow.run_id,
+                    func.sum(
+                        func.coalesce(ConversationMessageRow.input_tokens, 0)
+                        + func.coalesce(ConversationMessageRow.output_tokens, 0)
+                    ),
+                )
+                .where(col(ConversationMessageRow.session_id) == conversation_id)
+                .group_by(col(ConversationMessageRow.run_id))
+            )
+            usage = {run_id: int(total) for run_id, total in messages.all()}
+            recorded = await session.exec(
+                select(ConversationRunTokenUsageRow).where(
+                    col(ConversationRunTokenUsageRow.session_id) == conversation_id
+                )
+            )
+            for row in recorded.all():
+                usage[row.run_id] = max(usage.get(row.run_id, 0), row.total_tokens)
+        return usage
 
     async def get_context(
         self,
@@ -563,6 +596,24 @@ class SqlRepository(Repository):
             .order_by(branch.c.depth.desc())
         )
         return list(result.all())
+
+
+def run_token_usage_upsert(
+    dialect_name: str, conversation_id: str, run_id: str, total_tokens: int
+) -> Any:
+    """One atomic upsert: stale or concurrent observers cannot refund a run."""
+    insert = (
+        sqlite_insert(ConversationRunTokenUsageRow)
+        if dialect_name == "sqlite"
+        else postgres_insert(ConversationRunTokenUsageRow)
+    )
+    stored = col(ConversationRunTokenUsageRow.total_tokens)
+    return insert.values(
+        session_id=conversation_id, run_id=run_id, total_tokens=total_tokens
+    ).on_conflict_do_update(
+        index_elements=["session_id", "run_id"],
+        set_={"total_tokens": case((stored < total_tokens, total_tokens), else_=stored)},
+    )
 
 
 def _rows_affected(result: Any) -> int:

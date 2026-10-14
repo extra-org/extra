@@ -107,6 +107,16 @@ class ConversationSnapshotRow(SQLModel, table=True):
     )
 
 
+class ConversationRunTokenUsageRow(SQLModel, table=True):
+    """Lifetime run charges, retained independently of answers and run TTLs."""
+
+    __tablename__ = "conversation_run_token_usage"
+
+    session_id: str = Field(primary_key=True, foreign_key="conversation_sessions.session_id")
+    run_id: str = Field(primary_key=True, max_length=64)
+    total_tokens: int = Field(sa_column=Column(Integer, nullable=False))
+
+
 class RunRecordRow(SQLModel, table=True):
     """Durable adapter row for the engine's existing RunRepository contract."""
 
