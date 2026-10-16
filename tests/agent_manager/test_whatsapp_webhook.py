@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -381,3 +382,38 @@ def test_duplicate_subscription_parameters_are_rejected(channel):
         ("hub.challenge", "two"),
     ]
     assert client.get(ENDPOINT, params=params).status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("request_kind", "reason"),
+    [
+        ("bad_signature", "signature"),
+        ("missing_signature", "signature"),
+        ("content_type", "content_type"),
+        ("encoding", "encoding"),
+        ("subscription", "subscription"),
+    ],
+)
+def test_rejections_log_a_fixed_reason_without_request_content(
+    channel, caplog, request_kind, reason
+):
+    client, _, _ = channel
+    caplog.set_level(logging.WARNING, logger="agent_manager.api.routes.whatsapp")
+    body = encoded(payload(change(message(text={"body": "private question"}))))
+    forged = "sha256=" + "0" * 64
+    if request_kind == "subscription":
+        params = {"hub.mode": "subscribe", "hub.verify_token": "wrong-token", "hub.challenge": "c"}
+        client.get(ENDPOINT, params=params)
+    else:
+        headers = {
+            "bad_signature": {"Content-Type": "application/json", "X-Hub-Signature-256": forged},
+            "missing_signature": {"Content-Type": "application/json"},
+            "content_type": {**signed(body), "Content-Type": "text/plain"},
+            "encoding": {**signed(body), "Content-Encoding": "gzip"},
+        }[request_kind]
+        client.post(ENDPOINT, content=body, headers=headers)
+
+    rejected = [r.getMessage() for r in caplog.records if "webhook rejected" in r.getMessage()]
+    assert rejected == [f"whatsapp webhook rejected: reason={reason}"]
+    for private in ("private question", forged, "wrong-token", APP_SECRET):
+        assert private not in caplog.text

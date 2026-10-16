@@ -32,6 +32,7 @@ from agent_manager.domain.channels.controls import ControlRepository
 from agent_manager.domain.channels.delivery import DeliveryRepository
 from agent_manager.domain.channels.identity import ChannelIdentityResolver
 from agent_manager.domain.channels.repository import ChannelRepository
+from agent_manager.domain.channels.status import ChannelStatusReader
 from agent_manager.domain.channels.webhooks import WebhookRepository
 from agent_manager.infrastructure.auth.anonymous_identity_source import AnonymousIdentitySource
 from agent_manager.infrastructure.auth.claim_mapping import ClaimMapping
@@ -50,6 +51,7 @@ from agent_manager.infrastructure.persistence.channels.controls import SqlContro
 from agent_manager.infrastructure.persistence.channels.delivery import SqlDeliveryRepository
 from agent_manager.infrastructure.persistence.channels.ownership import SqlChannelWorkerOwnership
 from agent_manager.infrastructure.persistence.channels.repository import SqlChannelRepository
+from agent_manager.infrastructure.persistence.channels.status import SqlChannelStatusReader
 from agent_manager.infrastructure.persistence.channels.webhooks import SqlWebhookRepository
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
@@ -72,6 +74,7 @@ class ApplicationRepositories:
     webhooks: WebhookRepository | None = None
     deliveries: DeliveryRepository | None = None
     controls: ControlRepository | None = None
+    status: ChannelStatusReader | None = None
 
 
 def build_whatsapp_webhook(
@@ -123,6 +126,7 @@ async def channel_worker_lifespan(
         poll_seconds=settings.extra_whatsapp_worker_poll_seconds,
         turn_seconds=settings.extra_whatsapp_worker_turn_seconds,
         drain_seconds=settings.extra_whatsapp_worker_drain_seconds,
+        status_seconds=settings.extra_whatsapp_status_log_seconds,
     )
     identities = load_channel_identity_resolver(settings.extra_whatsapp_identity_resolver)
     sender: WhatsAppSender | None = None
@@ -169,7 +173,12 @@ async def channel_worker_lifespan(
             settings.effective_database_url, options.connection_id
         )
         async with ChannelWorker(
-            repositories.channels, processor, ownership, options, delivery=delivery
+            repositories.channels,
+            processor,
+            ownership,
+            options,
+            delivery=delivery,
+            status=repositories.status,
         ) as worker:
             yield worker
     finally:
@@ -305,6 +314,7 @@ async def application_repositories(
             webhooks=SqlWebhookRepository(sessions),
             deliveries=SqlDeliveryRepository(sessions),
             controls=SqlControlRepository(sessions),
+            status=SqlChannelStatusReader(sessions),
         )
     finally:
         await db_engine.dispose()

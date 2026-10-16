@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections import deque
 from contextlib import AsyncExitStack
+from datetime import UTC, datetime
 from types import TracebackType
 
 from agent_manager.application.channels.delivery import ChannelDeliveryService
@@ -17,8 +18,10 @@ from agent_manager.domain.channels.ownership import (
     ChannelWorkerOwnershipLost,
 )
 from agent_manager.domain.channels.repository import ChannelRepository
+from agent_manager.domain.channels.status import ChannelStatusReader
 
 logger = logging.getLogger(__name__)
+STATUS_READ_TIMEOUT_SECONDS = 5.0
 
 
 class ChannelWorker:
@@ -30,12 +33,15 @@ class ChannelWorker:
         options: ChannelWorkerOptions,
         *,
         delivery: ChannelDeliveryService | None = None,
+        status: ChannelStatusReader | None = None,
     ) -> None:
         self._repository = repository
         self._processor = processor
         self._ownership = ownership
         self._options = options
         self._delivery = delivery
+        self._status = status
+        self._status_due = 0.0
         self._stack = AsyncExitStack()
         self._stop = asyncio.Event()
         self._jobs: dict[str, asyncio.Task[None]] = {}
@@ -110,6 +116,8 @@ class ChannelWorker:
                     raise
                 except Exception as exc:
                     logger.warning("channel scheduling failed: type=%s", type(exc).__name__)
+                if self._status is not None and not self._stop.is_set():
+                    await self._log_status(self._status)
                 stop_waiter = asyncio.create_task(self._stop.wait())
                 try:
                     await asyncio.wait(
@@ -163,6 +171,39 @@ class ChannelWorker:
             if item.event_id not in self._jobs:
                 self._jobs[item.event_id] = asyncio.create_task(self._processor.process(item))
 
+    async def _log_status(self, reader: ChannelStatusReader) -> None:
+        due = asyncio.get_running_loop().time()
+        if due < self._status_due:
+            return
+        self._status_due = due + self._options.status_seconds
+        try:
+            # Monitoring must never stall scheduling or a graceful drain.
+            async with asyncio.timeout(STATUS_READ_TIMEOUT_SECONDS):
+                status = await reader.read(
+                    self._options.connection_id, self._options.system_id, datetime.now(UTC)
+                )
+        except Exception as exc:
+            logger.warning("channel status unavailable: type=%s", type(exc).__name__)
+            return
+        logger.info(
+            "channel status: connection=%s inbox_queued=%d inbox_running=%d "
+            "inbox_answered=%d inbox_oldest_s=%s needs_review=%d inbox_failed=%d "
+            "outbox_pending=%d outbox_oldest_s=%s delivery_unknown=%d "
+            "delivery_failed=%d delivery_blocked=%d",
+            self._options.connection_id,
+            status.inbox_queued,
+            status.inbox_running,
+            status.inbox_answered,
+            _seconds(status.inbox_oldest_seconds),
+            status.inbox_needs_review,
+            status.inbox_failed,
+            status.outbox_pending,
+            _seconds(status.outbox_oldest_seconds),
+            status.delivery_unknown,
+            status.delivery_failed,
+            status.delivery_blocked,
+        )
+
     def _reap(self) -> None:
         for event_id, task in tuple(self._jobs.items()):
             if task.done():
@@ -189,3 +230,7 @@ class ChannelWorker:
     def _observe_failure(task: asyncio.Task[None]) -> None:
         if not task.cancelled() and task.exception() is not None:
             logger.error("channel supervisor stopped: type=%s", type(task.exception()).__name__)
+
+
+def _seconds(value: float | None) -> str:
+    return "none" if value is None else str(int(value))
