@@ -1532,9 +1532,9 @@ test("thread drawer keeps natural row height with many conversations and scrolls
   // The list itself must overflow so the scrollbar is usable.
   const scrollMetrics = await (await widget(page)).evaluate((el) => {
     const list = el.shadowRoot?.querySelector(".thread-list");
-    return list ? { scrollHeight: list.scrollHeight, clientHeight: list.clientHeight } : null;
+    if (!list) throw new Error("thread-list not found");
+    return { scrollHeight: list.scrollHeight, clientHeight: list.clientHeight };
   });
-  expect(scrollMetrics).not.toBeNull();
   expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
 });
 
