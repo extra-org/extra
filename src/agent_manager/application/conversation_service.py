@@ -52,10 +52,19 @@ from agent_manager.domain import (
     TokenBudgetUsage,
     thread_title,
 )
+from agent_manager.domain.turn_preparation import (
+    IdempotentTurnRepository,
+    preparation_key_digest,
+    validate_prepared_message,
+)
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+def _assistant_message_id(session_id: str, run_id: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"agent-manager:{session_id}:{run_id}:assistant").hex
 
 
 def _run_context(turn: PreparedConversationTurn) -> RunContext:
@@ -238,10 +247,28 @@ class ConversationService:
         principal: Principal,
         *,
         edit_message_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> PreparedConversationTurn:
-        """Persist a user message and return its isolated prior model context."""
+        """Persist a user message and return its isolated prior model context.
+
+        An opt-in key recovers preparation only. Its caller must claim execution
+        separately; preparing the same turn twice does not authorize two runs.
+        """
         await self._authorize(conversation_id, principal)
         user_id = principal.user_id
+        preparation_repository: IdempotentTurnRepository | None = None
+        key_digest: str | None = None
+        if idempotency_key is not None:
+            key_digest = preparation_key_digest(idempotency_key)
+            if edit_message_id is not None:
+                raise ValueError("idempotent preparation cannot be combined with an edit")
+            if not isinstance(self._repository, IdempotentTurnRepository):
+                raise RuntimeError("repository does not support idempotent turn preparation")
+            preparation_repository = self._repository
+            existing = await preparation_repository.get_prepared_message(key_digest)
+            if existing is not None:
+                validate_prepared_message(existing, conversation_id, user_id, text)
+                return await self._restore_prepared_turn(existing, principal)
         await self._register(principal)
 
         if self._max_tokens is not None:
@@ -253,7 +280,17 @@ class ConversationService:
         session = await self._require(conversation_id)
         expected_head = session.head_message_id
         parent_message_id = expected_head
-        if edit_message_id is None:
+        if preparation_repository is not None:
+            # Read the immutable parent directly. The normal hot-context path
+            # can rebuild a missing snapshot, which must not race a retry's
+            # atomic receipt/message/snapshot transaction.
+            prior_context = await self._repository.get_context_at(
+                conversation_id,
+                parent_message_id,
+                max_messages=self._window,
+                max_chars=self._max_chars,
+            )
+        elif edit_message_id is None:
             prior_context = await self._repository.get_context(
                 conversation_id,
                 max_messages=self._window,
@@ -281,20 +318,36 @@ class ConversationService:
         run_id = uuid.uuid4().hex
         message_id = uuid.uuid4().hex
         now = datetime.now(UTC)
+        message = ConversationMessage(
+            message_id=message_id,
+            session_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            role=Role.USER,
+            content=text,
+            created_at=now,
+            parent_message_id=parent_message_id,
+            status="running",
+        )
+        if preparation_repository is not None and key_digest is not None:
+            persisted = await preparation_repository.append_prepared_message(
+                key_digest,
+                message,
+                expected_head,
+                snapshot_ttl_seconds=self._snapshot_ttl_seconds,
+            )
+            if persisted is None:
+                raise ConversationBranchConflict(conversation_id)
+            turn = await self._restore_prepared_turn(persisted, principal)
+            if persisted.message_id == message_id and expected_head is None:
+                turn = dataclasses.replace(
+                    turn, title_task=await self._name_conversation(conversation_id, text)
+                )
+            return turn
         await self._register_run(run_id)
         try:
             appended = await self._repository.append_message_if_head(
-                ConversationMessage(
-                    message_id=message_id,
-                    session_id=conversation_id,
-                    run_id=run_id,
-                    user_id=user_id,
-                    role=Role.USER,
-                    content=text,
-                    created_at=now,
-                    parent_message_id=parent_message_id,
-                    status="running",
-                ),
+                message,
                 expected_head,
                 snapshot_ttl_seconds=self._snapshot_ttl_seconds,
             )
@@ -322,6 +375,27 @@ class ConversationService:
             title_task=title_task,
         )
 
+    async def _restore_prepared_turn(
+        self, message: ConversationMessage, principal: Principal
+    ) -> PreparedConversationTurn:
+        assert message.run_id is not None
+        await self._register_run(message.run_id, reuse=True)
+        prior = await self._repository.get_context_at(
+            message.session_id,
+            message.parent_message_id,
+            max_messages=self._window,
+            max_chars=self._max_chars,
+        )
+        return PreparedConversationTurn(
+            session_id=message.session_id,
+            run_id=message.run_id,
+            message_id=message.message_id,
+            user_id=principal.user_id,
+            message=message.content,
+            history=build_history(prior.messages, self._window),
+            principal=principal,
+        )
+
     async def complete_turn(
         self,
         turn: PreparedConversationTurn,
@@ -341,6 +415,28 @@ class ConversationService:
             visited=result.visited,
             used_tools=result.used_tools,
         )
+
+    async def get_turn_response(
+        self, conversation_id: str, run_id: str, principal: Principal
+    ) -> ConversationMessage | None:
+        """Recover one already-persisted response, after normal owner authorization."""
+        await self._authorize(conversation_id, principal)
+        user = await self._repository.get_user_message_for_run(conversation_id, run_id)
+        if user is None:
+            return None
+        response = await self._repository.get_message(
+            _assistant_message_id(conversation_id, run_id)
+        )
+        if response is not None and (
+            response.role is not Role.ASSISTANT
+            or response.session_id != conversation_id
+            or response.run_id != run_id
+            or response.parent_message_id != user.message_id
+            or response.user_id != principal.user_id
+            or response.status != "completed"
+        ):
+            raise ValueError("persisted response does not match its owned turn")
+        return response
 
     async def decide_approval(
         self,
@@ -696,10 +792,7 @@ class ConversationService:
         used_tools: Sequence[ToolUsageRecord],
     ) -> None:
         """Persist one normalized final assistant response; its tokens are the run's charge."""
-        message_id = uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"agent-manager:{session_id}:{run_id}:assistant",
-        ).hex
+        message_id = _assistant_message_id(session_id, run_id)
         await self._repository.append_message_if_absent(
             ConversationMessage(
                 message_id=message_id,
@@ -753,7 +846,7 @@ class ConversationService:
             for message in messages
         ]
 
-    async def _register_run(self, run_id: str) -> None:
+    async def _register_run(self, run_id: str, *, reuse: bool = False) -> None:
         if self._run_repository is None:
             return
         created = await self._run_repository.create_if_absent(
@@ -764,6 +857,14 @@ class ConversationService:
             )
         )
         if not created:
+            if reuse:
+                existing = await self._run_repository.get(run_id)
+                if (
+                    existing is not None
+                    and existing.thread_id == run_id
+                    and existing.system_name == (self._system_name or "")
+                ):
+                    return
             raise RuntimeError(f"generated run id already exists: {run_id}")
 
     async def _transition_run(self, run_id: str, target: RunStatus) -> None:

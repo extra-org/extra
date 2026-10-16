@@ -107,6 +107,17 @@ class ConversationSnapshotRow(SQLModel, table=True):
     )
 
 
+class TurnPreparationReceiptRow(SQLModel, table=True):
+    """Committed with the user message; the receipt owns its original input."""
+
+    __tablename__ = "conversation_turn_preparations"
+
+    key_digest: str = Field(primary_key=True, max_length=64)
+    # No immediate message FK: this row claims the key before the user append
+    # in the same transaction, so competing preparations serialize on the key.
+    message_id: str = Field(max_length=64, unique=True)
+
+
 class ConversationRunTokenUsageRow(SQLModel, table=True):
     """Lifetime run charges, retained independently of answers and run TTLs."""
 
