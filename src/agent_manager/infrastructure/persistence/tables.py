@@ -17,6 +17,15 @@ from datetime import datetime
 from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, Text, text
 from sqlmodel import Field, SQLModel
 
+# Register channel tables with the same metadata used by Alembic and tests.
+from agent_manager.infrastructure.persistence.channels.tables import (  # noqa: F401
+    ChannelBindingRow,
+    ChannelDeliveryEventRow,
+    ChannelInboxRow,
+    ChannelOutboxRow,
+    ChannelWebhookReceiptRow,
+)
+
 
 class ConversationUserRow(SQLModel, table=True):
     __tablename__ = "conversation_users"
