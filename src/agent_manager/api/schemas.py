@@ -129,3 +129,5 @@ class StreamEventOut(BaseModel):
     description: str | None = None
     arguments: dict[str, Any] | None = None
     title: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
