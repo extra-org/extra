@@ -73,23 +73,52 @@ class SqlRunRepository(RunRepository):
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> RunRecord | None:
-        values: dict[str, object] = {"updated_at": time.time()}
-        if input_tokens is not None:
-            values["input_tokens"] = func.coalesce(RunRecordRow.input_tokens, 0) + input_tokens
-        if output_tokens is not None:
-            values["output_tokens"] = func.coalesce(RunRecordRow.output_tokens, 0) + output_tokens
         async with self._sessions() as session, session.begin():
             # Return the charged row in the write transaction. A separate read
             # after commit could fail and cause the caller to add the leg twice.
             result = await session.exec(
                 update(RunRecordRow)
                 .where(col(RunRecordRow.run_id) == run_id)
-                .values(**values)
+                .values(**_usage_values(input_tokens, output_tokens))
                 .returning(RunRecordRow)
             )
             row = result.scalar_one_or_none()
             record = _record(row) if row is not None else None
         return record
+
+    async def add_token_usage_if_unchanged(
+        self,
+        run_id: str,
+        *,
+        expected: tuple[int | None, int | None],
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Compare and add in one statement, so a retried leg is charged once."""
+        expected_input, expected_output = expected
+        async with self._sessions() as session, session.begin():
+            result = await session.exec(
+                update(RunRecordRow)
+                .where(
+                    col(RunRecordRow.run_id) == run_id,
+                    col(RunRecordRow.input_tokens).is_not_distinct_from(expected_input),
+                    col(RunRecordRow.output_tokens).is_not_distinct_from(expected_output),
+                )
+                .values(**_usage_values(input_tokens, output_tokens))
+                .returning(RunRecordRow)
+            )
+            row = result.scalar_one_or_none() or await session.get(RunRecordRow, run_id)
+            record = _record(row) if row is not None else None
+        return record
+
+
+def _usage_values(input_tokens: int | None, output_tokens: int | None) -> dict[str, object]:
+    values: dict[str, object] = {"updated_at": time.time()}
+    if input_tokens is not None:
+        values["input_tokens"] = func.coalesce(RunRecordRow.input_tokens, 0) + input_tokens
+    if output_tokens is not None:
+        values["output_tokens"] = func.coalesce(RunRecordRow.output_tokens, 0) + output_tokens
+    return values
 
 
 def _rowcount(result: Any) -> int:

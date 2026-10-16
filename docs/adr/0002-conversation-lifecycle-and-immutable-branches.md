@@ -43,7 +43,11 @@ One `conversation_id` owns an immutable message tree.
   reported before it failed or was cancelled, and counts each leg once.
   A usage write and counter reset finish before cancellation cleanup continues,
   including a cancellation after storage committed but before readback returned.
-  Pending-approval stream events expose the cumulative usage of completed legs.
+  Each leg write is compare-and-add against the run totals seen before its
+  first attempt, so retrying after a commit whose acknowledgement was lost does
+  not charge the leg again.
+  Pending-approval and final stream events expose the cumulative usage of
+  completed legs.
   Observations update the highest total for that run, rather than adding
   execution legs again. A completed answer's message carries its run's charge,
   so cleanup retention is best effort and a ledger failure never discards the
@@ -102,8 +106,11 @@ message, which is already a stable domain identity.
   `conversation_run_token_usage` table.
   Migration `0006` backfills available engine run totals associated with every
   conversation branch, including pending and cancelled runs without answers.
-  The only HTTP change is additive: `pending_approval` stream events now carry
-  `input_tokens` and `output_tokens`. There is no YAML contract change.
+  `RunRepository` gains `add_token_usage_if_unchanged`, with a default for
+  existing adapters; the SQL adapter overrides it atomically.
+  The only HTTP change is additive: manager `pending_approval` and `final`
+  stream events now carry `input_tokens` and `output_tokens`. There is no YAML
+  contract change.
 
 ## Consequences
 
