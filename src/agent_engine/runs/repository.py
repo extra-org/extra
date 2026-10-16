@@ -67,3 +67,24 @@ class RunRepository(ABC):
         usage recorded by an earlier execution leg.
         """
         raise NotImplementedError
+
+    async def add_token_usage_if_unchanged(
+        self,
+        run_id: str,
+        *,
+        expected: tuple[int | None, int | None],
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Add one leg only while the stored totals still equal ``expected``.
+
+        Retrying with the totals observed before the first attempt charges a leg
+        at most once, even if that attempt committed and then failed. The run's
+        legs are sequential; shared adapters should override this atomically.
+        """
+        current = await self.get(run_id)
+        if current is None or (current.input_tokens, current.output_tokens) != expected:
+            return current
+        return await self.add_token_usage(
+            run_id, input_tokens=input_tokens, output_tokens=output_tokens
+        )

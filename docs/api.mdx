@@ -271,7 +271,8 @@ the provider never reports cannot be included. The manager and engine must
 share their configured run repository to retain partial cancelled usage.
 Budget reads reconcile available run totals and retry missed retention writes,
 so a failed ledger write does not hide known usage from the budget guard.
-Pending-approval stream events include cumulative `input_tokens` and
+Pending-approval and final stream events, from both `/messages/stream` and
+`/decision/stream`, include the run's cumulative `input_tokens` and
 `output_tokens`, so completed legs can also be accounted for from the event.
 
 ### Pending approval actions

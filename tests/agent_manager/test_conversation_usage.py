@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCall
 from sqlalchemy import event
@@ -21,6 +23,7 @@ from agent_engine.approvals.models import RunRecord, RunStatus
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
+from agent_engine.runtime.hooks import RunContext
 from agent_manager.application import ConversationService, ConversationTokenBudgetExceeded
 from agent_manager.domain import Principal, Repository, Role
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
@@ -30,6 +33,7 @@ from agent_manager.infrastructure.persistence.sql_repository import (
     SqlRepository,
     run_token_usage_upsert,
 )
+from tests.agent_manager.conftest import bearer, build_test_app
 from tests.engine.test_stream_lifecycle import AnsweringModel, BlockingModel, _spec, _write_tool
 
 ALICE = Principal.external("alice")
@@ -774,3 +778,112 @@ async def test_cancelled_charge_survives_engine_run_expiry(tmp_path: Path) -> No
         assert (await restarted_service.usage(cid, ALICE)).used_tokens == 5
         with pytest.raises(ConversationTokenBudgetExceeded):
             await restarted_service.prepare_turn(cid, "new turn", ALICE)
+
+
+class LostUsageAcknowledgement(InMemoryRunRepository):
+    """Commit one usage write, then lose its acknowledgement."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lose_next_acknowledgement = True
+
+    async def add_token_usage(
+        self, run_id: str, *, input_tokens: int | None, output_tokens: int | None
+    ) -> RunRecord | None:
+        record = await super().add_token_usage(
+            run_id, input_tokens=input_tokens, output_tokens=output_tokens
+        )
+        if self.lose_next_acknowledgement:
+            self.lose_next_acknowledgement = False
+            raise ConnectionError("usage commit acknowledgement lost")
+        return record
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_retry_after_an_ambiguous_usage_commit_charges_the_leg_once(
+    tmp_path: Path, stream: bool
+) -> None:
+    runs = LostUsageAcknowledgement()
+    model = AnsweringModel(usage={"input_tokens": 4, "output_tokens": 1, "total_tokens": 5})
+
+    def factory(*args: Any, **kwargs: Any) -> Any:
+        return model
+
+    async with LangGraphEngine(tmp_path, model_factory=factory, run_repository=runs) as engine:
+        await engine.build(_spec())
+        context = RunContext(run_id="ambiguous")
+        with pytest.raises(ConnectionError):
+            if stream:
+                _ = [event async for event in engine.stream("hello", context=context)]
+            else:
+                await engine.run("hello", context=context)
+
+    run = await runs.get("ambiguous")
+    assert run is not None
+    assert (run.input_tokens, run.output_tokens) == (4, 1)
+
+
+async def test_conditional_usage_add_applies_once_per_observed_baseline(
+    repositories: tuple[Repository, RunRepository],
+) -> None:
+    _, runs = repositories
+    await runs.create_if_absent(
+        RunRecord(run_id="run", thread_id="run", system_name="", status=RunStatus.RUNNING)
+    )
+
+    async def add(expected: tuple[int | None, int | None], tokens: int) -> tuple[int | None, ...]:
+        record = await runs.add_token_usage_if_unchanged(
+            "run", expected=expected, input_tokens=tokens, output_tokens=1
+        )
+        assert record is not None
+        # Read the totals now: the in-memory adapter returns its live record.
+        return record.input_tokens, record.output_tokens
+
+    assert await add((None, None), 4) == (4, 1)
+    # A retry with the same baseline after a committed attempt adds nothing.
+    assert await add((None, None), 4) == (4, 1)
+    assert await add((4, 1), 2) == (6, 2)
+    assert (
+        await runs.add_token_usage_if_unchanged(
+            "missing", expected=(None, None), input_tokens=1, output_tokens=1
+        )
+        is None
+    )
+
+
+def sse_events(text: str, event_type: str) -> list[dict[str, Any]]:
+    prefix = f"event: {event_type}\ndata: "
+    return [
+        json.loads(frame.removeprefix(prefix))
+        for frame in text.split("\n\n")
+        if frame.startswith(prefix)
+    ]
+
+
+async def test_pending_usage_reaches_clients_from_both_stream_endpoints(tmp_path: Path) -> None:
+    _write_tool(tmp_path, "send_email")
+    runs = InMemoryRunRepository()
+
+    def factory(*args: Any, **kwargs: Any) -> Any:
+        return ApprovalUsageModel()
+
+    async with LangGraphEngine(tmp_path, model_factory=factory, run_repository=runs) as engine:
+        await engine.build(_spec(tool_id="send_email", auto_mode=False))
+        app = build_test_app(ConversationService(engine, MemoryRepository(), run_repository=runs))
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=bearer("user-1")
+        ) as client:
+            await client.post("/conversations", json={"session_id": "usage-sse"})
+            first = await client.post(
+                "/conversations/usage-sse/messages/stream", json={"message": "send"}
+            )
+            [pending] = sse_events(first.text, "pending_approval")
+            resumed = await client.post(
+                f"/conversations/usage-sse/runs/{pending['run_id']}"
+                f"/approvals/{pending['approval_id']}/decision/stream",
+                json={"decision": ApprovalDecision.ALLOW_ONCE.value},
+            )
+            [second] = sse_events(resumed.text, "pending_approval")
+
+    assert (pending["input_tokens"], pending["output_tokens"]) == (4, 1)
+    assert (second["input_tokens"], second["output_tokens"]) == (8, 2)
