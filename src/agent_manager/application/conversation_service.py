@@ -11,7 +11,7 @@ import dataclasses
 import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Sequence
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Any, TypeVar, cast
 
@@ -164,8 +164,35 @@ class ConversationService:
 
     async def usage(self, conversation_id: str, principal: Principal) -> TokenBudgetUsage:
         await self._authorize(conversation_id, principal)
-        used = await self._repository.get_token_usage(conversation_id)
+        used = await self._token_usage(conversation_id)
         return TokenBudgetUsage.from_totals(used, self._max_tokens)
+
+    async def _token_usage(self, conversation_id: str) -> int:
+        """Reconcile missed charges from authoritative records in one batched read."""
+        usage = await self._repository.get_token_usage_by_run(conversation_id)
+        if self._run_repository is not None:
+            run_ids = {run_id for run_id in usage if run_id is not None}
+            records = await self._run_repository.get_many(run_ids)
+            for run_id, run in records.items():
+                total = (run.input_tokens or 0) + (run.output_tokens or 0)
+                if total <= usage.get(run_id, 0):
+                    continue
+                usage[run_id] = total
+                try:
+                    await self._persist_durably(
+                        self._repository.record_run_token_usage(conversation_id, run_id, total)
+                    )
+                except Exception as exc:
+                    # The known charge still applies while its retention retries fail.
+                    log(
+                        logger,
+                        logging.ERROR,
+                        "run token usage reconciliation failed",
+                        conversation_id=conversation_id,
+                        run_id=run_id,
+                        error=type(exc).__name__,
+                    )
+        return sum(usage.values())
 
     async def list_conversations(
         self, principal: Principal, page: PageRequest | None = None
@@ -183,20 +210,25 @@ class ConversationService:
         turn = await self.prepare_turn(
             conversation_id, text, principal, edit_message_id=edit_message_id
         )
-        try:
-            result = await self._engine.run(
-                turn.message,
-                history=turn.history,
-                context=_run_context(turn),
-            )
-        except asyncio.CancelledError:
-            await self.cancel_turn(turn)
-            raise
-        except Exception:
-            await self.fail_turn(turn)
-            raise
+        async with self._retaining_run_usage(conversation_id, turn.run_id):
+            try:
+                result = await self._engine.run(
+                    turn.message,
+                    history=turn.history,
+                    context=_run_context(turn),
+                )
+            except asyncio.CancelledError:
+                await self.cancel_turn(turn)
+                raise
+            except Exception:
+                await self.fail_turn(turn)
+                raise
         if result.pending_approval is None:
             await self.complete_turn(turn, result)
+        else:
+            await self._record_token_usage(
+                conversation_id, turn.run_id, result.input_tokens, result.output_tokens
+            )
         return result
 
     async def prepare_turn(
@@ -213,7 +245,7 @@ class ConversationService:
         await self._register(principal)
 
         if self._max_tokens is not None:
-            used = await self._repository.get_token_usage(conversation_id)
+            used = await self._token_usage(conversation_id)
             if used >= self._max_tokens:
                 raise ConversationTokenBudgetExceeded(conversation_id)
 
@@ -321,25 +353,26 @@ class ConversationService:
         """Resume one pending run as the owner of its conversation."""
         session = await self._authorize(conversation_id, principal)
         engine = self._require_approval_engine()
-        try:
-            result = await engine.resume(
-                run_id,
-                approval_id,
-                decision,
-                caller_user_id=session.user_id,
-                caller_session_id=session.session_id,
-                access_token=principal.access_token,
-            )
-        except ApprovalAlreadyProcessed:
-            recovered = await engine.get_processed_result(
-                run_id,
-                approval_id,
-                caller_user_id=session.user_id,
-                caller_session_id=session.session_id,
-            )
-            if recovered is None:
-                raise
-            result = recovered
+        async with self._retaining_run_usage(conversation_id, run_id):
+            try:
+                result = await engine.resume(
+                    run_id,
+                    approval_id,
+                    decision,
+                    caller_user_id=session.user_id,
+                    caller_session_id=session.session_id,
+                    access_token=principal.access_token,
+                )
+            except ApprovalAlreadyProcessed:
+                recovered = await engine.get_processed_result(
+                    run_id,
+                    approval_id,
+                    caller_user_id=session.user_id,
+                    caller_session_id=session.session_id,
+                )
+                if recovered is None:
+                    raise
+                result = recovered
         if result.pending_approval is None:
             parent_message_id = await self._user_message_id_for_run(session.session_id, run_id)
             await self._persist_assistant_turn(
@@ -353,6 +386,10 @@ class ConversationService:
                 visited=result.visited,
                 used_tools=result.used_tools,
             )
+        else:
+            await self._record_token_usage(
+                conversation_id, run_id, result.input_tokens, result.output_tokens
+            )
         return result
 
     async def cancel_pending_approval(
@@ -365,12 +402,13 @@ class ConversationService:
         """Terminally cancel a pending approval owned by this conversation."""
         session = await self._authorize(conversation_id, principal)
         engine = self._require_approval_cancellation_engine()
-        await engine.cancel_pending_approval(
-            run_id,
-            approval_id,
-            caller_user_id=session.user_id,
-            caller_session_id=session.session_id,
-        )
+        async with self._retaining_run_usage(conversation_id, run_id):
+            await engine.cancel_pending_approval(
+                run_id,
+                approval_id,
+                caller_user_id=session.user_id,
+                caller_session_id=session.session_id,
+            )
 
     async def stream_approval(
         self,
@@ -394,26 +432,34 @@ class ConversationService:
                 caller_session_id=session.session_id,
                 access_token=principal.access_token,
             )
-            try:
-                async for event in engine_stream:
-                    if event.type == "final":
-                        await self._persist_durably(
-                            self._persist_assistant_turn(
-                                session_id=session.session_id,
-                                run_id=run_id,
-                                user_id=session.user_id,
-                                parent_message_id=parent_message_id,
-                                content=event.content or "",
-                                input_tokens=event.input_tokens,
-                                output_tokens=event.output_tokens,
-                                visited=event.route or (),
-                                used_tools=event.used_tools,
+            async with self._retaining_run_usage(conversation_id, run_id):
+                try:
+                    async for event in engine_stream:
+                        if event.type == "final":
+                            await self._persist_durably(
+                                self._persist_assistant_turn(
+                                    session_id=session.session_id,
+                                    run_id=run_id,
+                                    user_id=session.user_id,
+                                    parent_message_id=parent_message_id,
+                                    content=event.content or "",
+                                    input_tokens=event.input_tokens,
+                                    output_tokens=event.output_tokens,
+                                    visited=event.route or (),
+                                    used_tools=event.used_tools,
+                                )
                             )
-                        )
-                    yield event
-            finally:
-                if isinstance(engine_stream, AsyncGenerator):
-                    await engine_stream.aclose()
+                        elif event.type == "pending_approval":
+                            await self._persist_durably(
+                                self._retain_run_usage(conversation_id, run_id)
+                            )
+                            await self._record_token_usage(
+                                conversation_id, run_id, event.input_tokens, event.output_tokens
+                            )
+                        yield event
+                finally:
+                    if isinstance(engine_stream, AsyncGenerator):
+                        await engine_stream.aclose()
 
         return events()
 
@@ -467,15 +513,70 @@ class ConversationService:
             history=turn.history,
             context=_run_context(turn),
         )
-        try:
-            async for event in engine_stream:
-                if event.type == "final":
-                    await self._persist_stream_final(turn, event)
+        async with self._retaining_run_usage(turn.session_id, turn.run_id):
+            try:
+                async for event in engine_stream:
+                    if event.type == "final":
+                        await self._persist_stream_final(turn, event)
+                    elif event.type == "pending_approval":
+                        await self._persist_durably(
+                            self._retain_run_usage(turn.session_id, turn.run_id)
+                        )
+                        await self._record_token_usage(
+                            turn.session_id, turn.run_id, event.input_tokens, event.output_tokens
+                        )
 
-                yield event
+                    yield event
+            finally:
+                if isinstance(engine_stream, AsyncGenerator):
+                    await engine_stream.aclose()
+
+    @asynccontextmanager
+    async def _retaining_run_usage(self, conversation_id: str, run_id: str) -> AsyncIterator[None]:
+        """Best-effort retention when execution ends; it never replaces the turn's outcome.
+
+        Answers and approval pauses persist their own charge, so this is the only
+        record just for failed or cancelled work.
+        """
+        try:
+            yield
         finally:
-            if isinstance(engine_stream, AsyncGenerator):
-                await engine_stream.aclose()
+            try:
+                await self._persist_durably(self._retain_run_usage(conversation_id, run_id))
+            except Exception as exc:
+                log(
+                    logger,
+                    logging.ERROR,
+                    "run token usage retention failed",
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    error=type(exc).__name__,
+                )
+
+    async def _retain_run_usage(self, conversation_id: str, run_id: str) -> None:
+        """Copy reported usage after execution cleanup, before run records can expire."""
+        if self._run_repository is None:
+            return
+        # A rejected resume may name a run from another conversation.
+        if await self._repository.get_user_message_for_run(conversation_id, run_id) is None:
+            return
+        run = await self._run_repository.get(run_id)
+        if run is not None:
+            await self._record_token_usage(
+                conversation_id, run_id, run.input_tokens, run.output_tokens
+            )
+
+    async def _record_token_usage(
+        self,
+        conversation_id: str,
+        run_id: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> None:
+        if input_tokens is not None or output_tokens is not None:
+            await self._repository.record_run_token_usage(
+                conversation_id, run_id, (input_tokens or 0) + (output_tokens or 0)
+            )
 
     async def _persist_stream_final(
         self, turn: PreparedConversationTurn, final: RunStreamEvent
@@ -594,7 +695,7 @@ class ConversationService:
         visited: Sequence[str],
         used_tools: Sequence[ToolUsageRecord],
     ) -> None:
-        """Persist one normalized final assistant response."""
+        """Persist one normalized final assistant response; its tokens are the run's charge."""
         message_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
             f"agent-manager:{session_id}:{run_id}:assistant",

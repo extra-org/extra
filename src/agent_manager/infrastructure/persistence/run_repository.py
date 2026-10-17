@@ -7,6 +7,8 @@ from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import func, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel import col, select
@@ -14,7 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent_engine.approvals.models import RunRecord, RunStatus, can_transition_run
 from agent_engine.runs.repository import RunRepository
-from agent_manager.infrastructure.persistence.tables import RunRecordRow
+from agent_manager.infrastructure.persistence.tables import RunRecordRow, RunTokenLegRow
 
 
 class SqlRunRepository(RunRepository):
@@ -73,16 +75,67 @@ class SqlRunRepository(RunRepository):
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> RunRecord | None:
-        values: dict[str, object] = {"updated_at": time.time()}
-        if input_tokens is not None:
-            values["input_tokens"] = func.coalesce(RunRecordRow.input_tokens, 0) + input_tokens
-        if output_tokens is not None:
-            values["output_tokens"] = func.coalesce(RunRecordRow.output_tokens, 0) + output_tokens
         async with self._sessions() as session, session.begin():
-            await session.exec(
-                update(RunRecordRow).where(col(RunRecordRow.run_id) == run_id).values(**values)
+            # Return the charged row in the write transaction. A separate read
+            # after commit could fail and cause the caller to add the leg twice.
+            result = await session.exec(
+                update(RunRecordRow)
+                .where(col(RunRecordRow.run_id) == run_id)
+                .values(**_usage_values(input_tokens, output_tokens))
+                .returning(RunRecordRow)
             )
-        return await self.get(run_id)
+            row = result.scalar_one_or_none()
+            record = _record(row) if row is not None else None
+        return record
+
+    async def add_leg_token_usage(
+        self,
+        run_id: str,
+        *,
+        leg_id: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Claim the leg key and add its usage in one transaction."""
+        async with self._sessions() as session, session.begin():
+            exists = await session.exec(
+                select(col(RunRecordRow.run_id)).where(col(RunRecordRow.run_id) == run_id)
+            )
+            if exists.first() is None:
+                return None
+            bind = session.get_bind()
+            insert = (
+                sqlite_insert(RunTokenLegRow)
+                if bind.dialect.name == "sqlite"
+                else postgres_insert(RunTokenLegRow)
+            )
+            claimed = await session.exec(
+                insert.values(run_id=run_id, leg_id=leg_id)
+                .on_conflict_do_nothing(index_elements=["run_id", "leg_id"])
+                .returning(col(RunTokenLegRow.leg_id))
+            )
+            if claimed.first() is None:
+                # This leg was already charged by an earlier, unacknowledged attempt.
+                row = await session.get(RunRecordRow, run_id)
+            else:
+                result = await session.exec(
+                    update(RunRecordRow)
+                    .where(col(RunRecordRow.run_id) == run_id)
+                    .values(**_usage_values(input_tokens, output_tokens))
+                    .returning(RunRecordRow)
+                )
+                row = result.scalar_one_or_none()
+            record = _record(row) if row is not None else None
+        return record
+
+
+def _usage_values(input_tokens: int | None, output_tokens: int | None) -> dict[str, object]:
+    values: dict[str, object] = {"updated_at": time.time()}
+    if input_tokens is not None:
+        values["input_tokens"] = func.coalesce(RunRecordRow.input_tokens, 0) + input_tokens
+    if output_tokens is not None:
+        values["output_tokens"] = func.coalesce(RunRecordRow.output_tokens, 0) + output_tokens
+    return values
 
 
 def _rowcount(result: Any) -> int:

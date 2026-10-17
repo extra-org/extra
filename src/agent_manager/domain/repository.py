@@ -161,8 +161,30 @@ class Repository(ABC):
         ...
 
     @abstractmethod
+    async def record_run_token_usage(
+        self, conversation_id: str, run_id: str, total_tokens: int
+    ) -> None:
+        """Retain a run's cumulative usage, independently of its messages.
+
+        Repeated or out-of-order observations keep the highest total. The
+        charge survives branch edits and expiry of engine lifecycle records.
+        """
+
     async def get_token_usage(self, conversation_id: str) -> int:
-        """Total input + output tokens consumed across all messages in the conversation."""
+        """Lifetime tokens across all branches, counting each run once.
+
+        Message usage remains the fallback for historical runs. A recorded
+        run total replaces, rather than adds to, that run's message usage.
+        """
+        return sum((await self.get_token_usage_by_run(conversation_id)).values())
+
+    @abstractmethod
+    async def get_token_usage_by_run(self, conversation_id: str) -> dict[str | None, int]:
+        """Lifetime message/ledger totals, including zero-usage runs on every branch.
+
+        The ``None`` key groups legacy messages without a run id. Run ids must
+        belong to this conversation so callers can reconcile authoritative runs.
+        """
 
     @abstractmethod
     async def delete_expired_snapshots(self, now: datetime) -> int: ...

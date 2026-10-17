@@ -6,6 +6,7 @@ the proof that swapping SQLite/Postgres/in-memory is safe.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -358,6 +359,78 @@ async def test_get_token_usage_sums_across_messages(repo: Repository) -> None:
         await repo.append_message(msg)
 
     assert await repo.get_token_usage("sess-1") == 43  # 10+5+20+8
+
+
+async def test_run_usage_is_cumulative_idempotent_and_isolated(repo: Repository) -> None:
+    await repo.create_session("charged")
+    await repo.create_session("other")
+    await repo.record_run_token_usage("charged", "cancelled", 5)
+    await repo.record_run_token_usage("charged", "resumed", 3)
+    await repo.record_run_token_usage("charged", "resumed", 10)
+    await repo.record_run_token_usage("charged", "resumed", 10)
+    await repo.record_run_token_usage("charged", "resumed", 4)
+    await repo.record_run_token_usage("other", "separate", 100)
+
+    assert await repo.get_token_usage("charged") == 15
+    assert await repo.get_token_usage("other") == 100
+
+
+async def test_run_usage_does_not_double_count_answers_or_lose_legacy_usage(
+    repo: Repository,
+) -> None:
+    await repo.create_session("charged")
+    for message in (
+        _message("charged", Role.ASSISTANT, "legacy", run_id="old", input_tokens=7),
+        _message("charged", Role.ASSISTANT, "resumed", run_id="new", input_tokens=10),
+        _message("charged", Role.ASSISTANT, "no run", run_id=None, input_tokens=2),
+    ):
+        await repo.append_message(message)
+    await repo.record_run_token_usage("charged", "new", 10)
+    await repo.record_run_token_usage("charged", "old", 3)
+    await repo.record_run_token_usage("charged", "cancelled", 5)
+
+    assert await repo.get_token_usage("charged") == 24  # 7 + 10 + 2 + 5
+
+
+async def test_concurrent_usage_observations_keep_the_largest_total(repo: Repository) -> None:
+    await repo.create_session("charged")
+    await asyncio.gather(
+        *(repo.record_run_token_usage("charged", "run", total) for total in (5, 15, 10, 5))
+    )
+
+    assert await repo.get_token_usage("charged") == 15
+
+
+async def test_usage_projection_includes_uncharged_runs_on_inactive_branches(
+    repo: Repository,
+) -> None:
+    await repo.create_session("charged")
+    await repo.create_session("other")
+    now = datetime.now(UTC)
+    original = ConversationMessage(
+        "original", "charged", Role.USER, "original", now, run_id="missed-charge"
+    )
+    edited = ConversationMessage("edited", "charged", Role.USER, "edited", now, run_id="active-run")
+    await repo.append_message_if_head(original, None)
+    assert await repo.append_message_if_head(edited, "original")
+    await repo.record_run_token_usage("charged", "active-run", 5)
+    await repo.record_run_token_usage("other", "foreign-run", 100)
+
+    assert await repo.list_conversation_messages("charged") == [edited]
+    assert await repo.get_token_usage_by_run("charged") == {
+        "missed-charge": 0,
+        "active-run": 5,
+    }
+
+
+async def test_negative_usage_cannot_refund_a_run(repo: Repository) -> None:
+    await repo.create_session("charged")
+    await repo.record_run_token_usage("charged", "run", 5)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        await repo.record_run_token_usage("charged", "run", -1)
+
+    assert await repo.get_token_usage("charged") == 5
 
 
 async def test_delete_expired_snapshots_and_rebuild(repo: Repository) -> None:

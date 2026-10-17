@@ -67,3 +67,22 @@ class RunRepository(ABC):
         usage recorded by an earlier execution leg.
         """
         raise NotImplementedError
+
+    async def add_leg_token_usage(
+        self,
+        run_id: str,
+        *,
+        leg_id: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Add one execution leg's usage once per ``leg_id``.
+
+        Retrying a leg whose earlier write committed but failed to acknowledge
+        must not charge it again, while different legs of one run, including
+        overlapping ones, each apply. The default adds unconditionally; adapters
+        override it to record the key atomically with the totals.
+        """
+        return await self.add_token_usage(
+            run_id, input_tokens=input_tokens, output_tokens=output_tokens
+        )

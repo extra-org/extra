@@ -201,6 +201,8 @@ def _pending_approval_event(system_name: str, result: RunResult) -> RunStreamEve
         provider=approval.provider,
         server_id=approval.server_id,
         arguments=dict(approval.arguments),
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
     )
 
 
@@ -500,16 +502,49 @@ class LangGraphEngine(Engine):
         tokens: TokenUsage,
     ) -> tuple[int | None, int | None]:
         """Persist one execution leg and return cumulative usage for the run."""
-        assert ctx.run_id is not None
+        run_id = ctx.run_id
+        assert run_id is not None
         input_tokens, output_tokens = tokens.totals()
-        run = await self._run_repository.add_token_usage(
-            ctx.run_id,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
-        if run is None:
-            raise RunNotFound(ctx.run_id)
-        return run.input_tokens, run.output_tokens
+
+        async def persist() -> tuple[int | None, int | None]:
+            # Keyed per leg: a retry after a commit whose acknowledgement was lost
+            # adds nothing, while overlapping legs of the same run each apply.
+            run = await self._run_repository.add_leg_token_usage(
+                run_id,
+                leg_id=tokens.leg_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+            if run is None:
+                raise RunNotFound(run_id)
+            tokens.reset()
+            return run.input_tokens, run.output_tokens
+
+        # Storage may commit before its response/readback returns. Drain that
+        # write and reset the counters before cancellation cleanup can retry it.
+        persistence = asyncio.create_task(persist())
+        try:
+            return await asyncio.shield(persistence)
+        except asyncio.CancelledError:
+            try:
+                await persistence
+            except Exception as exc:
+                log(
+                    logger,
+                    logging.ERROR,
+                    "token usage persistence failed during cancellation",
+                    run_id=ctx.run_id,
+                    error=type(exc).__name__,
+                )
+            raise
+
+    async def _record_partial_usage(self, ctx: RunContext, tokens: TokenUsage) -> None:
+        """Best-effort charge for usage a failed or abandoned leg already reported."""
+        try:
+            if tokens.totals() != (None, None):
+                await self._record_token_usage(ctx, tokens)
+        except Exception:
+            logger.exception("failed to record token usage for an unfinished run")
 
     async def run(
         self,
@@ -534,7 +569,15 @@ class LangGraphEngine(Engine):
                 run_result = await self._completed_result(ctx, result, token_usage=token_usage)
                 await lifecycle.succeed(ctx, run_result)
                 return run_result
+            except asyncio.CancelledError:
+                await asyncio.shield(
+                    self._cancel_abandoned_run(
+                        lifecycle, ctx, tokens, reason="run request cancelled"
+                    )
+                )
+                raise
             except Exception as exc:
+                await self._record_partial_usage(ctx, tokens)
                 await lifecycle.fail(ctx, exc)
                 raise
 
@@ -713,10 +756,13 @@ class LangGraphEngine(Engine):
                 return run_result
             except asyncio.CancelledError:
                 await asyncio.shield(
-                    lifecycle.cancel(ctx, reason="approval resume request cancelled")
+                    self._cancel_abandoned_run(
+                        lifecycle, ctx, tokens, reason="approval resume request cancelled"
+                    )
                 )
                 raise
             except Exception as exc:
+                await self._record_partial_usage(ctx, tokens)
                 await lifecycle.fail(ctx, exc)
                 raise
 
@@ -944,15 +990,14 @@ class LangGraphEngine(Engine):
         lifecycle: RunLifecycle,
         ctx: RunContext,
         tokens: TokenUsage,
+        *,
+        reason: str = "consumer abandoned stream",
     ) -> None:
         """Persist reported partial usage, then make cancellation terminal."""
         try:
-            if tokens.totals() != (None, None):
-                await self._record_token_usage(ctx, tokens)
-        except Exception:
-            logger.exception("failed to record token usage for cancelled run")
+            await self._record_partial_usage(ctx, tokens)
         finally:
-            await lifecycle.cancel(ctx)
+            await lifecycle.cancel(ctx, reason=reason)
 
     async def _stream_graph(
         self,
@@ -989,6 +1034,7 @@ class LangGraphEngine(Engine):
             finally:
                 terminal.finalized.set()
         except Exception as exc:
+            await self._record_partial_usage(ctx, tokens)
             await lifecycle.fail(ctx, exc)
             channel.abort(exc)
         finally:

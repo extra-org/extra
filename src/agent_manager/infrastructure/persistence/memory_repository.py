@@ -52,6 +52,7 @@ class MemoryRepository(Repository):
         self._sessions: dict[str, ConversationSession] = {}
         self._messages: dict[str, list[ConversationMessage]] = {}
         self._snapshots: dict[str, ConversationSnapshot] = {}
+        self._run_token_usage: dict[str, dict[str, int]] = {}
 
     async def upsert_user(
         self,
@@ -313,11 +314,25 @@ class MemoryRepository(Repository):
         self._snapshots[session_id] = snapshot
         return snapshot
 
-    async def get_token_usage(self, conversation_id: str) -> int:
-        return sum(
-            (m.input_tokens or 0) + (m.output_tokens or 0)
-            for m in self._messages.get(conversation_id, [])
-        )
+    async def record_run_token_usage(
+        self, conversation_id: str, run_id: str, total_tokens: int
+    ) -> None:
+        if total_tokens < 0:
+            raise ValueError("total_tokens must be non-negative")
+        usage = self._run_token_usage.setdefault(conversation_id, {})
+        usage[run_id] = max(usage.get(run_id, 0), total_tokens)
+
+    async def get_token_usage_by_run(self, conversation_id: str) -> dict[str | None, int]:
+        usage: dict[str | None, int] = {}
+        for message in self._messages.get(conversation_id, []):
+            usage[message.run_id] = (
+                usage.get(message.run_id, 0)
+                + (message.input_tokens or 0)
+                + (message.output_tokens or 0)
+            )
+        for run_id, total in self._run_token_usage.get(conversation_id, {}).items():
+            usage[run_id] = max(usage.get(run_id, 0), total)
+        return usage
 
     async def get_context(
         self,

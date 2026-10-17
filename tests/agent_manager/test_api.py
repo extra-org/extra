@@ -482,6 +482,52 @@ def test_usage_reports_null_budget_when_unset(client: TestClient) -> None:
     }
 
 
+@pytest.mark.parametrize("endpoint", ["messages", "messages/stream"])
+def test_pending_usage_is_charged_and_blocks_new_turns(endpoint: str) -> None:
+    class TokenPendingEngine(_ApprovalRecordingEngine):
+        def _pending_result(self, context: RunContext | None) -> RunResult:
+            return dataclasses.replace(
+                super()._pending_result(context), input_tokens=4, output_tokens=1
+            )
+
+    client = TestClient(
+        build_test_app(ConversationService(TokenPendingEngine(), MemoryRepository(), max_tokens=5)),
+        headers=bearer("user-1"),
+    )
+    cid = client.post("/conversations").json()["conversation_id"]
+    pending = client.post(f"/conversations/{cid}/messages", json={"message": "send"})
+    assert pending.json()["status"] == "pending_approval"
+    assert client.get(f"/conversations/{cid}/usage").json()["used_tokens"] == 5
+    assert (
+        client.post(f"/conversations/{cid}/{endpoint}", json={"message": "next"}).status_code == 429
+    )
+
+
+async def test_rejected_resume_does_not_charge_another_conversations_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runs = InMemoryRunRepository()
+    engine = _ApprovalRecordingEngine(runs)
+    service = ConversationService(engine, MemoryRepository(), run_repository=runs)
+    alice = Principal.external("alice")
+    bob = Principal.external("bob")
+    cid = await service.create(alice)
+    other_cid = await service.create(bob)
+    foreign_turn = await service.prepare_turn(other_cid, "request", bob)
+    await runs.add_token_usage(foreign_turn.run_id, input_tokens=20, output_tokens=10)
+
+    async def reject(*args: object, **kwargs: object) -> RunResult:
+        raise ApprovalNotFound("foreign-approval")
+
+    monkeypatch.setattr(engine, "resume", reject)
+    with pytest.raises(ApprovalNotFound):
+        await service.decide_approval(
+            cid, foreign_turn.run_id, "foreign-approval", ApprovalDecision.ALLOW_ONCE, alice
+        )
+
+    assert (await service.usage(cid, alice)).used_tokens == 0
+
+
 def test_usage_reports_cumulative_tokens_and_severity_against_budget() -> None:
     class TokenEngine(RecordingEngine):
         async def run(
