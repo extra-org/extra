@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -18,8 +19,20 @@ from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.repository import ToolUsageRepository
+from agent_manager.application.channels.controls import ChannelControlService
+from agent_manager.application.channels.delivery import ChannelDeliveryService
+from agent_manager.application.channels.preparation import ChannelTurnPreparer
+from agent_manager.application.channels.processing import ChannelTurnProcessor
+from agent_manager.application.channels.worker import ChannelWorker
+from agent_manager.application.channels.worker_options import ChannelWorkerOptions
+from agent_manager.application.conversation_service import ConversationService
 from agent_manager.config import AuthMode, Settings
 from agent_manager.domain import Repository
+from agent_manager.domain.channels.controls import ControlRepository
+from agent_manager.domain.channels.delivery import DeliveryRepository
+from agent_manager.domain.channels.identity import ChannelIdentityResolver
+from agent_manager.domain.channels.repository import ChannelRepository
+from agent_manager.domain.channels.webhooks import WebhookRepository
 from agent_manager.infrastructure.auth.anonymous_identity_source import AnonymousIdentitySource
 from agent_manager.infrastructure.auth.claim_mapping import ClaimMapping
 from agent_manager.infrastructure.auth.host_identity_source import HostIdentitySource
@@ -28,6 +41,16 @@ from agent_manager.infrastructure.auth.identity_source import IdentitySource
 from agent_manager.infrastructure.auth.static_secret_key_source import StaticSecretKeySource
 from agent_manager.infrastructure.auth.token_policy import TokenPolicy
 from agent_manager.infrastructure.auth.token_verifier import TokenVerifier
+from agent_manager.infrastructure.channels.identity_loader import load_channel_identity_resolver
+from agent_manager.infrastructure.channels.whatsapp.config import WhatsAppWebhookConfig
+from agent_manager.infrastructure.channels.whatsapp.rendering import render_text
+from agent_manager.infrastructure.channels.whatsapp.sender import WhatsAppSender
+from agent_manager.infrastructure.channels.whatsapp.webhook import WhatsAppWebhook
+from agent_manager.infrastructure.persistence.channels.controls import SqlControlRepository
+from agent_manager.infrastructure.persistence.channels.delivery import SqlDeliveryRepository
+from agent_manager.infrastructure.persistence.channels.ownership import SqlChannelWorkerOwnership
+from agent_manager.infrastructure.persistence.channels.repository import SqlChannelRepository
+from agent_manager.infrastructure.persistence.channels.webhooks import SqlWebhookRepository
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from agent_manager.infrastructure.persistence.run_repository import SqlRunRepository
@@ -45,6 +68,140 @@ class ApplicationRepositories:
     session_approvals: SessionApprovalRepository
     tool_usage: ToolUsageRepository
     runs: RunRepository
+    channels: ChannelRepository | None = None
+    webhooks: WebhookRepository | None = None
+    deliveries: DeliveryRepository | None = None
+    controls: ControlRepository | None = None
+
+
+def build_whatsapp_webhook(
+    settings: Settings,
+    repositories: ApplicationRepositories,
+    system_id: str,
+) -> WhatsAppWebhook | None:
+    if not settings.extra_whatsapp_enabled:
+        return None
+    if repositories.webhooks is None:
+        raise ValueError("WhatsApp intake requires a durable webhook repository")
+    assert settings.extra_whatsapp_account_id is not None
+    assert settings.extra_whatsapp_phone_number_id is not None
+    assert settings.extra_whatsapp_app_secret is not None
+    assert settings.extra_whatsapp_verify_token is not None
+    return WhatsAppWebhook(
+        WhatsAppWebhookConfig(
+            connection_id=settings.extra_whatsapp_connection_id,
+            system_id=system_id,
+            account_id=settings.extra_whatsapp_account_id,
+            phone_number_id=settings.extra_whatsapp_phone_number_id,
+            app_secret=settings.extra_whatsapp_app_secret,
+            verify_token=settings.extra_whatsapp_verify_token,
+            max_body_bytes=settings.extra_whatsapp_max_body_bytes,
+        ),
+        repositories.webhooks,
+    )
+
+
+@asynccontextmanager
+async def channel_worker_lifespan(
+    settings: Settings,
+    repositories: ApplicationRepositories,
+    service: ConversationService,
+    system_id: str,
+) -> AsyncIterator[ChannelWorker | None]:
+    if not settings.extra_whatsapp_worker_enabled:
+        yield None
+        return
+    if repositories.channels is None:
+        raise ValueError("channel worker requires durable storage")
+    assert settings.extra_whatsapp_organization_id is not None
+    assert settings.extra_whatsapp_identity_resolver is not None
+    options = ChannelWorkerOptions(
+        connection_id=settings.extra_whatsapp_connection_id,
+        system_id=system_id,
+        organization_id=settings.extra_whatsapp_organization_id,
+        concurrency=settings.extra_whatsapp_worker_concurrency,
+        poll_seconds=settings.extra_whatsapp_worker_poll_seconds,
+        turn_seconds=settings.extra_whatsapp_worker_turn_seconds,
+        drain_seconds=settings.extra_whatsapp_worker_drain_seconds,
+    )
+    identities = load_channel_identity_resolver(settings.extra_whatsapp_identity_resolver)
+    sender: WhatsAppSender | None = None
+    try:
+        delivery = None
+        controls = None
+        if settings.extra_whatsapp_sender_enabled:
+            assert repositories.deliveries is not None and repositories.controls is not None
+            assert settings.extra_whatsapp_api_version is not None
+            assert settings.extra_whatsapp_phone_number_id is not None
+            assert settings.extra_whatsapp_access_token is not None
+            assert settings.extra_whatsapp_support_contact is not None
+            sender = WhatsAppSender(
+                settings.extra_whatsapp_api_version,
+                settings.extra_whatsapp_phone_number_id,
+                settings.extra_whatsapp_access_token,
+            )
+            delivery = ChannelDeliveryService(
+                repositories.deliveries,
+                identities,
+                sender,
+                connection_id=options.connection_id,
+                system_id=system_id,
+                organization_id=options.organization_id,
+                render=render_text,
+            )
+            controls = ChannelControlService(
+                repositories.controls,
+                repositories.channels,
+                support_contact=settings.extra_whatsapp_support_contact,
+            )
+        preparer = ChannelTurnPreparer(
+            service,
+            repositories.channels,
+            identities,
+            connection_id=options.connection_id,
+            system_id=system_id,
+            organization_id=options.organization_id,
+        )
+        processor = ChannelTurnProcessor(
+            service, repositories.channels, repositories.runs, preparer, options, controls=controls
+        )
+        ownership = SqlChannelWorkerOwnership(
+            settings.effective_database_url, options.connection_id
+        )
+        async with ChannelWorker(
+            repositories.channels, processor, ownership, options, delivery=delivery
+        ) as worker:
+            yield worker
+    finally:
+        cleanup = asyncio.create_task(_close_channel_clients(sender, identities))
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            # A cancelled lifespan must still join client cleanup before its
+            # repositories are disposed, including repeated caller cancellation.
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+            cleanup.result()
+            raise
+
+
+async def _close_channel_clients(
+    sender: WhatsAppSender | None, identities: ChannelIdentityResolver
+) -> None:
+    try:
+        if sender is not None:
+            try:
+                await sender.close()
+            except Exception as exc:
+                logger.warning("channel sender cleanup failed: type=%s", type(exc).__name__)
+    finally:
+        try:
+            await identities.close()
+        except Exception as exc:
+            logger.warning("channel identity cleanup failed: type=%s", type(exc).__name__)
 
 
 def build_session_approval_repository() -> SessionApprovalRepository:
@@ -144,6 +301,10 @@ async def application_repositories(
             session_approvals=session_approvals,
             tool_usage=tool_usage,
             runs=SqlRunRepository(sessions),
+            channels=SqlChannelRepository(sessions),
+            webhooks=SqlWebhookRepository(sessions),
+            deliveries=SqlDeliveryRepository(sessions),
+            controls=SqlControlRepository(sessions),
         )
     finally:
         await db_engine.dispose()

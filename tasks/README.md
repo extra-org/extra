@@ -22,5 +22,13 @@ finishing, Expected final report.**
 | 0010 | [Docker deployment](0010-docker-deployment.md)             | 0009       |
 | 0011 | [Observability & tracing](0011-observability-and-tracing.md) | 0004     |
 | 0012 | [Tests & quality gates](0012-tests-and-quality-gates.md)   | all        |
+| 0013 | [Idempotent conversation turns](0013-idempotent-conversation-turns.md) | conversation lifecycle; WhatsApp WA-01 |
+| 0014 | [Channel storage and identity](0014-channel-storage-and-identity.md) | 0013; WhatsApp WA-02 |
+| 0015 | [Authenticated WhatsApp webhook](0015-whatsapp-webhook.md) | 0014; WhatsApp WA-03 |
+| 0016 | [Channel turn worker and recovery](0016-channel-turn-worker.md) | 0015; WhatsApp WA-04 |
+| 0017 | [WhatsApp review and hardening](0017-whatsapp-review-and-hardening.md) | 0013–0016 |
+| 0018 | [SQL test resource cleanup](0018-sql-test-resource-cleanup.md) | 0017 review verification |
+| 0019 | [WhatsApp outbound delivery and controls](0019-whatsapp-delivery-and-controls.md) | 0013–0018; WhatsApp WA-05 |
+| 0020 | [WhatsApp delivery review](0020-whatsapp-delivery-review.md) | 0019 |
 
 Before starting any task, read `AGENTS.md` and the skill(s) the task lists.

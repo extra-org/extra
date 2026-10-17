@@ -26,6 +26,7 @@ from agent_manager.domain.pagination import (
     encode_cursor,
     ensure_utc,
 )
+from agent_manager.domain.turn_preparation import validate_prepared_message
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
@@ -53,6 +54,7 @@ class MemoryRepository(Repository):
         self._messages: dict[str, list[ConversationMessage]] = {}
         self._snapshots: dict[str, ConversationSnapshot] = {}
         self._run_token_usage: dict[str, dict[str, int]] = {}
+        self._preparations: dict[str, ConversationMessage] = {}
 
     async def upsert_user(
         self,
@@ -262,6 +264,45 @@ class MemoryRepository(Repository):
             ),
             None,
         )
+
+    async def get_prepared_message(self, key_digest: str) -> ConversationMessage | None:
+        return self._preparations.get(key_digest)
+
+    async def append_prepared_message(
+        self,
+        key_digest: str,
+        message: ConversationMessage,
+        expected_head_message_id: str | None,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> ConversationMessage | None:
+        existing = self._preparations.get(key_digest)
+        if existing is not None:
+            validate_prepared_message(
+                existing, message.session_id, message.user_id or "", message.content
+            )
+            return existing
+        original_session = self._sessions.get(message.session_id)
+        if original_session is None or original_session.head_message_id != expected_head_message_id:
+            return None
+        original_messages = list(self._messages.get(message.session_id, []))
+        original_snapshot = self._snapshots.get(message.session_id)
+        # No suspension points occur inside the memory append. Restore all
+        # projections if snapshot construction fails before the receipt commits.
+        try:
+            await self.append_message_if_head(
+                message, expected_head_message_id, snapshot_ttl_seconds=snapshot_ttl_seconds
+            )
+        except BaseException:
+            self._sessions[message.session_id] = original_session
+            self._messages[message.session_id] = original_messages
+            if original_snapshot is None:
+                self._snapshots.pop(message.session_id, None)
+            else:
+                self._snapshots[message.session_id] = original_snapshot
+            raise
+        self._preparations[key_digest] = message
+        return message
 
     async def get_user_message_for_run(
         self, session_id: str, run_id: str
