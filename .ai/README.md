@@ -11,6 +11,7 @@ future coding agent read the same instructions from here.
 | Directory     | Contains                                                              |
 | ------------- | --------------------------------------------------------------------- |
 | `skills/`     | Reusable **operational playbooks** — how to do a kind of work well.   |
+| `references/` | Supporting material loaded only when a skill needs it.             |
 | `roles/`      | Reusable **agent personas** — focused roles with a mission and scope. |
 | `workflows/`  | **Task workflows** — how to execute common end-to-end tasks.          |
 
@@ -55,6 +56,11 @@ Area skills:
 | [prompt-rendering](skills/prompt-rendering.md)               | Prompt templates and rendering.             |
 | [sidecar-auth-context](skills/sidecar-auth-context.md)       | Plugin context and protected-node access.   |
 | [mcp-tools](skills/mcp-tools.md)                             | Tool plugins and MCP servers.               |
+| [vercel-react-best-practices](skills/vercel-react-best-practices.md) | React chat widget implementation, review, and performance. |
+
+The Vercel skill includes 70 vendored rules under
+`references/vercel-react-best-practices/rules/`. Its canonical entrypoint records
+the upstream revision and license; generated adapters use the same references.
 
 ### `roles/` — agent personas
 

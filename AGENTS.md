@@ -234,6 +234,7 @@ first; then pick by the *kind* of task and the *area* of the system.
 | Prompt templates / rendering               | `.ai/skills/prompt-rendering.md`      |
 | Plugin context/access resolution           | `.ai/skills/sidecar-auth-context.md`  |
 | Tools, MCP servers, permissions            | `.ai/skills/mcp-tools.md`             |
+| React chat widget / frontend performance  | `.ai/skills/vercel-react-best-practices.md` |
 
 Each skill ends with an **Expected Final Report** (or validation checklist) —
 apply it before declaring work done.
