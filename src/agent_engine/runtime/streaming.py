@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord, ToolUsageStatus
@@ -19,9 +20,8 @@ class TokenUsage:
 
     input_tokens: int = 0
     output_tokens: int = 0
-    # Stored run totals seen before this leg's first write; a retry compares
-    # against them so an ambiguous earlier commit is not charged again.
-    baseline: tuple[int | None, int | None] | None = None
+    # Idempotency key for the pending write; retrying it can never charge twice.
+    leg_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def add(self, input_tokens: int, output_tokens: int) -> None:
         self.input_tokens += input_tokens
@@ -39,7 +39,7 @@ class TokenUsage:
         """Forget counted tokens once they are persisted, so no path adds them twice."""
         self.input_tokens = 0
         self.output_tokens = 0
-        self.baseline = None
+        self.leg_id = uuid.uuid4().hex
 
 
 @dataclass(frozen=True)
