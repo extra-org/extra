@@ -68,23 +68,21 @@ class RunRepository(ABC):
         """
         raise NotImplementedError
 
-    async def add_token_usage_if_unchanged(
+    async def add_leg_token_usage(
         self,
         run_id: str,
         *,
-        expected: tuple[int | None, int | None],
+        leg_id: str,
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> RunRecord | None:
-        """Add one leg only while the stored totals still equal ``expected``.
+        """Add one execution leg's usage once per ``leg_id``.
 
-        Retrying with the totals observed before the first attempt charges a leg
-        at most once, even if that attempt committed and then failed. The run's
-        legs are sequential; shared adapters should override this atomically.
+        Retrying a leg whose earlier write committed but failed to acknowledge
+        must not charge it again, while different legs of one run, including
+        overlapping ones, each apply. The default adds unconditionally; adapters
+        override it to record the key atomically with the totals.
         """
-        current = await self.get(run_id)
-        if current is None or (current.input_tokens, current.output_tokens) != expected:
-            return current
         return await self.add_token_usage(
             run_id, input_tokens=input_tokens, output_tokens=output_tokens
         )

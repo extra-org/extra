@@ -43,9 +43,10 @@ One `conversation_id` owns an immutable message tree.
   reported before it failed or was cancelled, and counts each leg once.
   A usage write and counter reset finish before cancellation cleanup continues,
   including a cancellation after storage committed but before readback returned.
-  Each leg write is compare-and-add against the run totals seen before its
-  first attempt, so retrying after a commit whose acknowledgement was lost does
-  not charge the leg again.
+  Each leg write carries a random leg key that storage records atomically with
+  the totals. Retrying after a commit whose acknowledgement was lost adds
+  nothing, and overlapping legs of the same run, which `begin()` permits, are
+  each charged.
   Pending-approval and final stream events expose the cumulative usage of
   completed legs.
   Observations update the highest total for that run, rather than adding
@@ -106,8 +107,9 @@ message, which is already a stable domain identity.
   `conversation_run_token_usage` table.
   Migration `0006` backfills available engine run totals associated with every
   conversation branch, including pending and cancelled runs without answers.
-  `RunRepository` gains `add_token_usage_if_unchanged`, with a default for
-  existing adapters; the SQL adapter overrides it atomically.
+  `RunRepository` gains `add_leg_token_usage`, whose default for existing
+  adapters adds without deduplication; the built-in adapters record the leg key.
+  Migration `0006` also adds the `agent_run_token_legs` key table.
   The only HTTP change is additive: manager `pending_approval` and `final`
   stream events now carry `input_tokens` and `output_tokens`. There is no YAML
   contract change.

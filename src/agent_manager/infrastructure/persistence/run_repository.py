@@ -7,6 +7,8 @@ from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import func, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel import col, select
@@ -14,7 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent_engine.approvals.models import RunRecord, RunStatus, can_transition_run
 from agent_engine.runs.repository import RunRepository
-from agent_manager.infrastructure.persistence.tables import RunRecordRow
+from agent_manager.infrastructure.persistence.tables import RunRecordRow, RunTokenLegRow
 
 
 class SqlRunRepository(RunRepository):
@@ -86,28 +88,43 @@ class SqlRunRepository(RunRepository):
             record = _record(row) if row is not None else None
         return record
 
-    async def add_token_usage_if_unchanged(
+    async def add_leg_token_usage(
         self,
         run_id: str,
         *,
-        expected: tuple[int | None, int | None],
+        leg_id: str,
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> RunRecord | None:
-        """Compare and add in one statement, so a retried leg is charged once."""
-        expected_input, expected_output = expected
+        """Claim the leg key and add its usage in one transaction."""
         async with self._sessions() as session, session.begin():
-            result = await session.exec(
-                update(RunRecordRow)
-                .where(
-                    col(RunRecordRow.run_id) == run_id,
-                    col(RunRecordRow.input_tokens).is_not_distinct_from(expected_input),
-                    col(RunRecordRow.output_tokens).is_not_distinct_from(expected_output),
-                )
-                .values(**_usage_values(input_tokens, output_tokens))
-                .returning(RunRecordRow)
+            exists = await session.exec(
+                select(col(RunRecordRow.run_id)).where(col(RunRecordRow.run_id) == run_id)
             )
-            row = result.scalar_one_or_none() or await session.get(RunRecordRow, run_id)
+            if exists.first() is None:
+                return None
+            bind = session.get_bind()
+            insert = (
+                sqlite_insert(RunTokenLegRow)
+                if bind.dialect.name == "sqlite"
+                else postgres_insert(RunTokenLegRow)
+            )
+            claimed = await session.exec(
+                insert.values(run_id=run_id, leg_id=leg_id)
+                .on_conflict_do_nothing(index_elements=["run_id", "leg_id"])
+                .returning(col(RunTokenLegRow.leg_id))
+            )
+            if claimed.first() is None:
+                # This leg was already charged by an earlier, unacknowledged attempt.
+                row = await session.get(RunRecordRow, run_id)
+            else:
+                result = await session.exec(
+                    update(RunRecordRow)
+                    .where(col(RunRecordRow.run_id) == run_id)
+                    .values(**_usage_values(input_tokens, output_tokens))
+                    .returning(RunRecordRow)
+                )
+                row = result.scalar_one_or_none()
             record = _record(row) if row is not None else None
         return record
 
