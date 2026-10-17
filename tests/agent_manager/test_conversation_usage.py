@@ -823,7 +823,7 @@ async def test_retry_after_an_ambiguous_usage_commit_charges_the_leg_once(
     assert (run.input_tokens, run.output_tokens) == (4, 1)
 
 
-async def test_conditional_usage_add_applies_once_per_observed_baseline(
+async def test_leg_usage_applies_once_per_key_and_never_hides_another_leg(
     repositories: tuple[Repository, RunRepository],
 ) -> None:
     _, runs = repositories
@@ -831,24 +831,74 @@ async def test_conditional_usage_add_applies_once_per_observed_baseline(
         RunRecord(run_id="run", thread_id="run", system_name="", status=RunStatus.RUNNING)
     )
 
-    async def add(expected: tuple[int | None, int | None], tokens: int) -> tuple[int | None, ...]:
-        record = await runs.add_token_usage_if_unchanged(
-            "run", expected=expected, input_tokens=tokens, output_tokens=1
+    async def add(leg_id: str, tokens: int) -> tuple[int | None, int | None]:
+        record = await runs.add_leg_token_usage(
+            "run", leg_id=leg_id, input_tokens=tokens, output_tokens=1
         )
         assert record is not None
         # Read the totals now: the in-memory adapter returns its live record.
         return record.input_tokens, record.output_tokens
 
-    assert await add((None, None), 4) == (4, 1)
-    # A retry with the same baseline after a committed attempt adds nothing.
-    assert await add((None, None), 4) == (4, 1)
-    assert await add((4, 1), 2) == (6, 2)
+    assert await add("leg-a", 4) == (4, 1)
+    # Retrying a committed leg adds nothing.
+    assert await add("leg-a", 4) == (4, 1)
+    # An overlapping leg that saw the same totals still applies.
+    assert await add("leg-b", 4) == (8, 2)
     assert (
-        await runs.add_token_usage_if_unchanged(
-            "missing", expected=(None, None), input_tokens=1, output_tokens=1
-        )
+        await runs.add_leg_token_usage("missing", leg_id="leg", input_tokens=1, output_tokens=1)
         is None
     )
+
+
+class BarrierModel:
+    """Report five tokens only after both overlapping legs have called the model."""
+
+    def __init__(self, parties: int) -> None:
+        self.barrier = asyncio.Barrier(parties)
+
+    def bind_tools(self, tools: list[Any]) -> BarrierModel:
+        return self
+
+    async def ainvoke(self, messages: list[Any]) -> AIMessage:
+        await self.barrier.wait()
+        return AIMessage(
+            content="done",
+            usage_metadata={"input_tokens": 4, "output_tokens": 1, "total_tokens": 5},
+        )
+
+    async def astream(self, messages: list[Any]) -> AsyncIterator[AIMessage]:
+        yield await self.ainvoke(messages)
+
+
+@pytest.mark.parametrize("backend", ["memory", "sql"])
+async def test_overlapping_legs_of_one_run_are_both_charged(tmp_path: Path, backend: str) -> None:
+    # A file database gives each overlapping leg its own connection, as in production.
+    database = create_db_engine(f"sqlite+aiosqlite:///{tmp_path / 'overlap.db'}")
+    async with database.begin() as connection:
+        await connection.run_sync(SQLModel.metadata.create_all)
+    runs: RunRepository = (
+        InMemoryRunRepository()
+        if backend == "memory"
+        else SqlRunRepository(session_factory(database))
+    )
+    model = BarrierModel(2)
+
+    def factory(*args: Any, **kwargs: Any) -> Any:
+        return model
+
+    try:
+        async with LangGraphEngine(tmp_path, model_factory=factory, run_repository=runs) as engine:
+            await engine.build(_spec())
+            await asyncio.gather(
+                engine.run("first", context=RunContext(run_id="shared")),
+                engine.run("second", context=RunContext(run_id="shared")),
+            )
+            run = await runs.get("shared")
+    finally:
+        await database.dispose()
+
+    assert run is not None
+    assert (run.input_tokens, run.output_tokens) == (8, 2)
 
 
 def sse_events(text: str, event_type: str) -> list[dict[str, Any]]:

@@ -507,16 +507,11 @@ class LangGraphEngine(Engine):
         input_tokens, output_tokens = tokens.totals()
 
         async def persist() -> tuple[int | None, int | None]:
-            if tokens.baseline is None:
-                before = await self._run_repository.get(run_id)
-                if before is None:
-                    raise RunNotFound(run_id)
-                tokens.baseline = (before.input_tokens, before.output_tokens)
-            # Compare-and-add: if an earlier attempt for this leg committed but
-            # failed to acknowledge, the totals moved and nothing is added again.
-            run = await self._run_repository.add_token_usage_if_unchanged(
+            # Keyed per leg: a retry after a commit whose acknowledgement was lost
+            # adds nothing, while overlapping legs of the same run each apply.
+            run = await self._run_repository.add_leg_token_usage(
                 run_id,
-                expected=tokens.baseline,
+                leg_id=tokens.leg_id,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )

@@ -25,6 +25,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["session_id"], ["conversation_sessions.session_id"]),
         sa.PrimaryKeyConstraint("session_id", "run_id"),
     )
+    # One row per charged execution leg, so a retried leg write applies once.
+    op.create_table(
+        "agent_run_token_legs",
+        sa.Column("run_id", sa.String(length=64), nullable=False),
+        sa.Column("leg_id", sa.String(length=64), nullable=False),
+        sa.PrimaryKeyConstraint("run_id", "leg_id"),
+    )
     # Include pre-upgrade cancelled and pending runs, which have no answer row.
     # Some older installations predate the run table added to the baseline.
     if not sa.inspect(op.get_bind()).has_table("agent_runs"):
@@ -53,4 +60,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_table("agent_run_token_legs")
     op.drop_table("conversation_run_token_usage")

@@ -150,3 +150,12 @@ class RunRecordRow(SQLModel, table=True):
     output_tokens: int | None = Field(default=None, sa_column=Column(Integer))
     created_at: float = Field(sa_column=Column(Float, nullable=False))
     updated_at: float = Field(sa_column=Column(Float, nullable=False))
+
+
+class RunTokenLegRow(SQLModel, table=True):
+    """One charged execution leg; its key makes a retried usage write a no-op."""
+
+    __tablename__ = "agent_run_token_legs"
+
+    run_id: str = Field(primary_key=True, max_length=64)
+    leg_id: str = Field(primary_key=True, max_length=64)
