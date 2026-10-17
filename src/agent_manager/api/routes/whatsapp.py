@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/channels/whatsapp", tags=["whatsapp"])
 
 
+def _rejected(status_code: int, detail: str, reason: str) -> HTTPException:
+    """Log a fixed reason only; request content never reaches ordinary logs."""
+    logger.warning("whatsapp webhook rejected: reason=%s", reason)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 def _webhook(request: Request) -> WhatsAppWebhook:
     webhook = getattr(request.app.state, "whatsapp_webhook", None)
     if webhook is None:
@@ -30,7 +36,7 @@ async def verify_subscription(request: Request) -> PlainTextResponse:
     webhook = _webhook(request)
     names = ("hub.mode", "hub.verify_token", "hub.challenge")
     if any(len(request.query_params.getlist(name)) != 1 for name in names):
-        raise HTTPException(status_code=403, detail="invalid webhook subscription")
+        raise _rejected(403, "invalid webhook subscription", "subscription")
     try:
         challenge = subscription_challenge(
             request.query_params.get("hub.mode"),
@@ -39,7 +45,7 @@ async def verify_subscription(request: Request) -> PlainTextResponse:
             expected=webhook.config.verify_token.get_secret_value(),
         )
     except WebhookAuthenticationError:
-        raise HTTPException(status_code=403, detail="invalid webhook subscription") from None
+        raise _rejected(403, "invalid webhook subscription", "subscription") from None
     return PlainTextResponse(challenge)
 
 
@@ -48,16 +54,16 @@ async def receive_notification(request: Request) -> dict[str, str]:
     webhook = _webhook(request)
     signatures = request.headers.getlist("X-Hub-Signature-256")
     if len(signatures) != 1:
-        raise HTTPException(status_code=401, detail="invalid webhook signature")
+        raise _rejected(401, "invalid webhook signature", "signature")
     if request.headers.get("content-encoding", "identity") != "identity":
-        raise HTTPException(status_code=415, detail="encoded webhook bodies are unsupported")
+        raise _rejected(415, "encoded webhook bodies are unsupported", "encoding")
     if request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
-        raise HTTPException(status_code=415, detail="webhook requires application/json")
+        raise _rejected(415, "webhook requires application/json", "content_type")
     body = await _bounded_body(request, webhook.config.max_body_bytes)
     try:
         await webhook.receive(body, signatures[0], datetime.now(UTC))
     except WebhookAuthenticationError:
-        raise HTTPException(status_code=401, detail="invalid webhook signature") from None
+        raise _rejected(401, "invalid webhook signature", "signature") from None
     except Exception as exc:
         # The failure boundary must never reflect payloads, identifiers, or DB
         # exception text into provider responses or ordinary logs.
@@ -73,15 +79,15 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
     if len(lengths) > 1 or (
         lengths and (len(lengths[0]) > 20 or not lengths[0].isascii() or not lengths[0].isdecimal())
     ):
-        raise HTTPException(status_code=400, detail="invalid content length")
+        raise _rejected(400, "invalid content length", "length")
     if lengths and int(lengths[0]) > limit:
-        raise HTTPException(status_code=413, detail="webhook body too large")
+        raise _rejected(413, "webhook body too large", "size")
     body = bytearray()
     try:
         async for chunk in request.stream():
             if len(body) + len(chunk) > limit:
-                raise HTTPException(status_code=413, detail="webhook body too large")
+                raise _rejected(413, "webhook body too large", "size")
             body.extend(chunk)
     except ClientDisconnect:
-        raise HTTPException(status_code=400, detail="incomplete webhook body") from None
+        raise _rejected(400, "incomplete webhook body", "incomplete") from None
     return bytes(body)

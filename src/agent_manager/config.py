@@ -176,6 +176,7 @@ class Settings(BaseSettings):
         default=120, gt=0, le=3600, allow_inf_nan=False
     )
     extra_whatsapp_worker_drain_seconds: float = Field(default=15, gt=0, le=60, allow_inf_nan=False)
+    extra_whatsapp_status_log_seconds: float = Field(default=60, gt=0, le=3600, allow_inf_nan=False)
     extra_whatsapp_sender_enabled: bool = False
     extra_whatsapp_api_version: str | None = None
     extra_whatsapp_access_token: SecretStr | None = Field(default=None, repr=False, exclude=True)

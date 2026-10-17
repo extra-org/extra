@@ -14,6 +14,7 @@ class ChannelWorkerOptions:
     poll_seconds: float = 0.5
     turn_seconds: float = 120
     drain_seconds: float = 15
+    status_seconds: float = 60
 
     def __post_init__(self) -> None:
         bounded_identifier(self.connection_id, limit=128)
@@ -25,5 +26,6 @@ class ChannelWorkerOptions:
             0 < self.poll_seconds <= 60
             and 0 < self.turn_seconds <= 3600
             and 0 < self.drain_seconds <= 60
+            and 0 < self.status_seconds <= 3600
         ):
             raise ValueError("channel worker time bounds must be finite and positive")
