@@ -48,6 +48,43 @@ async def test_in_memory_run_repository_implements_contract() -> None:
     assert isinstance(InMemoryRunRepository(), RunRepository)
 
 
+async def test_legacy_adapter_must_implement_atomic_leg_accounting() -> None:
+    # Model an external adapter implementing every operation from the old
+    # contract, but relying on the base class for keyed leg accounting.
+    legacy_adapter = type(
+        "LegacyRunRepository",
+        (RunRepository,),
+        {
+            name: getattr(InMemoryRunRepository, name)
+            for name in (
+                "create_if_absent",
+                "get",
+                "get_many",
+                "transition_if_allowed",
+                "add_token_usage",
+            )
+        },
+    )
+
+    with pytest.raises(TypeError, match="add_leg_token_usage"):
+        legacy_adapter()
+
+
+async def test_base_leg_accounting_cannot_fall_back_to_unkeyed_addition(
+    run_repository: RunRepository,
+) -> None:
+    await run_repository.create_if_absent(_run("r1"))
+
+    with pytest.raises(NotImplementedError):
+        await RunRepository.add_leg_token_usage(
+            run_repository, "r1", leg_id="leg", input_tokens=4, output_tokens=1
+        )
+
+    stored = await run_repository.get("r1")
+    assert stored is not None
+    assert (stored.input_tokens, stored.output_tokens) == (None, None)
+
+
 async def test_run_repository_registers_new_run(run_repository: RunRepository) -> None:
     record = _run("r1")
 

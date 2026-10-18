@@ -22,5 +22,6 @@ finishing, Expected final report.**
 | 0010 | [Docker deployment](0010-docker-deployment.md)             | 0009       |
 | 0011 | [Observability & tracing](0011-observability-and-tracing.md) | 0004     |
 | 0012 | [Tests & quality gates](0012-tests-and-quality-gates.md)   | all        |
+| PR 148 | [Atomic run leg accounting contract](pr-0148-run-leg-accounting-contract.md) | issue 140 review follow-up |
 
 Before starting any task, read `AGENTS.md` and the skill(s) the task lists.
