@@ -48,6 +48,17 @@ class RegistrationSpy(RunRepository):
         del run_id, input_tokens, output_tokens
         raise AssertionError("RunLifecycle must not record engine-owned usage")
 
+    async def add_leg_token_usage(
+        self,
+        run_id: str,
+        *,
+        leg_id: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        del run_id, leg_id, input_tokens, output_tokens
+        raise AssertionError("RunLifecycle must not record engine-owned usage")
+
 
 class RunIdReplacingHookManager(HookManager):
     async def run_run_start(self, context: RunContext) -> RunContext:

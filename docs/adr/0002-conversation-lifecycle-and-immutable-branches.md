@@ -107,8 +107,14 @@ message, which is already a stable domain identity.
   `conversation_run_token_usage` table.
   Migration `0006` backfills available engine run totals associated with every
   conversation branch, including pending and cancelled runs without answers.
-  `RunRepository` gains `add_leg_token_usage`, whose default for existing
-  adapters adds without deduplication; the built-in adapters record the leg key.
+  `RunRepository` gains the required abstract operation `add_leg_token_usage`.
+  Every adapter must atomically claim `(run_id, leg_id)` and add the reported
+  usage only when the key is new. There is no unkeyed additive fallback:
+  legacy external adapters without this operation fail at construction instead
+  of silently charging a retried leg twice. External adapters must implement
+  the keyed operation before upgrading; delegating to `add_token_usage` alone
+  does not satisfy the retry/concurrency contract. The built-in memory and SQL
+  adapters already implement it.
   Migration `0006` also adds the `agent_run_token_legs` key table.
   The only HTTP change is additive: manager `pending_approval` and `final`
   stream events now carry `input_tokens` and `output_tokens`. There is no YAML
