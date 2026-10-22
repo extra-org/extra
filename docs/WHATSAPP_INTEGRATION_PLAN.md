@@ -337,9 +337,13 @@ projection runs in bounded pages and matches the connection, system, provider
 ID and original recipient. No guessed callback-correlation field is used;
 unknown submissions without a verified provider ID require operator review.
 
-With sending enabled, exact `/new`/`שיחה חדשה`, `/help`/`נציג`, `/stop`/`הפסק`
-and `/start`/`המשך` bypass the model. Stop is applied atomically at intake,
-even if an earlier model run is active. A sequence cutoff suppresses old input
+Whenever the worker runs, exact `/new`/`שיחה חדשה`, `/help`/`נציג`, `/stop`/`הפסק`
+and `/start`/`המשך` bypass the model, including while sending is disabled.
+Controls require durable control storage, but no outbound credentials. A support
+contact is optional while sending is disabled: without one, help completes
+without staging a reply; enabling sending still requires a real contact.
+Stop is applied atomically at intake, even if an earlier model run is active.
+A sequence cutoff suppresses old input
 and replies permanently; start permits subsequent messages but never grants
 employee access or resurrects old replies. Already-submitted network requests
 cannot be recalled. Reset keeps history and changes the binding generation

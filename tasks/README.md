@@ -32,5 +32,6 @@ finishing, Expected final report.**
 | 0020 | [WhatsApp delivery review](0020-whatsapp-delivery-review.md) | 0019 |
 | 0021 | [WhatsApp pilot packaging](0021-whatsapp-pilot-packaging.md) | 0020; WhatsApp WA-06 |
 | PR 148 | [Atomic run leg accounting contract](pr-0148-run-leg-accounting-contract.md) | issue 140 review follow-up |
+| PR 148 | [Controls while sending is paused](pr-0148-paused-channel-controls.md) | WhatsApp composition review follow-up |
 
 Before starting any task, read `AGENTS.md` and the skill(s) the task lists.

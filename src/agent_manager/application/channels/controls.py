@@ -7,11 +7,16 @@ from agent_manager.domain.channels.repository import ChannelRepository
 
 class ChannelControlService:
     def __init__(
-        self, controls: ControlRepository, channels: ChannelRepository, *, support_contact: str
+        self,
+        controls: ControlRepository,
+        channels: ChannelRepository,
+        *,
+        support_contact: str | None,
     ) -> None:
-        bounded_text(support_contact)
-        if not support_contact.strip() or len(support_contact.encode()) > 512:
-            raise ValueError("a bounded support contact is required")
+        if support_contact is not None:
+            bounded_text(support_contact)
+            if not support_contact.strip() or len(support_contact.encode()) > 512:
+                raise ValueError("a bounded support contact is required")
         self._controls, self._channels, self._support = controls, channels, support_contact
 
     async def handle(self, item: InboxItem) -> bool:
@@ -30,7 +35,7 @@ class ChannelControlService:
             return suppressed
         replies = {
             "reset": "נפתחה שיחה חדשה. אפשר לשלוח הודעת טקסט.",
-            "help": f"לתמיכה אנושית: {self._support}",
+            "help": f"לתמיכה אנושית: {self._support}" if self._support is not None else None,
             "start": "קבלת ההודעות חודשה. אפשר לשלוח הודעת טקסט.",
             "unsupported": "כרגע ניתן לקבל הודעות טקסט בלבד. אנא שלחו את הבקשה בטקסט.",
         }

@@ -114,8 +114,8 @@ async def channel_worker_lifespan(
     if not settings.extra_whatsapp_worker_enabled:
         yield None
         return
-    if repositories.channels is None:
-        raise ValueError("channel worker requires durable storage")
+    if repositories.channels is None or repositories.controls is None:
+        raise ValueError("channel worker requires durable channel and control storage")
     assert settings.extra_whatsapp_organization_id is not None
     assert settings.extra_whatsapp_identity_resolver is not None
     options = ChannelWorkerOptions(
@@ -132,9 +132,13 @@ async def channel_worker_lifespan(
     sender: WhatsAppSender | None = None
     try:
         delivery = None
-        controls = None
+        controls = ChannelControlService(
+            repositories.controls,
+            repositories.channels,
+            support_contact=settings.extra_whatsapp_support_contact,
+        )
         if settings.extra_whatsapp_sender_enabled:
-            assert repositories.deliveries is not None and repositories.controls is not None
+            assert repositories.deliveries is not None
             assert settings.extra_whatsapp_api_version is not None
             assert settings.extra_whatsapp_phone_number_id is not None
             assert settings.extra_whatsapp_access_token is not None
@@ -152,11 +156,6 @@ async def channel_worker_lifespan(
                 system_id=system_id,
                 organization_id=options.organization_id,
                 render=render_text,
-            )
-            controls = ChannelControlService(
-                repositories.controls,
-                repositories.channels,
-                support_contact=settings.extra_whatsapp_support_contact,
             )
         preparer = ChannelTurnPreparer(
             service,
