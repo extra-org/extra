@@ -17,6 +17,15 @@ from datetime import datetime
 from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, Text, text
 from sqlmodel import Field, SQLModel
 
+# Register channel tables with the same metadata used by Alembic and tests.
+from agent_manager.infrastructure.persistence.channels.tables import (  # noqa: F401
+    ChannelBindingRow,
+    ChannelDeliveryEventRow,
+    ChannelInboxRow,
+    ChannelOutboxRow,
+    ChannelWebhookReceiptRow,
+)
+
 
 class ConversationUserRow(SQLModel, table=True):
     __tablename__ = "conversation_users"
@@ -105,6 +114,17 @@ class ConversationSnapshotRow(SQLModel, table=True):
     expires_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), index=True)
     )
+
+
+class TurnPreparationReceiptRow(SQLModel, table=True):
+    """Committed with the user message; the receipt owns its original input."""
+
+    __tablename__ = "conversation_turn_preparations"
+
+    key_digest: str = Field(primary_key=True, max_length=64)
+    # No immediate message FK: this row claims the key before the user append
+    # in the same transaction, so competing preparations serialize on the key.
+    message_id: str = Field(max_length=64, unique=True)
 
 
 class ConversationRunTokenUsageRow(SQLModel, table=True):

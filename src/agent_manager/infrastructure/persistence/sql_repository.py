@@ -37,13 +37,19 @@ from agent_manager.domain.pagination import (
     encode_cursor,
     ensure_utc,
 )
+from agent_manager.domain.turn_preparation import validate_prepared_message
 from agent_manager.infrastructure.persistence.tables import (
     ConversationMessageRow,
     ConversationRunTokenUsageRow,
     ConversationSessionRow,
     ConversationSnapshotRow,
     ConversationUserRow,
+    TurnPreparationReceiptRow,
 )
+
+
+class _PreparationHeadChanged(Exception):
+    """Roll back the key claim together with a rejected branch append."""
 
 
 class SqlRepository(Repository):
@@ -358,6 +364,73 @@ class SqlRepository(Repository):
         async with self._sessions() as session:
             row = await session.get(ConversationMessageRow, message_id)
         return _message(row) if row is not None else None
+
+    async def get_prepared_message(self, key_digest: str) -> ConversationMessage | None:
+        async with self._sessions() as session:
+            receipt = await session.get(TurnPreparationReceiptRow, key_digest)
+            if receipt is None:
+                return None
+            row = await session.get(ConversationMessageRow, receipt.message_id)
+            if row is None:
+                raise RuntimeError("turn preparation receipt has no message")
+            return _message(row)
+
+    async def append_prepared_message(
+        self,
+        key_digest: str,
+        message: ConversationMessage,
+        expected_head_message_id: str | None,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> ConversationMessage | None:
+        try:
+            async with self._sessions() as session, session.begin():
+                insert = (
+                    sqlite_insert(TurnPreparationReceiptRow)
+                    if session.bind is not None and session.bind.dialect.name == "sqlite"
+                    else postgres_insert(TurnPreparationReceiptRow)
+                )
+                claimed = await session.exec(
+                    insert.values(key_digest=key_digest, message_id=message.message_id)
+                    .on_conflict_do_nothing(index_elements=["key_digest"])
+                    .returning(col(TurnPreparationReceiptRow.key_digest))
+                )
+                if claimed.scalar_one_or_none() is None:
+                    receipt = await session.get(TurnPreparationReceiptRow, key_digest)
+                    assert receipt is not None
+                    row = await session.get(ConversationMessageRow, receipt.message_id)
+                    if row is None:
+                        raise RuntimeError("turn preparation receipt has no message")
+                    existing = _message(row)
+                    validate_prepared_message(
+                        existing, message.session_id, message.user_id or "", message.content
+                    )
+                    return existing
+                head = col(ConversationSessionRow.head_message_id)
+                expected = (
+                    head.is_(None)
+                    if expected_head_message_id is None
+                    else head == expected_head_message_id
+                )
+                changed = await session.exec(
+                    update(ConversationSessionRow)
+                    .where(col(ConversationSessionRow.session_id) == message.session_id, expected)
+                    .values(
+                        head_message_id=message.message_id,
+                        updated_at=message.created_at,
+                        last_message_at=message.created_at,
+                    )
+                )
+                if _rows_affected(changed) == 0:
+                    raise _PreparationHeadChanged
+                session.add(_message_row(message))
+                await session.flush()
+                await self._rebuild_snapshot_in_session(
+                    session, message.session_id, snapshot_ttl_seconds=snapshot_ttl_seconds
+                )
+        except _PreparationHeadChanged:
+            return None
+        return message
 
     async def get_user_message_for_run(
         self, session_id: str, run_id: str

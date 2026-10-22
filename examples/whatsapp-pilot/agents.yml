@@ -1,0 +1,23 @@
+system:
+  name: "WhatsApp Pilot Assistant"
+
+defaults:
+  model:
+    provider: openai
+    name: gpt-4o-mini
+    temperature: 0.2
+
+# No tools: a pending approval cannot be answered over WhatsApp, so the pilot
+# agent must never need one.
+execution:
+  max_iterations: 4
+
+agents:
+  pilot_assistant:
+    name: "Pilot Assistant"
+    description: "Answers pilot users' questions in short plain-text messages."
+    prompts:
+      system: prompts/assistant.md
+
+graph:
+  pilot_assistant:

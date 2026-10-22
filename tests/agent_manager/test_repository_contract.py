@@ -7,10 +7,13 @@ the proof that swapping SQLite/Postgres/in-memory is safe.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import SQLModel, select
 
 import agent_manager.infrastructure.persistence.tables  # noqa: F401  (register tables)
@@ -30,20 +33,24 @@ from agent_manager.infrastructure.persistence.tables import (
 )
 
 
-async def _memory() -> Repository:
-    return MemoryRepository()
-
-
-async def _sql() -> Repository:
+@asynccontextmanager
+async def _sql_database() -> AsyncIterator[AsyncEngine]:
     engine = create_db_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    return SqlRepository(session_factory(engine))
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        yield engine
+    finally:
+        await engine.dispose()
 
 
-@pytest.fixture(params=[_memory, _sql], ids=["memory", "sql"])
-async def repo(request: pytest.FixtureRequest) -> Repository:
-    return await request.param()
+@pytest.fixture(params=["memory", "sql"])
+async def repo(request: pytest.FixtureRequest) -> AsyncIterator[Repository]:
+    if request.param == "memory":
+        yield MemoryRepository()
+    else:
+        async with _sql_database() as engine:
+            yield SqlRepository(session_factory(engine))
 
 
 async def test_create_and_exists(repo: Repository) -> None:
@@ -469,17 +476,15 @@ async def test_different_run_ids_can_share_one_session(repo: Repository) -> None
 
 
 async def test_sql_schema_has_cold_and_snapshot_rows() -> None:
-    engine = create_db_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    sessions = session_factory(engine)
-    repo = SqlRepository(sessions)
-    await repo.create_session("sess-1")
-    await repo.append_message(_message("sess-1", Role.USER, "hello"))
+    async with _sql_database() as engine:
+        sessions = session_factory(engine)
+        repo = SqlRepository(sessions)
+        await repo.create_session("sess-1")
+        await repo.append_message(_message("sess-1", Role.USER, "hello"))
 
-    async with sessions() as session:
-        cold = (await session.exec(select(ConversationMessageRow))).all()
-        snapshots = (await session.exec(select(ConversationSnapshotRow))).all()
+        async with sessions() as session:
+            cold = (await session.exec(select(ConversationMessageRow))).all()
+            snapshots = (await session.exec(select(ConversationSnapshotRow))).all()
 
     assert len(cold) == 1
     assert len(snapshots) == 1
@@ -503,17 +508,14 @@ def test_legacy_conversations_and_messages_tables_are_gone() -> None:
 
 
 async def test_sql_repository_does_not_write_legacy_tables() -> None:
-    engine = create_db_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    sessions = session_factory(engine)
-    repo = SqlRepository(sessions)
+    async with _sql_database() as engine:
+        repo = SqlRepository(session_factory(engine))
 
-    cid = await repo.create_conversation()
-    await repo.add_message(cid, Role.USER, "hi")
+        cid = await repo.create_conversation()
+        await repo.add_message(cid, Role.USER, "hi")
 
-    assert await repo.conversation_exists(cid)
-    assert [m.content for m in await repo.list_messages(cid)] == ["hi"]
+        assert await repo.conversation_exists(cid)
+        assert [m.content for m in await repo.list_messages(cid)] == ["hi"]
 
 
 def _message(
