@@ -2,9 +2,10 @@
 
 - **Status:** WA-01 preparation, WA-02 durable channel storage/identity
   boundary, WA-03 authenticated webhook intake, WA-04 turn worker/recovery,
-  and WA-05 outbound delivery/controls are implemented. Organization account
-  linking and live pilot setup remain pending. Intake, worker and sender are
-  separately disabled by default.
+  WA-05 outbound delivery/controls, and WA-06 pilot packaging (runbook,
+  example, status logs, fake-provider rehearsal) are implemented. Organization
+  account linking, data retention, and the authorized real-number smoke test
+  remain pending. Intake, worker and sender are separately disabled by default.
 - **Date:** 2026-10-15.
 - **Updated:** 2026-10-16.
 - **Confirmed scope:** One organization-owned WhatsApp Business number.
@@ -457,7 +458,7 @@ ships with tests, and each implementation task must pass `make check`.
 | WA-03: Cloud API intake boundary — implemented | Task 0015; `api/routes/whatsapp.py`, `infrastructure/channels/whatsapp/`, settings/composition, domain/SQL callback port, migration 0009, and tests. | Challenge and byte-level signature verification, account checks, complete batch parsing, separate status observations, safe quarantine, atomic commit-before-ack, and no agent work. Disabled by default. |
 | WA-04: Turn worker and recovery — implemented | Task 0016; channel processor/supervisor, active-work scan, authorized service response lookup, client identity loader, ownership adapter, settings/lifespan, and tests. | Per-sender order and independent concurrency; fresh identity; one execution claim; saved-answer recovery; ambiguous work held for review; approvals cancelled; streams awaited before releasing ownership; engine reused. |
 | WA-05: Outbound delivery and controls — implemented | Task 0019; sender/rendering adapters, delivery/control ports and services, SQL plans/projection, migration 0010, settings/supervisor wiring and tests. | Ordered Unicode/grapheme-safe splitting; accepted/delivered distinction; bounded retry; unknown-delivery review; fresh original-owner/window/opt-out checks; unsupported media/reset/help/stop/start without model calls. Disabled by default, verified locally with a fake provider. |
-| WA-06: Pilot packaging and operation | New WhatsApp example/runbook, docs index, deployment command/configuration and fake-provider end-to-end tests. | Documented administrator setup and rollback; durable restart rehearsal; metrics/redaction; full fake-provider round trip; then an explicitly authorized real-number smoke test. |
+| WA-06: Pilot packaging and operation — implemented except the smoke test | Task 0021; [runbook](WHATSAPP_RUNBOOK.md), `examples/whatsapp-pilot/`, `channel status:` and webhook-rejection log lines, and a fake-provider restart rehearsal. | Documented administrator setup and rollback; durable restart rehearsal; metrics/redaction; full fake-provider round trip; then an explicitly authorized real-number smoke test. |
 
 WA-00 → WA-01 → WA-02 → WA-03 → WA-04 → WA-05 → WA-06 is the delivery order.
 The identity/account-linking prerequisite is required for the confirmed internal

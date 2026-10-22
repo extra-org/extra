@@ -37,9 +37,13 @@ implemented, so protected-node access control is not actually enforced today.
   channel for one organization-owned number, with durable delivery, conversation
   reuse, identity boundaries, and scoped implementation tasks. Generic turn
   preparation, SQL channel storage, authenticated webhook intake, an
-  opt-in turn worker with conservative recovery, and opt-in provider delivery
-  with text controls are implemented. Customer account linking and live pilot
-  packaging remain planned.
+  opt-in turn worker with conservative recovery, opt-in provider delivery
+  with text controls, and pilot packaging are implemented. Customer account
+  linking, data retention, and the real-number smoke test remain planned.
+- [WhatsApp pilot runbook](WHATSAPP_RUNBOOK.md) — preflight, deployment,
+  staged enablement and pausing, health and status logs, restart recovery,
+  rollback, retention, and the smoke-test checklist
+  ([task 0021](../tasks/0021-whatsapp-pilot-packaging.md)).
 
 [ADR 0006](adr/0006-idempotent-conversation-turn-preparation.md) records the
 implemented provider-independent preparation prerequisite for channels.
