@@ -28,6 +28,7 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.runtime.execution_limiter import ITERATION_LIMIT_ANSWER
 
 _MODEL = ModelConfig(provider="fake", name="fake", temperature=None)
 
@@ -185,6 +186,109 @@ async def test_max_iterations_enforced(tmp_path: Path) -> None:
     model = ToolThenAnswerModel(1000, lambda i: {"message": f"m{i}"})
     result = await _run_single_agent(tmp_path, policy, model)
     assert len(result.used_tools) == 3  # 3 iterations executed, then the loop stopped
+    # The wrap-up turn still asks for a tool, so the run ends on the controlled
+    # answer instead of the tool request's empty text.
+    assert result.answer == ITERATION_LIMIT_ANSWER
+
+
+class WrapUpModel(ToolThenAnswerModel):
+    """Calls tools until a call is blocked, then answers from what it has.
+
+    Records the messages of its last turn so tests can inspect the wrap-up input."""
+
+    def __init__(self) -> None:
+        super().__init__(1000, lambda i: {"message": f"m{i}"}, ["echo"])
+        self.last_messages: list[Any] = []
+
+    def bind_tools(self, tools: list[Any]) -> WrapUpModel:
+        return self
+
+    def _respond(self, messages: list[Any]) -> AIMessage:
+        self.last_messages = list(messages)
+        last = messages[-1]
+        if isinstance(last, ToolMessage) and str(last.content).startswith("Call blocked"):
+            return AIMessage(content="partial summary")
+        return super()._respond(messages)
+
+
+_ITERATION_POLICY = ExecutionPolicy(
+    max_iterations=3,
+    max_tool_calls=999,
+    max_tool_calls_per_agent=999,
+    max_child_agent_calls=8,
+    allow_duplicate_tool_calls=True,
+)
+
+
+async def test_max_iterations_lets_the_model_wrap_up(tmp_path: Path) -> None:
+    model = WrapUpModel()
+    result = await _run_single_agent(tmp_path, _ITERATION_POLICY, model)
+
+    assert len(result.used_tools) == 3  # the blocked call never executed
+    assert result.answer == "partial summary"
+    blocked = [m for m in model.last_messages if isinstance(m, ToolMessage)][-1]
+    assert blocked.tool_call_id == "c3"  # the unexecuted call still gets a result
+    assert "max_iterations" in str(blocked.content)
+
+
+async def test_max_iterations_answer_is_streamed_as_final(tmp_path: Path) -> None:
+    _write_tool(tmp_path, "echo")
+    spec = _system(
+        GraphNode(node=_agent_spec("agent", tools=(ToolSpec("echo", "echo a message"),))),
+        _ITERATION_POLICY,
+    )
+    model = ToolThenAnswerModel(1000, lambda i: {"message": f"m{i}"})
+    async with LangGraphEngine(tmp_path, model_factory=_factory(cast(BaseChatModel, model))) as eng:
+        await eng.build(spec)
+        events = [event async for event in eng.stream("go")]
+
+    final = [event for event in events if event.type == "final"]
+    assert len(final) == 1
+    assert final[0].content == ITERATION_LIMIT_ANSWER
+
+
+class ReportChildModel:
+    """Orchestrator that delegates once, then repeats exactly what the child said."""
+
+    def bind_tools(self, tools: list[Any]) -> ReportChildModel:
+        return self
+
+    async def ainvoke(self, messages: list[Any]) -> AIMessage:
+        results = [m for m in messages if isinstance(m, ToolMessage)]
+        if not results:
+            return AIMessage(
+                content="",
+                tool_calls=[ToolCall(name="child", args={"message": "work"}, id="o1")],
+            )
+        return AIMessage(content=f"child said: {results[-1].content}")
+
+
+async def test_child_hitting_max_iterations_reports_to_orchestrator(tmp_path: Path) -> None:
+    _write_tool(tmp_path, "echo")
+    orch_model = ModelConfig(provider="fake", name="orch", temperature=None)
+    graph = GraphNode(
+        node=OrchestratorSpec(
+            id="root",
+            name="root",
+            description="router",
+            model=orch_model,
+            prompts=OrchestratorPromptSet(orchestrator="route"),
+        ),
+        children=(
+            GraphNode(node=_agent_spec("child", tools=(ToolSpec("echo", "echo a message"),))),
+        ),
+    )
+    orchestrator = ReportChildModel()
+    child = ToolThenAnswerModel(1000, lambda i: {"message": f"m{i}"})
+
+    def factory(provider: str, name: str, temperature: float | None) -> BaseChatModel:
+        return cast(BaseChatModel, orchestrator if name == "orch" else child)
+
+    async with LangGraphEngine(tmp_path, model_factory=factory) as eng:
+        await eng.build(_system(graph, _ITERATION_POLICY))
+        result = await eng.run("go")
+
+    assert result.answer == f"child said: {ITERATION_LIMIT_ANSWER}"
 
 
 async def test_max_child_agent_calls_enforced(tmp_path: Path) -> None:

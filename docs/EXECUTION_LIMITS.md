@@ -65,8 +65,12 @@ Limits degrade **gracefully** — a run never crashes with an obscure exception:
   The model receives a short controlled message (e.g. *"Tool call blocked: the
   'max_tool_calls' execution limit (10) was reached… finish with the information
   you have."*) and naturally wraps up.
-- **`max_iterations`:** the node's tool loop **stops** and returns the latest
-  model response. No further tools are called.
+- **`max_iterations`:** the node's tool loop **stops**. The tool calls the model
+  requested last are **not executed**; each receives the same controlled message,
+  and the model gets one final turn to answer with the information it has. No
+  further tools are called. If that turn still produces no text, the node answers
+  *"I couldn't finish this request within the allowed number of steps."* — a
+  capped run never ends with an empty answer.
 
 When a limit is hit the engine logs **safe metadata only** at `WARNING`:
 `run_id`, `node_id`/`agent_id` (when available), the limit name, the current

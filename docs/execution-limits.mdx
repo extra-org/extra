@@ -49,6 +49,6 @@ Limits are validated at parse time — invalid values (non-integers, wrong types
 The run **degrades gracefully** — no exception, no crash.
 
 - **Tool/child-agent limits and duplicates** — the call is blocked. The model receives a short message like *"Tool call limit reached, finish with what you have."* and naturally wraps up.
-- **`max_iterations`** — the node's loop stops and returns the latest model response.
+- **`max_iterations`** — the node's loop stops. Its pending tool calls are blocked, and the model gets one final turn to answer with what it has. If that turn has no text, the node answers *"I couldn't finish this request within the allowed number of steps."* instead of returning an empty answer.
 
 The engine logs a warning with the run id, limit name, and current count. It never logs prompts, tool arguments, or secrets.

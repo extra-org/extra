@@ -15,7 +15,9 @@ from agent_engine.engine.langgraph.execution.execution_context import (
 )
 from agent_engine.engine.langgraph.execution.model_context import ModelContext
 from agent_engine.runtime.execution_limiter import (
+    ITERATION_LIMIT_ANSWER,
     ExecutionLimitExceeded,
+    blocked_message,
     current_execution,
     log_limit,
 )
@@ -102,7 +104,7 @@ async def run_tool_loop(
                 limiter.register_iteration(node_path)
             except ExecutionLimitExceeded as exc:
                 log_limit(exc)
-                break
+                return await _wrap_up(response, exc, context, next_response)
         context.append(response)
         for tool_call in response.tool_calls:
             logger.debug(
@@ -134,6 +136,34 @@ async def run_tool_loop(
             )
         response = await next_response()
     return response
+
+
+async def _wrap_up(
+    response: Any,
+    exc: ExecutionLimitExceeded,
+    context: ModelContext,
+    next_response: Callable[[], Awaitable[Any]],
+) -> Any:
+    """Give the model one turn to answer after ``max_iterations`` is reached.
+
+    The pending tool calls are answered with the same controlled message the
+    other limits use, without executing them, so the model can finish with what
+    it has. A wrap-up turn that still produces no text yields a fixed answer
+    instead of an empty one.
+    """
+    context.append(response)
+    for tool_call in response.tool_calls:
+        context.append(
+            ToolMessage(
+                content=blocked_message(exc),
+                tool_call_id=tool_call["id"],
+                name=tool_call["name"],
+            )
+        )
+    final = await next_response()
+    if as_text(final.content).strip():
+        return final
+    return AIMessage(content=ITERATION_LIMIT_ANSWER)
 
 
 async def _refresh(

@@ -14,6 +14,10 @@ from agent_engine.runtime.hooks.context import current_run_context
 
 logger = logging.getLogger(__name__)
 
+#: Answer returned when a node exhausts ``max_iterations`` and its wrap-up model
+#: turn still produces no text, so a capped run never ends with a silent answer.
+ITERATION_LIMIT_ANSWER = "I couldn't finish this request within the allowed number of steps."
+
 
 class ExecutionLimiter:
     """Enforces an :class:`ExecutionPolicy` for the duration of one run."""
