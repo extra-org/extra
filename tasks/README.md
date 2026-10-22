@@ -22,5 +22,6 @@ finishing, Expected final report.**
 | 0010 | [Docker deployment](0010-docker-deployment.md)             | 0009       |
 | 0011 | [Observability & tracing](0011-observability-and-tracing.md) | 0004     |
 | 0012 | [Tests & quality gates](0012-tests-and-quality-gates.md)   | all        |
+| Issue 151 | [Protected root access](issue-0151-protected-root-access.md) | 0006 security follow-up |
 
 Before starting any task, read `AGENTS.md` and the skill(s) the task lists.

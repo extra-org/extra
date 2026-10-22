@@ -997,9 +997,7 @@ class LangGraphEngine(Engine):
     def _setup_filters(self, spec: SystemSpec) -> list[RouteFilter]:
         filters: list[RouteFilter] = []
         if has_protected_nodes(spec.graph):
-            access_plugin = self._base_dir / "plugins" / "access.py"
-            if access_plugin.is_file():
-                filters.append(AccessFilter(self._base_dir))
+            filters.append(AccessFilter(self._base_dir))
         return filters
 
     def _build_graph(self, spec: SystemSpec) -> RunGraph:
