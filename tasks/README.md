@@ -30,5 +30,6 @@ finishing, Expected final report.**
 | 0018 | [SQL test resource cleanup](0018-sql-test-resource-cleanup.md) | 0017 review verification |
 | 0019 | [WhatsApp outbound delivery and controls](0019-whatsapp-delivery-and-controls.md) | 0013–0018; WhatsApp WA-05 |
 | 0020 | [WhatsApp delivery review](0020-whatsapp-delivery-review.md) | 0019 |
+| PR 148 | [Atomic run leg accounting contract](pr-0148-run-leg-accounting-contract.md) | issue 140 review follow-up |
 
 Before starting any task, read `AGENTS.md` and the skill(s) the task lists.
