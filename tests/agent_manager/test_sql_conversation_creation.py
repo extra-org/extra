@@ -10,13 +10,14 @@ and races nothing.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -26,24 +27,42 @@ from agent_manager.infrastructure.persistence.database import create_db_engine, 
 from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 from tests.agent_manager.conftest import RecordingEngine, bearer, build_test_app
 
+RepositoryFactory = Callable[[], SqlRepository]
+
 
 @pytest.fixture
 async def db_url(tmp_path: Path) -> str:
     url = f"sqlite+aiosqlite:///{tmp_path / 'race.db'}"
     engine = create_db_engine(url)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    await engine.dispose()
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+    finally:
+        await engine.dispose()
     return url
 
 
-def _repository(db_url: str) -> SqlRepository:
-    """A repository on its own engine, so two of them can race for real."""
-    return SqlRepository(session_factory(create_db_engine(db_url)))
+@pytest.fixture
+async def repository_factory(db_url: str) -> AsyncIterator[RepositoryFactory]:
+    """Separate engines for real races, all owned by this test's lifetime."""
+    engines: list[AsyncEngine] = []
+
+    def create() -> SqlRepository:
+        engine = create_db_engine(db_url)
+        engines.append(engine)
+        return SqlRepository(session_factory(engine))
+
+    try:
+        yield create
+    finally:
+        for engine in engines:
+            await engine.dispose()
 
 
-async def test_concurrent_create_session_settles_on_one_owner(db_url: str) -> None:
-    alice, bob = _repository(db_url), _repository(db_url)
+async def test_concurrent_create_session_settles_on_one_owner(
+    repository_factory: RepositoryFactory,
+) -> None:
+    alice, bob = repository_factory(), repository_factory()
 
     results = await asyncio.gather(
         alice.create_session("shared-id", user_id="alice"),
@@ -63,11 +82,11 @@ async def test_concurrent_create_session_settles_on_one_owner(db_url: str) -> No
 
 
 async def test_an_integrity_error_that_is_not_a_duplicate_id_is_not_swallowed(
-    db_url: str, monkeypatch: pytest.MonkeyPatch
+    repository_factory: RepositoryFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a taken id is absorbed. Reading back nothing means the insert failed
     for another reason — a foreign key, a not-null — and that belongs upstream."""
-    repo = _repository(db_url)
+    repo = repository_factory()
     await repo.create_session("shared-id", user_id="alice")
 
     # Blind the reads, so the insert both collides and finds no winner.
@@ -80,12 +99,14 @@ async def test_an_integrity_error_that_is_not_a_duplicate_id_is_not_swallowed(
         await repo.create_session("shared-id", user_id="bob")
 
 
-async def test_the_api_answers_409_to_the_losing_caller(db_url: str) -> None:
+async def test_the_api_answers_409_to_the_losing_caller(
+    repository_factory: RepositoryFactory,
+) -> None:
     """Two app instances on one database, the way two replicas would be — a
     single app serialises the requests and never reaches the race."""
 
-    def client(db_url: str) -> AsyncClient:
-        app = build_test_app(ConversationService(RecordingEngine(), _repository(db_url)))
+    def client() -> AsyncClient:
+        app = build_test_app(ConversationService(RecordingEngine(), repository_factory()))
         return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
     def create(client: AsyncClient, user: str) -> Coroutine[Any, Any, Response]:
@@ -95,13 +116,15 @@ async def test_the_api_answers_409_to_the_losing_caller(db_url: str) -> None:
             headers=bearer(user),
         )
 
-    async with client(db_url) as alice, client(db_url) as bob:
+    async with client() as alice, client() as bob:
         responses = await asyncio.gather(create(alice, "alice"), create(bob, "bob"))
 
     assert sorted(r.status_code for r in responses) == [200, 409]
 
 
-async def test_a_rejected_create_leaves_the_other_system_s_session_alone(db_url: str) -> None:
+async def test_a_rejected_create_leaves_the_other_system_s_session_alone(
+    repository_factory: RepositoryFactory,
+) -> None:
     """Two systems sharing a conversation database, which is when this bites:
     naming a live id must not rebind it to the caller's system."""
 
@@ -109,7 +132,7 @@ async def test_a_rejected_create_leaves_the_other_system_s_session_alone(db_url:
         app = build_test_app(
             ConversationService(
                 RecordingEngine(),
-                _repository(db_url),
+                repository_factory(),
                 system_name=system,
                 config_path=f"/{system}/agents.yml",
             )
@@ -123,7 +146,7 @@ async def test_a_rejected_create_leaves_the_other_system_s_session_alone(db_url:
             headers=bearer("alice"),
         )
         assert created.status_code == 200
-        before = await _repository(db_url).get_session("shared-id")
+        before = await repository_factory().get_session("shared-id")
 
         rejected = await bob.post(
             "/conversations",
@@ -132,4 +155,4 @@ async def test_a_rejected_create_leaves_the_other_system_s_session_alone(db_url:
         )
 
     assert rejected.status_code == 409
-    assert await _repository(db_url).get_session("shared-id") == before
+    assert await repository_factory().get_session("shared-id") == before

@@ -1,0 +1,28 @@
+# The image's default `agentctl serve` does not host conversations or the
+# WhatsApp channel, so this service runs `agent-manager` instead.
+# Build the image first from the repository root: `make build`.
+services:
+  manager:
+    image: ghcr.io/extra-org/extra:local
+    command: ["agent-manager", "--config", "/workspace/agents.yml", "--host", "0.0.0.0", "--port", "8100"]
+    env_file:
+      - .env
+    environment:
+      # A value in .env (for example PostgreSQL) takes precedence over this file.
+      EXTRA_DB_URL: ${EXTRA_DB_URL:-sqlite+aiosqlite:////data/pilot.db}
+      WHATSAPP_PILOT_SENDERS_FILE: /workspace/senders.json
+    volumes:
+      - .:/workspace
+      # The queue and outbox live here; keep this volume across restarts.
+      - pilot-data:/data
+    ports:
+      # Loopback only. The manager also serves the web conversation API, which
+      # is anonymous by default; expose just the webhook path through a proxy.
+      - "127.0.0.1:8100:8100"
+    restart: unless-stopped
+    # Longer than the worker drain (EXTRA_WHATSAPP_WORKER_DRAIN_SECONDS, 15 s
+    # by default), so a stop lets active turns finish before the process exits.
+    stop_grace_period: 30s
+
+volumes:
+  pilot-data:

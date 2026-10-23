@@ -67,3 +67,22 @@ class RunRepository(ABC):
         usage recorded by an earlier execution leg.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    async def add_leg_token_usage(
+        self,
+        run_id: str,
+        *,
+        leg_id: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Add one execution leg's usage once per ``leg_id``.
+
+        Retrying a leg whose earlier write committed but failed to acknowledge
+        must not charge it again, while different legs of one run, including
+        overlapping ones, each apply. Implementations must atomically record
+        the (run_id, leg_id) key and add its usage only if that key is new.
+        There is no non-idempotent fallback to add_token_usage.
+        """
+        raise NotImplementedError

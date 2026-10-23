@@ -6,7 +6,7 @@ import math
 import time
 from collections import deque
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agent_engine.approvals.errors import InvalidStateTransition
 from agent_engine.approvals.models import (
@@ -32,6 +32,7 @@ _TERMINAL_RUN_STATUSES = frozenset(
 class _StoredRun:
     record: RunRecord
     expires_at: float | None = None
+    token_legs: set[str] = field(default_factory=set)
 
 
 class InMemoryRunRepository(RunRepository):
@@ -128,6 +129,25 @@ class InMemoryRunRepository(RunRepository):
         if output_tokens is not None:
             record.output_tokens = (record.output_tokens or 0) + output_tokens
         return record
+
+    async def add_leg_token_usage(
+        self,
+        run_id: str,
+        *,
+        leg_id: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Record the leg key and its usage together, with no suspension point."""
+        entry = self._get_unexpired_entry(run_id)
+        if entry is None:
+            return None
+        if leg_id not in entry.token_legs:
+            entry.token_legs.add(leg_id)
+            await self.add_token_usage(
+                run_id, input_tokens=input_tokens, output_tokens=output_tokens
+            )
+        return entry.record
 
     def _get_unexpired_entry(self, run_id: str, now: float | None = None) -> _StoredRun | None:
         entry = self._runs.get(run_id)
