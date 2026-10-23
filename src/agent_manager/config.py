@@ -9,7 +9,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, NamedTuple
 from urllib.parse import parse_qs, urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -127,7 +127,7 @@ def _is_in_memory_sqlite(url: str) -> bool:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     extra_db_backend: Literal["sqlite", "postgres"] = "sqlite"
     extra_db_url: str | None = None
@@ -159,6 +159,28 @@ class Settings(BaseSettings):
     extra_auth_claim_display_name: str = "name"
     extra_auth_claim_roles: str = "roles"
     extra_auth_claim_organization_id: str = "org_id"
+
+    extra_whatsapp_enabled: bool = False
+    extra_whatsapp_connection_id: str = "whatsapp"
+    extra_whatsapp_account_id: str | None = None
+    extra_whatsapp_phone_number_id: str | None = None
+    extra_whatsapp_app_secret: SecretStr | None = Field(default=None, repr=False, exclude=True)
+    extra_whatsapp_verify_token: SecretStr | None = Field(default=None, repr=False, exclude=True)
+    extra_whatsapp_max_body_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
+    extra_whatsapp_worker_enabled: bool = False
+    extra_whatsapp_organization_id: str | None = None
+    extra_whatsapp_identity_resolver: str | None = None
+    extra_whatsapp_worker_concurrency: int = Field(default=4, ge=1, le=16)
+    extra_whatsapp_worker_poll_seconds: float = Field(default=0.5, gt=0, le=60, allow_inf_nan=False)
+    extra_whatsapp_worker_turn_seconds: float = Field(
+        default=120, gt=0, le=3600, allow_inf_nan=False
+    )
+    extra_whatsapp_worker_drain_seconds: float = Field(default=15, gt=0, le=60, allow_inf_nan=False)
+    extra_whatsapp_status_log_seconds: float = Field(default=60, gt=0, le=3600, allow_inf_nan=False)
+    extra_whatsapp_sender_enabled: bool = False
+    extra_whatsapp_api_version: str | None = None
+    extra_whatsapp_access_token: SecretStr | None = Field(default=None, repr=False, exclude=True)
+    extra_whatsapp_support_contact: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -200,6 +222,66 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"EXTRA_AUTH_SECRET is required when EXTRA_AUTH_MODE={self.extra_auth_mode}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_whatsapp_intake(self) -> Settings:
+        if self.extra_whatsapp_sender_enabled:
+            import re
+
+            from agent_manager.domain.channels.models import bounded_identifier
+
+            if not self.extra_whatsapp_worker_enabled:
+                raise ValueError("WhatsApp sender requires the supervised worker")
+            version = self.extra_whatsapp_api_version
+            if version is None or re.fullmatch(r"v[1-9][0-9]{0,2}\.0", version) is None:
+                raise ValueError("EXTRA_WHATSAPP_API_VERSION must pin a Graph API version")
+            access = self.extra_whatsapp_access_token
+            if access is None or not access.get_secret_value().strip():
+                raise ValueError("EXTRA_WHATSAPP_ACCESS_TOKEN is required for sending")
+            for other in (self.extra_whatsapp_app_secret, self.extra_whatsapp_verify_token):
+                if other is not None and other.get_secret_value() == access.get_secret_value():
+                    raise ValueError("WhatsApp access token must differ from webhook secrets")
+            if self.extra_whatsapp_support_contact is None:
+                raise ValueError("EXTRA_WHATSAPP_SUPPORT_CONTACT is required for sending")
+            bounded_identifier(self.extra_whatsapp_support_contact)
+        if self.extra_whatsapp_worker_enabled:
+            import re
+
+            from agent_manager.domain.channels.models import bounded_identifier
+
+            if not self.extra_whatsapp_enabled:
+                raise ValueError("WhatsApp worker requires enabled intake")
+            if not self.extra_whatsapp_organization_id:
+                raise ValueError("EXTRA_WHATSAPP_ORGANIZATION_ID is required for the worker")
+            bounded_identifier(self.extra_whatsapp_organization_id)
+            plugin = self.extra_whatsapp_identity_resolver
+            if (
+                not plugin
+                or len(plugin) > 512
+                or re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*", plugin) is None
+            ):
+                raise ValueError("EXTRA_WHATSAPP_IDENTITY_RESOLVER must name module:Class")
+        if not self.extra_whatsapp_enabled:
+            return self
+        from agent_manager.domain.channels.models import bounded_identifier
+
+        bounded_identifier(self.extra_whatsapp_connection_id, limit=128)
+        for name in ("account_id", "phone_number_id"):
+            value = getattr(self, f"extra_whatsapp_{name}")
+            if not value:
+                raise ValueError(f"EXTRA_WHATSAPP_{name.upper()} is required for intake")
+            bounded_identifier(value)
+        secret = self.extra_whatsapp_app_secret
+        token = self.extra_whatsapp_verify_token
+        if secret is None or not secret.get_secret_value().strip():
+            raise ValueError("EXTRA_WHATSAPP_APP_SECRET is required for intake")
+        if token is None or not token.get_secret_value().strip():
+            raise ValueError("EXTRA_WHATSAPP_VERIFY_TOKEN is required for intake")
+        if secret.get_secret_value() == token.get_secret_value():
+            raise ValueError("WhatsApp verification token must differ from the app secret")
+        if self.uses_process_memory:
+            raise ValueError("WhatsApp intake requires persistent SQL storage")
         return self
 
     @classmethod

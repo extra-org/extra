@@ -6,10 +6,14 @@ the proof that swapping SQLite/Postgres/in-memory is safe.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import SQLModel, select
 
 import agent_manager.infrastructure.persistence.tables  # noqa: F401  (register tables)
@@ -29,20 +33,24 @@ from agent_manager.infrastructure.persistence.tables import (
 )
 
 
-async def _memory() -> Repository:
-    return MemoryRepository()
-
-
-async def _sql() -> Repository:
+@asynccontextmanager
+async def _sql_database() -> AsyncIterator[AsyncEngine]:
     engine = create_db_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    return SqlRepository(session_factory(engine))
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        yield engine
+    finally:
+        await engine.dispose()
 
 
-@pytest.fixture(params=[_memory, _sql], ids=["memory", "sql"])
-async def repo(request: pytest.FixtureRequest) -> Repository:
-    return await request.param()
+@pytest.fixture(params=["memory", "sql"])
+async def repo(request: pytest.FixtureRequest) -> AsyncIterator[Repository]:
+    if request.param == "memory":
+        yield MemoryRepository()
+    else:
+        async with _sql_database() as engine:
+            yield SqlRepository(session_factory(engine))
 
 
 async def test_create_and_exists(repo: Repository) -> None:
@@ -360,6 +368,78 @@ async def test_get_token_usage_sums_across_messages(repo: Repository) -> None:
     assert await repo.get_token_usage("sess-1") == 43  # 10+5+20+8
 
 
+async def test_run_usage_is_cumulative_idempotent_and_isolated(repo: Repository) -> None:
+    await repo.create_session("charged")
+    await repo.create_session("other")
+    await repo.record_run_token_usage("charged", "cancelled", 5)
+    await repo.record_run_token_usage("charged", "resumed", 3)
+    await repo.record_run_token_usage("charged", "resumed", 10)
+    await repo.record_run_token_usage("charged", "resumed", 10)
+    await repo.record_run_token_usage("charged", "resumed", 4)
+    await repo.record_run_token_usage("other", "separate", 100)
+
+    assert await repo.get_token_usage("charged") == 15
+    assert await repo.get_token_usage("other") == 100
+
+
+async def test_run_usage_does_not_double_count_answers_or_lose_legacy_usage(
+    repo: Repository,
+) -> None:
+    await repo.create_session("charged")
+    for message in (
+        _message("charged", Role.ASSISTANT, "legacy", run_id="old", input_tokens=7),
+        _message("charged", Role.ASSISTANT, "resumed", run_id="new", input_tokens=10),
+        _message("charged", Role.ASSISTANT, "no run", run_id=None, input_tokens=2),
+    ):
+        await repo.append_message(message)
+    await repo.record_run_token_usage("charged", "new", 10)
+    await repo.record_run_token_usage("charged", "old", 3)
+    await repo.record_run_token_usage("charged", "cancelled", 5)
+
+    assert await repo.get_token_usage("charged") == 24  # 7 + 10 + 2 + 5
+
+
+async def test_concurrent_usage_observations_keep_the_largest_total(repo: Repository) -> None:
+    await repo.create_session("charged")
+    await asyncio.gather(
+        *(repo.record_run_token_usage("charged", "run", total) for total in (5, 15, 10, 5))
+    )
+
+    assert await repo.get_token_usage("charged") == 15
+
+
+async def test_usage_projection_includes_uncharged_runs_on_inactive_branches(
+    repo: Repository,
+) -> None:
+    await repo.create_session("charged")
+    await repo.create_session("other")
+    now = datetime.now(UTC)
+    original = ConversationMessage(
+        "original", "charged", Role.USER, "original", now, run_id="missed-charge"
+    )
+    edited = ConversationMessage("edited", "charged", Role.USER, "edited", now, run_id="active-run")
+    await repo.append_message_if_head(original, None)
+    assert await repo.append_message_if_head(edited, "original")
+    await repo.record_run_token_usage("charged", "active-run", 5)
+    await repo.record_run_token_usage("other", "foreign-run", 100)
+
+    assert await repo.list_conversation_messages("charged") == [edited]
+    assert await repo.get_token_usage_by_run("charged") == {
+        "missed-charge": 0,
+        "active-run": 5,
+    }
+
+
+async def test_negative_usage_cannot_refund_a_run(repo: Repository) -> None:
+    await repo.create_session("charged")
+    await repo.record_run_token_usage("charged", "run", 5)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        await repo.record_run_token_usage("charged", "run", -1)
+
+    assert await repo.get_token_usage("charged") == 5
+
+
 async def test_delete_expired_snapshots_and_rebuild(repo: Repository) -> None:
     await repo.create_session("sess-1")
     await repo.append_message(_message("sess-1", Role.USER, "hello"), snapshot_ttl_seconds=1)
@@ -396,17 +476,15 @@ async def test_different_run_ids_can_share_one_session(repo: Repository) -> None
 
 
 async def test_sql_schema_has_cold_and_snapshot_rows() -> None:
-    engine = create_db_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    sessions = session_factory(engine)
-    repo = SqlRepository(sessions)
-    await repo.create_session("sess-1")
-    await repo.append_message(_message("sess-1", Role.USER, "hello"))
+    async with _sql_database() as engine:
+        sessions = session_factory(engine)
+        repo = SqlRepository(sessions)
+        await repo.create_session("sess-1")
+        await repo.append_message(_message("sess-1", Role.USER, "hello"))
 
-    async with sessions() as session:
-        cold = (await session.exec(select(ConversationMessageRow))).all()
-        snapshots = (await session.exec(select(ConversationSnapshotRow))).all()
+        async with sessions() as session:
+            cold = (await session.exec(select(ConversationMessageRow))).all()
+            snapshots = (await session.exec(select(ConversationSnapshotRow))).all()
 
     assert len(cold) == 1
     assert len(snapshots) == 1
@@ -430,17 +508,14 @@ def test_legacy_conversations_and_messages_tables_are_gone() -> None:
 
 
 async def test_sql_repository_does_not_write_legacy_tables() -> None:
-    engine = create_db_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    sessions = session_factory(engine)
-    repo = SqlRepository(sessions)
+    async with _sql_database() as engine:
+        repo = SqlRepository(session_factory(engine))
 
-    cid = await repo.create_conversation()
-    await repo.add_message(cid, Role.USER, "hi")
+        cid = await repo.create_conversation()
+        await repo.add_message(cid, Role.USER, "hi")
 
-    assert await repo.conversation_exists(cid)
-    assert [m.content for m in await repo.list_messages(cid)] == ["hi"]
+        assert await repo.conversation_exists(cid)
+        assert [m.content for m in await repo.list_messages(cid)] == ["hi"]
 
 
 def _message(

@@ -68,4 +68,6 @@ def to_stream_event(event: RunStreamEvent) -> StreamEventOut:
         agent_id=event.agent_id,
         description=event.description,
         arguments=event.arguments,
+        input_tokens=event.input_tokens,
+        output_tokens=event.output_tokens,
     )

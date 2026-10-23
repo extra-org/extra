@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.langgraph.engine import LangGraphEngine
@@ -20,9 +20,15 @@ from agent_engine.logging_config import configure_logging
 from agent_engine.parsers.yaml.parser import YAMLParser
 from agent_manager.api.deps import CallerIdentity
 from agent_manager.api.routes import router
+from agent_manager.api.routes.whatsapp import router as whatsapp_router
 from agent_manager.api.web import mount_web
 from agent_manager.application import ConversationService
-from agent_manager.composition import application_repositories, build_identity_resolver
+from agent_manager.composition import (
+    application_repositories,
+    build_identity_resolver,
+    build_whatsapp_webhook,
+    channel_worker_lifespan,
+)
 from agent_manager.config import Settings
 from agent_manager.domain import TitleGenerator
 from agent_manager.infrastructure.titles import ConversationTitler
@@ -65,6 +71,9 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
             ) as engine,
         ):
             await engine.build(spec)
+            app.state.whatsapp_webhook = build_whatsapp_webhook(
+                settings, repositories, spec.meta.name
+            )
             service = ConversationService(
                 engine,
                 repositories.conversations,
@@ -79,7 +88,11 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
             )
             app.state.service = service
             try:
-                yield
+                async with channel_worker_lifespan(
+                    settings, repositories, service, spec.meta.name
+                ) as worker:
+                    app.state.channel_worker = worker
+                    yield
             finally:
                 await service.close()
 
@@ -90,9 +103,16 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
     )
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok", "system": getattr(app.state, "system_name", "")}
+    def health(response: Response) -> dict[str, str]:
+        system = getattr(app.state, "system_name", "")
+        worker = getattr(app.state, "channel_worker", None)
+        if worker is not None and not worker.running:
+            response.status_code = 503
+            return {"status": "degraded", "system": system}
+        return {"status": "ok", "system": system}
 
     app.include_router(router)
+    if settings.extra_whatsapp_enabled:
+        app.include_router(whatsapp_router)
     mount_web(app, settings)
     return app

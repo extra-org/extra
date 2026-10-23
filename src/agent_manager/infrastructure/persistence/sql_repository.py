@@ -11,7 +11,9 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, literal, or_, update
+from sqlalchemy import and_, case, delete, func, literal, or_, update
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -35,12 +37,19 @@ from agent_manager.domain.pagination import (
     encode_cursor,
     ensure_utc,
 )
+from agent_manager.domain.turn_preparation import validate_prepared_message
 from agent_manager.infrastructure.persistence.tables import (
     ConversationMessageRow,
+    ConversationRunTokenUsageRow,
     ConversationSessionRow,
     ConversationSnapshotRow,
     ConversationUserRow,
+    TurnPreparationReceiptRow,
 )
+
+
+class _PreparationHeadChanged(Exception):
+    """Roll back the key claim together with a rejected branch append."""
 
 
 class SqlRepository(Repository):
@@ -356,6 +365,73 @@ class SqlRepository(Repository):
             row = await session.get(ConversationMessageRow, message_id)
         return _message(row) if row is not None else None
 
+    async def get_prepared_message(self, key_digest: str) -> ConversationMessage | None:
+        async with self._sessions() as session:
+            receipt = await session.get(TurnPreparationReceiptRow, key_digest)
+            if receipt is None:
+                return None
+            row = await session.get(ConversationMessageRow, receipt.message_id)
+            if row is None:
+                raise RuntimeError("turn preparation receipt has no message")
+            return _message(row)
+
+    async def append_prepared_message(
+        self,
+        key_digest: str,
+        message: ConversationMessage,
+        expected_head_message_id: str | None,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> ConversationMessage | None:
+        try:
+            async with self._sessions() as session, session.begin():
+                insert = (
+                    sqlite_insert(TurnPreparationReceiptRow)
+                    if session.bind is not None and session.bind.dialect.name == "sqlite"
+                    else postgres_insert(TurnPreparationReceiptRow)
+                )
+                claimed = await session.exec(
+                    insert.values(key_digest=key_digest, message_id=message.message_id)
+                    .on_conflict_do_nothing(index_elements=["key_digest"])
+                    .returning(col(TurnPreparationReceiptRow.key_digest))
+                )
+                if claimed.scalar_one_or_none() is None:
+                    receipt = await session.get(TurnPreparationReceiptRow, key_digest)
+                    assert receipt is not None
+                    row = await session.get(ConversationMessageRow, receipt.message_id)
+                    if row is None:
+                        raise RuntimeError("turn preparation receipt has no message")
+                    existing = _message(row)
+                    validate_prepared_message(
+                        existing, message.session_id, message.user_id or "", message.content
+                    )
+                    return existing
+                head = col(ConversationSessionRow.head_message_id)
+                expected = (
+                    head.is_(None)
+                    if expected_head_message_id is None
+                    else head == expected_head_message_id
+                )
+                changed = await session.exec(
+                    update(ConversationSessionRow)
+                    .where(col(ConversationSessionRow.session_id) == message.session_id, expected)
+                    .values(
+                        head_message_id=message.message_id,
+                        updated_at=message.created_at,
+                        last_message_at=message.created_at,
+                    )
+                )
+                if _rows_affected(changed) == 0:
+                    raise _PreparationHeadChanged
+                session.add(_message_row(message))
+                await session.flush()
+                await self._rebuild_snapshot_in_session(
+                    session, message.session_id, snapshot_ttl_seconds=snapshot_ttl_seconds
+                )
+        except _PreparationHeadChanged:
+            return None
+        return message
+
     async def get_user_message_for_run(
         self, session_id: str, run_id: str
     ) -> ConversationMessage | None:
@@ -396,10 +472,40 @@ class SqlRepository(Repository):
                 session, session_id, snapshot_ttl_seconds=snapshot_ttl_seconds
             )
 
-    async def get_token_usage(self, conversation_id: str) -> int:
+    async def record_run_token_usage(
+        self, conversation_id: str, run_id: str, total_tokens: int
+    ) -> None:
+        if total_tokens < 0:
+            raise ValueError("total_tokens must be non-negative")
+        async with self._sessions() as session, session.begin():
+            await session.exec(
+                run_token_usage_upsert(
+                    session.get_bind().dialect.name, conversation_id, run_id, total_tokens
+                )
+            )
+
+    async def get_token_usage_by_run(self, conversation_id: str) -> dict[str | None, int]:
         async with self._sessions() as session:
-            rows = await self._message_rows(session, conversation_id, None)
-        return sum((r.input_tokens or 0) + (r.output_tokens or 0) for r in rows)
+            messages = await session.exec(
+                select(
+                    ConversationMessageRow.run_id,
+                    func.sum(
+                        func.coalesce(ConversationMessageRow.input_tokens, 0)
+                        + func.coalesce(ConversationMessageRow.output_tokens, 0)
+                    ),
+                )
+                .where(col(ConversationMessageRow.session_id) == conversation_id)
+                .group_by(col(ConversationMessageRow.run_id))
+            )
+            usage = {run_id: int(total) for run_id, total in messages.all()}
+            recorded = await session.exec(
+                select(ConversationRunTokenUsageRow).where(
+                    col(ConversationRunTokenUsageRow.session_id) == conversation_id
+                )
+            )
+            for row in recorded.all():
+                usage[row.run_id] = max(usage.get(row.run_id, 0), row.total_tokens)
+        return usage
 
     async def get_context(
         self,
@@ -563,6 +669,24 @@ class SqlRepository(Repository):
             .order_by(branch.c.depth.desc())
         )
         return list(result.all())
+
+
+def run_token_usage_upsert(
+    dialect_name: str, conversation_id: str, run_id: str, total_tokens: int
+) -> Any:
+    """One atomic upsert: stale or concurrent observers cannot refund a run."""
+    insert = (
+        sqlite_insert(ConversationRunTokenUsageRow)
+        if dialect_name == "sqlite"
+        else postgres_insert(ConversationRunTokenUsageRow)
+    )
+    stored = col(ConversationRunTokenUsageRow.total_tokens)
+    return insert.values(
+        session_id=conversation_id, run_id=run_id, total_tokens=total_tokens
+    ).on_conflict_do_update(
+        index_elements=["session_id", "run_id"],
+        set_={"total_tokens": case((stored < total_tokens, total_tokens), else_=stored)},
+    )
 
 
 def _rows_affected(result: Any) -> int:
