@@ -18,6 +18,7 @@ from agent_engine.approvals.tool_execution_manager import ToolExecutionManager
 from agent_engine.core.spec import AgentSpec, BaseModelConfig, GraphNode, OrchestratorSpec
 from agent_engine.core.spec import ModelConfig as NodeModelConfig
 from agent_engine.engine.langgraph.checkpointing import CheckpointerHandle
+from agent_engine.engine.langgraph.execution.approval_resume import current_approval_resume
 from agent_engine.engine.langgraph.execution.node_executor import NodeExecutor
 from agent_engine.engine.langgraph.filters import RouteFilter
 from agent_engine.engine.langgraph.graph.traversal import node_id
@@ -29,6 +30,7 @@ from agent_engine.engine.langgraph.tools.tool_invoker import ToolInvoker
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.loaders.tool_loader import ToolLoader
 from agent_engine.runtime.hooks import HookManager
+from agent_engine.runtime.hooks.context import current_run_context, public_run_context
 from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import current_streams
 from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
@@ -154,6 +156,13 @@ class GraphBuilder:
         filters = tuple(self._filters)
 
         async def execute_root(state: GraphState) -> GraphState:
+            if current_approval_resume.get() is not None:
+                ctx = current_run_context.get()
+                # Checkpoints retain the reviewed work, not current authority.
+                # Replace facts locally for the root and all delegated children.
+                state = {**state, "run_context": public_run_context(ctx) if ctx else {}}
+            if not node.node.protected:
+                return await executor.execute(state)
             # The root has no parent to filter it before delegation. Apply the
             # same policy before entering either kind of protected executor.
             candidates = [node.node]
@@ -168,7 +177,7 @@ class GraphBuilder:
                 return {"visited": [], "answer": answer}
             return await executor.execute(state)
 
-        builder.add_node(path, execute_root if node.node.protected else executor.execute)
+        builder.add_node(path, execute_root)
         builder.add_edge(path, END)
 
     def _build_orchestrator_node(

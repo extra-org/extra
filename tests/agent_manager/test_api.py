@@ -130,6 +130,7 @@ class _ApprovalRecordingEngine(RecordingEngine):
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
         access_token: str | None = None,
+        context: RunContext | None = None,
     ) -> RunResult:
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id, caller_session_id))
         self.resume_tokens.append(access_token)
@@ -153,6 +154,7 @@ class _ApprovalRecordingEngine(RecordingEngine):
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
         access_token: str | None = None,
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id, caller_session_id))
         self.resume_tokens.append(access_token)
@@ -855,6 +857,7 @@ async def test_closing_approval_stream_cancels_same_run_without_partial_assistan
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
             access_token: str | None = None,
+            context: RunContext | None = None,
         ) -> AsyncIterator[RunStreamEvent]:
             del approval_id, decision, caller_user_id, caller_session_id, access_token
             await runs.transition_if_allowed(run_id, RunStatus.RESUMING)
@@ -1175,6 +1178,7 @@ def test_conversation_approval_sanitizes_engine_failure(
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
             access_token: str | None = None,
+            context: RunContext | None = None,
         ) -> RunResult:
             del run_id, approval_id, decision, caller_user_id, caller_session_id, access_token
             raise RuntimeError("private approval failure")
@@ -1211,6 +1215,7 @@ def test_conversation_approval_sanitizes_typed_approval_failure() -> None:
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
             access_token: str | None = None,
+            context: RunContext | None = None,
         ) -> RunResult:
             del run_id, decision, caller_user_id, caller_session_id, access_token
             raise ApprovalNotFound(f"private-{approval_id}")
@@ -1246,6 +1251,7 @@ def test_conversation_approval_retry_recovers_result_without_duplicate_message()
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
             access_token: str | None = None,
+            context: RunContext | None = None,
         ) -> RunResult:
             if run_id in self.completed_results:
                 raise ApprovalAlreadyProcessed(approval_id, "approved")
@@ -1256,6 +1262,7 @@ def test_conversation_approval_retry_recovers_result_without_duplicate_message()
                 caller_user_id=caller_user_id,
                 caller_session_id=caller_session_id,
                 access_token=access_token,
+                context=context,
             )
 
     class FailFirstAssistantWrite(MemoryRepository):

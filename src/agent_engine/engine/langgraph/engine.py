@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,7 +17,11 @@ from langgraph.types import Command
 from agent_engine.approvals.approval_manager import ApprovalManager
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
-from agent_engine.approvals.errors import ApprovalInvocationMismatch, RunNotFound
+from agent_engine.approvals.errors import (
+    ApprovalInvocationMismatch,
+    RunNotFound,
+    UnauthorizedApprover,
+)
 from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
 from agent_engine.approvals.in_memory_session_approval_repository import (
     InMemorySessionApprovalRepository,
@@ -74,6 +79,7 @@ from agent_engine.runtime.hooks import (
     RunContext,
     current_run_context,
 )
+from agent_engine.runtime.hooks.context import public_run_context
 from agent_engine.runtime.streaming import (
     RunStreamEvent,
     StreamSinks,
@@ -112,34 +118,8 @@ def _initial_state(
         ],
     }
     if expose_run_context:
-        state["run_context"] = _state_run_context(ctx)
+        state["run_context"] = public_run_context(ctx)
     return state
-
-
-def _state_run_context(ctx: RunContext) -> dict[str, Any]:
-    """Return the generic, non-secret context exposed to graph runtime filters."""
-    data: dict[str, Any] = {}
-    for key in ("run_id", "conversation_id", "user_id", "organization_id"):
-        value = getattr(ctx, key)
-        if value is not None:
-            data[key] = value
-    if ctx.metadata:
-        data["metadata"] = dict(ctx.metadata)
-    if ctx.auth_context is not None:
-        auth: dict[str, Any] = {}
-        for key in ("user_id", "organization_id"):
-            value = getattr(ctx.auth_context, key)
-            if value is not None:
-                auth[key] = value
-        if ctx.auth_context.scopes:
-            auth["scopes"] = tuple(ctx.auth_context.scopes)
-        if ctx.auth_context.roles:
-            auth["roles"] = tuple(ctx.auth_context.roles)
-        if ctx.auth_context.metadata:
-            auth["metadata"] = dict(ctx.auth_context.metadata)
-        if auth:
-            data["auth"] = auth
-    return data
 
 
 def _trace_metadata(ctx: RunContext) -> dict[str, Any]:
@@ -694,6 +674,7 @@ class LangGraphEngine(Engine):
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
         access_token: str | None = None,
+        context: RunContext | None = None,
     ) -> RunResult:
         """Apply a human decision to a pending tool call and resume the same run.
 
@@ -703,6 +684,10 @@ class LangGraphEngine(Engine):
         either executes or denies the original tool call. ``ALLOW_FOR_SESSION``
         additionally records a session permission so the tool is not re-prompted
         for the rest of the conversation.
+
+        ``context`` must come from the current trusted host request. Permission
+        facts are replaced on replay, never recovered from the checkpoint.
+        With no context, role/scope/metadata-based policies see no saved grants.
         """
         app, lifecycle = self._require_built("resuming")
         kind = parse_decision(decision)
@@ -713,6 +698,7 @@ class LangGraphEngine(Engine):
             caller_user_id=caller_user_id,
             caller_session_id=caller_session_id,
             access_token=access_token,
+            context=context,
         )
         approved = kind != ApprovalDecision.DENY
         log(
@@ -775,8 +761,9 @@ class LangGraphEngine(Engine):
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
         access_token: str | None = None,
+        context: RunContext | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
-        """Resume one approval through the same owned stream used by new runs."""
+        """Resume with current trusted context through the owned run stream."""
         app, lifecycle = self._require_built("streaming an approval resume")
         kind = parse_decision(decision)
         ctx, approval = await self._activate_approval_resume(
@@ -786,6 +773,7 @@ class LangGraphEngine(Engine):
             caller_user_id=caller_user_id,
             caller_session_id=caller_session_id,
             access_token=access_token,
+            context=context,
         )
         approved = kind != ApprovalDecision.DENY
 
@@ -834,6 +822,7 @@ class LangGraphEngine(Engine):
         caller_user_id: str | None,
         caller_session_id: str | None,
         access_token: str | None = None,
+        context: RunContext | None = None,
     ) -> tuple[RunContext, ApprovalRecord]:
         """Claim and activate one resume without an interruptible ownership gap.
 
@@ -844,24 +833,38 @@ class LangGraphEngine(Engine):
         """
 
         async def activate() -> tuple[RunContext, ApprovalRecord]:
+            request = context or RunContext()
+            auth = request.auth_context or AuthContext()
+            users = {
+                value
+                for value in (caller_user_id, request.user_id, auth.user_id)
+                if value is not None
+            }
+            sessions = {
+                value for value in (caller_session_id, request.conversation_id) if value is not None
+            }
+            if request.run_id not in (None, run_id) or len(users) > 1 or len(sessions) > 1:
+                raise UnauthorizedApprover(approval_id)
             approval = await self._approval_manager.claim(
                 run_id=run_id,
                 approval_id=approval_id,
-                caller_user_id=caller_user_id,
-                caller_auth_ref=caller_session_id,
+                caller_user_id=next(iter(users), None),
+                caller_auth_ref=next(iter(sessions), None),
             )
-            ctx = RunContext(
+            ctx = request.replace(
                 run_id=run_id,
                 conversation_id=approval.auth_ref,
                 user_id=approval.authorized_user_id,
-                organization_id=approval.organization_id,
-                metadata={"approval_id": approval.approval_id},
-                # The approver's credential as of now, not one captured when the
-                # run started and possibly expired while it waited for a human.
-                auth_context=AuthContext(
+                organization_id=request.organization_id or auth.organization_id,
+                metadata={**request.metadata, "approval_id": approval.approval_id},
+                # Authorization facts come only from this request. Saved facts
+                # describe the original run and cannot prove current access.
+                auth_context=replace(
+                    auth,
                     user_id=approval.authorized_user_id,
-                    organization_id=approval.organization_id,
-                    inbound_access_token=access_token,
+                    inbound_access_token=access_token
+                    if access_token is not None
+                    else auth.inbound_access_token,
                 ),
             )
             await lifecycle.activate_resume(ctx)

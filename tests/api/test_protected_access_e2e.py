@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+from tests.agent_manager.conftest import bearer, build_test_app
+from tests.approvals.test_engine_hitl import _multi_tool_spec
+from tests.approvals.test_resume_binding import write_tool
+from tests.engine.test_engine_flow import orchestrator, system
 from tests.fixtures.utils import FakeChatModel, fake_model_factory
 
 from agent_engine.api.app import create_app
+from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.models import RunStatus
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_manager.application import ConversationService
+from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 
 _FORGED_HEADERS = {
     "X-User-ID": "admin",
@@ -131,3 +141,76 @@ def test_unprotected_root_still_executes_with_deny_all_policy(tmp_path, monkeypa
     assert response.status_code == 200
     assert response.json()["visited"] == ["admin"]
     assert response.json()["answer"] == "ok"
+
+
+@pytest.mark.parametrize("location", ["agent", "orchestrator", "child"])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("permitted", [False, True])
+async def test_manager_approval_uses_current_verified_roles(
+    tmp_path, location, streaming, permitted
+):
+    output = tmp_path / "executed.log"
+    write_tool(tmp_path, "send_email", output)
+    (tmp_path / "plugins" / "access.py").write_text(
+        "class AccessResolver:\n"
+        "    def can_access(self, ctx, node_id):\n"
+        "        return 'admin' in ctx.get('auth', {}).get('roles', ())\n",
+        encoding="utf-8",
+    )
+    spec = _multi_tool_spec("send_email")
+    if location in {"agent", "child"}:
+        spec = replace(
+            spec, graph=replace(spec.graph, node=replace(spec.graph.node, protected=True))
+        )
+    if location != "agent":
+        spec = system(orchestrator("root", [spec.graph]))
+        if location == "orchestrator":
+            spec = replace(
+                spec, graph=replace(spec.graph, node=replace(spec.graph.node, protected=True))
+            )
+    async with LangGraphEngine(tmp_path, model_factory=fake_model_factory) as engine:
+        await engine.build(spec)
+        service = ConversationService(engine, MemoryRepository())
+        app = build_test_app(service)
+        initial = bearer("owner", roles=["admin"], org_id="org")
+        current = bearer("owner", roles=["admin"] if permitted else [], org_id="org")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/conversations", json={"session_id": "session"}, headers=initial
+            )
+            assert response.status_code == 200
+            response = await client.post(
+                "/conversations/session/messages", json={"message": "hello"}, headers=initial
+            )
+            assert response.status_code == 200
+            pending = response.json()["pending_approval"]
+            assert pending is not None and not output.exists()
+            suffix = "/stream" if streaming else ""
+            response = await client.post(
+                f"/conversations/session/runs/{pending['run_id']}/approvals/"
+                f"{pending['approval_id']}/decision{suffix}",
+                json={"decision": ApprovalDecision.ALLOW_ONCE.value},
+                headers={**current, "X-Roles": "admin", "X-User-ID": "owner"},
+            )
+
+        if permitted:
+            assert response.status_code == 200
+            assert len(output.read_text().splitlines()) == 1
+            assert await engine.get_run_status(pending["run_id"]) == RunStatus.COMPLETED
+        else:
+            assert not output.exists()
+            if streaming:
+                assert response.status_code == 200
+                events = [
+                    json.loads(line[6:])
+                    for line in response.text.splitlines()
+                    if line.startswith("data: ") and line != "data: [DONE]"
+                ]
+                assert any(event["type"] == "error" for event in events)
+                assert not any(event["type"] == "final" for event in events)
+            else:
+                # Removing a child changes the replayed model tool set, which
+                # the existing checkpoint guard rejects before tool execution.
+                assert response.status_code == (500 if location == "child" else 409)
+            assert await engine.get_run_status(pending["run_id"]) == RunStatus.FAILED
+            assert await engine.get_pending_approval(pending["run_id"]) is None

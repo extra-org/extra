@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.engine.types import PendingApproval, RunResult
+from agent_engine.runtime.hooks.models import RunContext
 
 
 @runtime_checkable
@@ -30,4 +31,5 @@ class ApprovalEngine(Protocol):
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
         access_token: str | None = None,
+        context: RunContext | None = None,
     ) -> RunResult: ...

@@ -169,3 +169,97 @@ Fresh pre-commit validation passed: make check (1,094 tests, 9 dependency
 warnings, format/lint, mypy and generated-stub checks), make validate (both
 configured examples), and git diff --check. The reviewed source hash was
 unchanged throughout the gate.
+
+## PR 154 review follow-up — Fresh approval authorization
+
+The user's 2026-10-23 request to fix PR 154 authorizes addressing
+https://github.com/extra-org/extra/pull/154#discussion_r4360627342 and updating
+the existing branch. The root guard currently reads checkpointed roles; the
+manager forwards only the new credential on approval. A policy that reads
+roles or scopes can therefore accept a revoked grant.
+
+Scope additions required for this correction:
+
+- engine/approval_engine.py and engine/approval_streaming_engine.py: an optional
+  typed RunContext on the existing Python approval ports, documented in ADR 0002.
+- engine/langgraph/engine.py: use fresh context while preserving approval-owner
+  binding; missing fresh permission facts must never fall back to checkpoints.
+- engine/langgraph/graph/graph_builder.py and runtime/hooks/context.py: project
+  the active request's non-secret context into root/child execution on replay.
+- agent_manager/application/conversation_service.py: supply the current verified
+  Principal for both approval paths using the existing RunContext model.
+- tests/api/test_protected_access_e2e.py and tests/engine/test_protected_root.py:
+  real HTTP and engine revocation/allow/omitted-context regressions.
+- tests/agent_manager/test_api.py: update approval doubles to the additive port.
+- tests/api/test_run_context.py: follow the shared non-secret projection helper
+  when it moves out of the engine module; keep the credential assertion intact.
+- docs/SIDECAR_CONTEXT_AUTH.md, ADR 0002 and this task: describe semantics,
+  compatibility, scope and verification. No HTTP/YAML/plugin schema change.
+
+Acceptance criteria:
+
+- [x] Both approval endpoints use the current verified principal's roles.
+- [x] Protected agents/orchestrators and children reject revoked permissions
+  before the pending tool effect, including streaming replay.
+- [x] Fresh scope/metadata facts replace old authorization facts; missing facts
+  do not inherit a grant from the original run.
+- [x] Still-authorized approvals execute the reviewed tool exactly once.
+- [x] Owner binding, credential forwarding, checkpoint replay and cancellation
+  remain intact; request context is never stored on the shared engine.
+- [x] The reviewed symptom fails before the fix; make check and examples pass.
+
+Merged current main (6b9ada3) after resolving the task-index conflict by
+retaining both sets of entries. The combined baseline passed make check:
+1,498 tests / 27 dependency warnings, format/lint, mypy and generated stubs.
+
+### Follow-up result and validation
+
+The manager now sends a current RunContext through both typed approval ports.
+The engine validates caller/run/session consistency before claiming an
+approval and binds the active request context to the original approved owner.
+Only current role/scope/organization/metadata facts enter access checks. The
+shared non-secret projection helper is reused on initial execution and replay;
+root entry copies state locally so child filters receive the same fresh facts.
+No checkpoint edit, model regeneration, global identity state or persistence
+migration is required. ADR 0002 records the additive Python keyword and adapter
+upgrade requirement; HTTP/YAML/access-plugin shapes are unchanged.
+
+The valid initial regression run reproduced six HTTP revoked-role cases that
+executed the tool, plus two omitted-context resumes that reused old roles;
+the six still-authorized HTTP cases already passed. An earlier HTTP test setup
+used the engine's free-text decision alias instead of the HTTP enum; that was
+corrected before observing the security failures. The final suite adds 40 cases
+in total, including scope, metadata, organization, ownership and concurrent
+approval isolation; the two protected-access files now contain 79 cases.
+
+Final make check passed: **1,538 tests / 27 dependency warnings**, 363 files
+formatted, lint, mypy (359 files) and generated-stub checks. Both make validate
+examples and the WhatsApp pilot configuration passed; git diff --check passed.
+An intermediate gate caught stale helper imports and test typing after adding
+the keyword; these were corrected before the passing gate. No warnings were
+suppressed, and all models/providers are fakes with temporary local storage.
+
+### Follow-up code review
+
+1. **Summary:** The checkpointed-authority bypass is corrected for root and
+   child access checks on normal and streamed approval replay.
+2. **Blocking issues:** The reviewed revoked-role tool effect is fixed; no
+   additional blocking finding was confirmed in the scoped changes.
+3. **Non-blocking issues:** Removing a protected child can reach the existing
+   checkpoint mismatch error path (sanitized HTTP 500 or SSE error), while root
+   denial uses the existing approval mismatch response. Both stop the effect
+   and fail the run; changing those public error policies is separate work.
+4. **Architecture concerns:** The manager supplies verified identity through
+   typed ports; the engine remains generic, startup-scoped and free of request
+   state. Replayed work and current authority remain separate.
+5. **Security concerns:** Missing fresh facts never inherit old grants. Caller
+   identity conflicts fail before claiming the approval. Token exclusion,
+   original invocation binding and independent concurrent contexts are covered.
+6. **Testing gaps:** Real manager HTTP verification and engine replay use fake
+   models and observable local tool effects. The full gate covers existing
+   cancellation, duplicate decisions, credential forwarding and nested replay.
+   No live identity/provider deployment was exercised.
+7. **Suggested improvements:** External approval adapters must accept the
+   new context keyword; hosts must supply a trusted current snapshot.
+8. **Final recommendation:** Approve the scoped correction after independent
+   review. This is a local self-review, not a GitHub approval or merge.

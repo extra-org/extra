@@ -230,11 +230,30 @@ context. A root's decision is evaluated per execution, never cached between
 requests. This enforces node access without implementing API authentication or
 replacing authorization inside client tools and data services.
 
-The root policy is also rechecked when a pending tool approval replays the root
-executor. If that policy now denies access, the reviewed invocation is never
-reached. The existing replay-binding guard raises `ApprovalInvocationMismatch`,
-rejects the pending approval and fails the run; the human decision is not
-reported as an executed action. This differs from a new run's normal refusal.
+Approval replay uses the **current approval request's** trusted context. Python
+hosts pass `context=RunContext(...)` to `resume` / `resume_stream`;
+`agent_manager` builds it from the verified principal on each decision request,
+including that principal's current roles, organization and credential. Supplied
+run/user/session identities must match the approval's bound caller and run.
+The root wrapper replaces its execution-local context projection before access
+checks and child delegation. Saved roles, scopes, organization and metadata are
+never merged into it, and credentials are never added to the graph projection.
+Omitting fresh permission facts does not recover the old grant. A permissive
+policy can still explicitly allow a context with no role or scope facts.
+
+The root policy is rechecked before its executor is entered. If that policy
+denies access, the reviewed invocation is never reached. The existing
+replay-binding guard raises `ApprovalInvocationMismatch`, rejects the pending
+approval and fails the run; the decision is not reported as an executed action.
+Removing a protected child can instead trigger the existing checkpoint replay
+mismatch guard, which also prevents execution and fails the run. Neither case
+re-generates the reviewed model/tool request. A denied resume retains the
+existing error handling rather than a new run's normal refusal response.
+
+The optional Python approval ports require implementations to accept the new
+`context` keyword; a host must not silently discard it for a legacy adapter.
+The HTTP decision body, SSE event types, access-plugin signature and YAML
+remain unchanged. See [ADR 0002](adr/0002-conversation-lifecycle-and-immutable-branches.md).
 
 ---
 
