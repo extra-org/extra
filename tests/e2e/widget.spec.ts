@@ -1501,6 +1501,43 @@ test("thread drawer paginates and appends next pages on scroll", async ({ page }
   await expect.poll(() => shadowText(page, ".thread-drawer")).toContain("Thread Three");
 });
 
+test("thread drawer keeps natural row height with many conversations and scrolls", async ({ page }) => {
+  const threads = Array.from({ length: 25 }, (_, i) => ({
+    conversation_id: `conv-${i}`,
+    title: `Conversation number ${i + 1}`,
+    last_message_at: "2026-06-28T00:00:00Z",
+  }));
+  await mockConversationApi(page, { threads });
+  await page.route("**/conversations/*/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowClick(page, '[aria-label="Conversations"]');
+  await expect.poll(() => shadowText(page, ".thread-drawer")).toContain("Conversation number 25");
+
+  // Every row must render at the same natural height — the count must not
+  // compress them. (The bug: flex-shrink squashed rows to ~25px once the list
+  // overflowed, clipping titles and hiding the scrollbar.)
+  const heights = await (await widget(page)).evaluate((el) => {
+    const rows = Array.from(el.shadowRoot?.querySelectorAll(".thread-item") ?? []);
+    return rows.map((row) => row.getBoundingClientRect().height);
+  });
+  const first = heights[0];
+  expect(first).toBeGreaterThan(20);
+  for (const height of heights) expect(Math.abs(height - first)).toBeLessThan(0.5);
+
+  // The list itself must overflow so the scrollbar is usable.
+  const scrollMetrics = await (await widget(page)).evaluate((el) => {
+    const list = el.shadowRoot?.querySelector(".thread-list");
+    if (!list) throw new Error("thread-list not found");
+    return { scrollHeight: list.scrollHeight, clientHeight: list.clientHeight };
+  });
+  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+});
+
 test("visitor pass cached, cookie login hand-off merges history and first thread list request observes merged threads", async ({ page }) => {
   const calls: string[] = [];
   await pinVisitorPass(page);
