@@ -78,6 +78,13 @@ One `conversation_id` owns an immutable message tree.
   turns and resumed turns share the engine's owned graph-task cancellation
   path; resume retains the original run and transitions
   `PENDING_APPROVAL → RESUMING → RUNNING` before emitting work.
+- Approval replay uses current authorization facts supplied by the trusted
+  host on the decision request. The manager derives them from its freshly
+  verified Principal, never from the suspended run. Root entry replaces the
+  execution-local context projection for root and child access checks while
+  preserving the reviewed checkpoint/model/tool binding. Missing permission
+  facts cannot inherit checkpointed roles, scopes, organization or metadata.
+  Credentials stay in request-local context and are excluded from the projection.
 
 No separate `branch_id` is introduced. A branch is identified by its leaf/head
 message, which is already a stable domain identity.
@@ -91,6 +98,16 @@ message, which is already a stable domain identity.
   not represented as an approval decision or as `DENY`.
 - Approval decisions add `/decision/stream`; its `resume_started` event carries
   the original `run_id`, and disconnecting it cancels the active graph task.
+- The Python `ApprovalEngine.resume` and `ApprovalStreamingEngine.resume_stream`
+  ports accept optional `context: RunContext | None`. Embedding hosts supply a
+  current verified snapshot on every decision; the manager forwards current
+  roles, organization and credential. Supplied caller/run/session identities
+  must agree with the existing approval binding before it is claimed. External
+  implementations of these optional capabilities must accept the keyword;
+  silently dropping context to support an older signature is unsafe. Existing
+  direct calls remain valid, but without fresh facts a role/scope/metadata
+  policy cannot reuse the original grant. No HTTP/YAML/access-plugin schema
+  changes or new persistence revision are required for this correction.
 - Conversation sessions gain `head_message_id`; manager persistence includes
   durable run records. Because no database environment currently exists, no new
   migration revision was created; the existing fresh-database baseline revision

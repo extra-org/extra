@@ -4,7 +4,7 @@ forwarded verbatim and verified nowhere, asserted facts are not accepted."""
 from __future__ import annotations
 
 from agent_engine.api.app import _run_context
-from agent_engine.engine.langgraph.engine import _state_run_context
+from agent_engine.runtime.hooks.context import public_run_context
 
 TOKEN = "eyJhbGciOiJIUzI1NiJ9.host-token.signature"
 
@@ -35,4 +35,4 @@ def test_the_credential_never_reaches_the_state_the_model_sees() -> None:
     """Graph state reaches prompts and callers; a credential there is a leak."""
     ctx = _run_context(None, run_id="r1", authorization=f"Bearer {TOKEN}")
 
-    assert TOKEN not in repr(_state_run_context(ctx))
+    assert TOKEN not in repr(public_run_context(ctx))

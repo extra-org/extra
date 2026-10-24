@@ -67,18 +67,20 @@ def _assistant_message_id(session_id: str, run_id: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"agent-manager:{session_id}:{run_id}:assistant").hex
 
 
-def _run_context(turn: PreparedConversationTurn) -> RunContext:
+def _run_context(
+    run_id: str, session_id: str, user_id: str | None, principal: Principal
+) -> RunContext:
     """The per-run context one turn executes under, carrying the caller's own
     host credential so tools act as this user rather than share a privileged key."""
     return RunContext(
-        run_id=turn.run_id,
-        conversation_id=turn.session_id,
-        user_id=turn.user_id,
+        run_id=run_id,
+        conversation_id=session_id,
+        user_id=user_id,
         auth_context=AuthContext(
-            user_id=turn.user_id,
-            organization_id=turn.principal.organization_id,
-            roles=turn.principal.roles,
-            inbound_access_token=turn.principal.access_token,
+            user_id=user_id,
+            organization_id=principal.organization_id,
+            roles=principal.roles,
+            inbound_access_token=principal.access_token,
         ),
     )
 
@@ -224,7 +226,9 @@ class ConversationService:
                 result = await self._engine.run(
                     turn.message,
                     history=turn.history,
-                    context=_run_context(turn),
+                    context=_run_context(
+                        turn.run_id, turn.session_id, turn.user_id, turn.principal
+                    ),
                 )
             except asyncio.CancelledError:
                 await self.cancel_turn(turn)
@@ -458,6 +462,7 @@ class ConversationService:
                     caller_user_id=session.user_id,
                     caller_session_id=session.session_id,
                     access_token=principal.access_token,
+                    context=_run_context(run_id, session.session_id, session.user_id, principal),
                 )
             except ApprovalAlreadyProcessed:
                 recovered = await engine.get_processed_result(
@@ -527,6 +532,7 @@ class ConversationService:
                 caller_user_id=session.user_id,
                 caller_session_id=session.session_id,
                 access_token=principal.access_token,
+                context=_run_context(run_id, session.session_id, session.user_id, principal),
             )
             async with self._retaining_run_usage(conversation_id, run_id):
                 try:
@@ -607,7 +613,7 @@ class ConversationService:
         engine_stream = self._engine.stream(
             turn.message,
             history=turn.history,
-            context=_run_context(turn),
+            context=_run_context(turn.run_id, turn.session_id, turn.user_id, turn.principal),
         )
         async with self._retaining_run_usage(turn.session_id, turn.run_id):
             try:

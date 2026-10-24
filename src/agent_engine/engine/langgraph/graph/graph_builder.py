@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from agent_engine.approvals.tool_execution_manager import ToolExecutionManager
 from agent_engine.core.spec import AgentSpec, BaseModelConfig, GraphNode, OrchestratorSpec
 from agent_engine.core.spec import ModelConfig as NodeModelConfig
 from agent_engine.engine.langgraph.checkpointing import CheckpointerHandle
+from agent_engine.engine.langgraph.execution.approval_resume import current_approval_resume
+from agent_engine.engine.langgraph.execution.node_executor import NodeExecutor
 from agent_engine.engine.langgraph.filters import RouteFilter
 from agent_engine.engine.langgraph.graph.traversal import node_id
 from agent_engine.engine.langgraph.nodes.agent_node import AgentNode
@@ -27,12 +30,15 @@ from agent_engine.engine.langgraph.tools.tool_invoker import ToolInvoker
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.loaders.tool_loader import ToolLoader
 from agent_engine.runtime.hooks import HookManager
+from agent_engine.runtime.hooks.context import current_run_context, public_run_context
 from agent_engine.runtime.state import GraphState
+from agent_engine.runtime.streaming import current_streams
 from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
 from agent_engine.tool_usage.tracker import ToolUsageTracker
 
 ModelFactory = Callable[..., BaseChatModel]
 _MODEL_FACTORY_OPTIONAL_KWARGS = ("region", "max_tokens", "top_p")
+logger = logging.getLogger(__name__)
 
 # noinspection PyTypeChecker
 RunGraphBuilder = StateGraph[GraphState, None, GraphState, GraphState]
@@ -141,13 +147,37 @@ class GraphBuilder:
         parent_path: str | None,
     ) -> None:
         path = node_id(node, parent_path)
+        executor: NodeExecutor
         if isinstance(node.node, OrchestratorSpec):
-            orchestrator_node = self._build_orchestrator_node(node, parent_path)
-            builder.add_node(path, orchestrator_node.execute)
+            executor = self._build_orchestrator_node(node, parent_path)
         else:
             assert isinstance(node.node, AgentSpec)
-            agent_node = self._build_agent_node(node.node, path)
-            builder.add_node(path, agent_node.execute)
+            executor = self._build_agent_node(node.node, path)
+        filters = tuple(self._filters)
+
+        async def execute_root(state: GraphState) -> GraphState:
+            if current_approval_resume.get() is not None:
+                ctx = current_run_context.get()
+                # Checkpoints retain the reviewed work, not current authority.
+                # Replace facts locally for the root and all delegated children.
+                state = {**state, "run_context": public_run_context(ctx) if ctx else {}}
+            if not node.node.protected:
+                return await executor.execute(state)
+            # The root has no parent to filter it before delegation. Apply the
+            # same policy before entering either kind of protected executor.
+            candidates = [node.node]
+            for route_filter in filters:
+                candidates = route_filter.filter(state.get("run_context", {}), candidates)
+            if not candidates:
+                logger.warning("access denied for protected root node '%s'", path)
+                answer = "Access denied."
+                sink = current_streams.get().answer
+                if sink is not None:
+                    sink(answer)
+                return {"visited": [], "answer": answer}
+            return await executor.execute(state)
+
+        builder.add_node(path, execute_root)
         builder.add_edge(path, END)
 
     def _build_orchestrator_node(
