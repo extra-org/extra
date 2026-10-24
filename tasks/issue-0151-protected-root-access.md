@@ -263,3 +263,54 @@ suppressed, and all models/providers are fakes with temporary local storage.
    new context keyword; hosts must supply a trusted current snapshot.
 8. **Final recommendation:** Approve the scoped correction after independent
    review. This is a local self-review, not a GitHub approval or merge.
+
+## PR 154 local chat follow-up (2026-10-24)
+
+The user requested fixing the current PR review, including
+https://github.com/extra-org/extra/pull/154#discussion_r4361338882.
+Local chat receives a host-supplied RunContext but drops it at the approval
+port. This makes an authorized protected root fail on local HITL replay.
+
+Scope: src/agentctl/chat.py forwards its existing context on every local
+approval; tests/cli/test_chat_command.py adds real-engine regressions for both
+local stream modes and updates its approval double to the existing port;
+this task records scope, verification and self-review. No new contract or
+identity source, checkpoint fallback, permission relaxation or migration.
+
+Acceptance criteria:
+
+- [x] Authorized local chat approvals retain current role/scope/metadata facts
+  and execute the pending tool once, with stream enabled or disabled.
+- [x] Protected root agents and orchestrators are covered.
+- [x] Revoking a metadata permission at the approval prompt still prevents the
+  tool effect, using current context rather than checkpointed facts.
+- [x] Credentials remain absent from policy projections and console output.
+- [x] Existing role-revocation HTTP/engine regressions and make check pass.
+
+After validation, commit and push this scoped correction to the existing PR
+branch and verify the remote head in the final report.
+
+Validation: all eight new cases failed before the production change. Four
+authorized cases failed to resume; four revoked cases showed that the actual
+current metadata was omitted. All eight pass after forwarding context. The
+focused local-chat/API/engine set passed, and make check passed **1,546 tests /
+27 dependency warnings**, 363 formatting checks, lint, mypy (359 files) and
+generated-stub checks. make validate and the WhatsApp pilot example passed;
+git diff --check passed. Tests use fake models and observable temporary-file
+tool effects. No live provider or development database was used.
+
+Local self-review:
+
+1. **Summary:** The local approval adapter now carries its host-supplied context
+   through the existing typed port in both console modes.
+2. **Blocking issues:** The reported local HITL regression is fixed.
+3. **Non-blocking issues:** No new actionable finding in this scoped change.
+4. **Architecture concerns:** No new contract, shared request state or runtime
+   policy is introduced; the engine still enforces access.
+5. **Security concerns:** Changed permission facts are observed before the tool
+   effect; credentials stay outside policy projections and console output.
+6. **Testing gaps:** Both root kinds and console modes cover allow/revoke with
+   a real engine and fake models; existing revocation regressions also pass.
+7. **Suggested improvements:** None required for this correction.
+8. **Final recommendation:** Approve the scoped fix after independent review;
+   this is not a GitHub approval, merge or deployment.

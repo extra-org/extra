@@ -246,6 +246,7 @@ async def _resolve_local_approvals(
             decision,
             caller_user_id=context.user_id if context is not None else None,
             caller_session_id=context.conversation_id if context is not None else None,
+            context=context,
         )
     return result
 
