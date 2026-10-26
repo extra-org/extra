@@ -106,3 +106,37 @@ must never be cached globally.
 - Secrets must not appear in YAML or prompt files.
 - Prompt text is not a security boundary; access and data restrictions belong in
   access/tool/plugin logic.
+
+---
+
+## Prompt Provenance
+
+To support reproducible agent runs and future remote prompt management integrations
+(e.g., Langfuse), prompt source templates carry provider-agnostic provenance metadata
+(`PromptProvenance`).
+
+### Provenance Contract
+
+```python
+@dataclass(frozen=True)
+class PromptProvenance:
+    source: str
+    identifier: str
+    content_hash: str
+    requested_ref: str | None = None
+    resolved_revision: str | None = None
+```
+
+| Field | Description | Example (Local File) | Example (Remote / Langfuse) |
+| ----- | ----------- | -------------------- | --------------------------- |
+| `source` | Origin provider of the prompt | `"file"` | `"langfuse"` |
+| `identifier` | Stable source identifier or path | `"prompts/billing/system.md"` | `"billing-agent"` |
+| `content_hash` | Deterministic SHA-256 fingerprint (`sha256:<digest>`) of the source content | `"sha256:4a8b..."` | `"sha256:4a8b..."` |
+| `requested_ref` | Requested label, tag, or version (if applicable) | `None` | `"production"` or `"12"` |
+| `resolved_revision` | Exact immutable revision resolved by the source | `None` | `"17"` |
+
+### Source Content vs. Rendered Content
+
+- **Source content hash**: The fingerprint is computed deterministically over the raw source template text in UTF-8 before variable substitution (`compute_prompt_hash(content)`).
+- **No sensitive leak**: Provenance tracks source templates, versions, and hashes rather than persisting sensitive request-specific rendered prompt content.
+- **Local files**: Loaded via `load_file_with_provenance(base_dir, relative_path)` returning `ResolvedPrompt(content=..., provenance=...)` with normalized forward-slash paths.
