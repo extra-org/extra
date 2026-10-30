@@ -9,8 +9,23 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any
+
+
+def normalize_prompt_path(path: str | Path | PurePath) -> str:
+    """Normalize a local prompt path to a canonical POSIX forward-slash string.
+
+    Interprets backslash separators in relative string paths via PureWindowsPath
+    while preserving Path and PurePath instances and avoiding reinterpreting
+    anchored or drive-prefixed Windows paths as relative paths on POSIX.
+    """
+    if isinstance(path, PurePath):
+        return path.as_posix()
+    win_path = PureWindowsPath(path)
+    if not win_path.drive and not win_path.root:
+        return win_path.as_posix()
+    return PurePath(path).as_posix()
 
 
 def compute_prompt_hash(content: str) -> str:
@@ -51,7 +66,7 @@ class PromptProvenance:
         The path identifier is normalized to POSIX forward-slash format to ensure
         consistent provenance identifiers across platforms.
         """
-        normalized_identifier = PurePath(path).as_posix()
+        normalized_identifier = normalize_prompt_path(path)
         return cls(
             source="file",
             identifier=normalized_identifier,

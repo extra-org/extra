@@ -44,6 +44,18 @@ class TestPromptFileLoadingWithProvenance:
         assert resolved is not None
         assert resolved.provenance.identifier == "prompts/billing/system.md"
 
+    def test_load_file_with_either_separator_style_produces_equivalent_result(
+        self, prompts_dir: Path
+    ) -> None:
+        from_forward = load_file_with_provenance(prompts_dir, "prompts/billing/system.md")
+        from_backslash = load_file_with_provenance(prompts_dir, "prompts\\billing\\system.md")
+
+        assert from_forward is not None
+        assert from_backslash is not None
+        assert from_forward.content == from_backslash.content
+        assert from_forward.provenance == from_backslash.provenance
+        assert from_backslash.provenance.identifier == "prompts/billing/system.md"
+
     def test_load_nonexistent_file_returns_none(self, prompts_dir: Path) -> None:
         resolved = load_file_with_provenance(prompts_dir, "prompts/missing.md")
         assert resolved is None

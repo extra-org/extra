@@ -9,6 +9,7 @@ from agent_engine.core.provenance import (
     PromptProvenance,
     ResolvedPrompt,
     compute_prompt_hash,
+    normalize_prompt_path,
 )
 from agent_engine.core.spec import NodeSpec
 from agent_engine.loaders.resolver_loader import ResolverLoader
@@ -55,11 +56,12 @@ def load_file_with_provenance(
     """
     if not relative_path:
         return None
-    path = base_dir / relative_path
+    normalized_path = normalize_prompt_path(relative_path)
+    path = base_dir / normalized_path
     if not path.is_file():
         return None
     content = path.read_text(encoding="utf-8")
-    provenance = PromptProvenance.for_local_file(relative_path, content)
+    provenance = PromptProvenance.for_local_file(normalized_path, content)
     return ResolvedPrompt(content=content, provenance=provenance)
 
 

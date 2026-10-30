@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-from pathlib import PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -70,6 +70,33 @@ class TestPromptProvenanceModel:
         provenance = PromptProvenance.for_local_file(windows_path, content)
 
         assert provenance.identifier == "prompts/billing/system.md"
+
+    def test_plain_backslash_string_produces_forward_slash_identifier(self) -> None:
+        content = "You are a billing specialist."
+        provenance = PromptProvenance.for_local_file("prompts\\billing\\system.md", content)
+
+        assert provenance.identifier == "prompts/billing/system.md"
+
+    def test_forward_and_backslash_relative_strings_produce_identical_identifiers(self) -> None:
+        content = "You are a billing specialist."
+        posix_prov = PromptProvenance.for_local_file("prompts/billing/system.md", content)
+        win_prov = PromptProvenance.for_local_file("prompts\\billing\\system.md", content)
+
+        assert posix_prov.identifier == "prompts/billing/system.md"
+        assert posix_prov == win_prov
+
+    def test_posix_path_and_pure_path_objects_produce_normalized_identifier(self) -> None:
+        content = "You are a billing specialist."
+        from_path = PromptProvenance.for_local_file(
+            Path("prompts") / "billing" / "system.md", content
+        )
+        from_pure_posix = PromptProvenance.for_local_file(
+            PurePosixPath("prompts/billing/system.md"),
+            content,
+        )
+
+        assert from_path.identifier == "prompts/billing/system.md"
+        assert from_pure_posix.identifier == "prompts/billing/system.md"
 
     def test_remote_compatible_representation_with_mutable_label(self) -> None:
         provenance = PromptProvenance(
