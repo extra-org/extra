@@ -1,13 +1,15 @@
 """Tests for the interactive ``agentctl chat`` console (local + remote modes).
 
-No real LLM, MCP, or network is touched: the local engine is a fake stand-in and
-the remote server is an httpx ``MockTransport``.
+No real LLM, MCP, or network is touched: local tests use fake engines or the
+real engine with fake models, and remote tests use httpx ``MockTransport``.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
+from pathlib import Path
 
 import httpx
 import pytest
@@ -16,12 +18,17 @@ from click.testing import CliRunner
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.approvals.models import RunStatus
 from agent_engine.engine.engine import Engine
+from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
-from agent_engine.runtime.hooks.models import RunContext
+from agent_engine.runtime.hooks.models import AuthContext, RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agentctl import chat as chat_mod
 from agentctl.chat import run_chat_loop, run_remote_chat
 from agentctl.main import cli
+from tests.approvals.test_engine_hitl import _multi_tool_spec
+from tests.approvals.test_resume_binding import write_tool
+from tests.engine.test_engine_flow import orchestrator, system
+from tests.fixtures.utils import fake_model_factory
 
 # ---------------------------------------------------------------------------
 # fakes / helpers
@@ -157,8 +164,9 @@ class ApprovalFakeEngine(FakeEngine):
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
         access_token: str | None = None,
+        context: RunContext | None = None,
     ) -> RunResult:
-        del caller_session_id, access_token
+        del caller_session_id, access_token, context
         assert isinstance(decision, ApprovalDecision)
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id))
         return next(self.results)
@@ -538,6 +546,78 @@ async def test_local_stream_prompts_and_resumes_pending_approval() -> None:
 
     assert engine.resume_calls[0][2] is ApprovalDecision.ALLOW_ONCE
     assert "Agent > stream resumed" in echo.lines
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("root_kind", ["agent", "orchestrator"])
+@pytest.mark.parametrize("revoke", [False, True])
+async def test_local_approval_retains_current_authorization(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stream: bool, root_kind: str, revoke: bool
+) -> None:
+    output = tmp_path / "executed.log"
+    policy = tmp_path / "policy.jsonl"
+    write_tool(tmp_path, "send_email", output)
+    (tmp_path / "plugins" / "access.py").write_text(
+        "import json\n"
+        "class AccessResolver:\n"
+        "    def can_access(self, ctx, node_id):\n"
+        f"        with open({str(policy)!r}, 'a') as output:\n"
+        "            output.write(json.dumps(ctx) + '\\n')\n"
+        "        auth = ctx.get('auth', {})\n"
+        "        return ('admin' in auth.get('roles', ())\n"
+        "                and 'write' in auth.get('scopes', ())\n"
+        "                and ctx.get('metadata', {}).get('permission') is True)\n",
+        encoding="utf-8",
+    )
+    spec = _multi_tool_spec("send_email")
+    if root_kind == "orchestrator":
+        spec = system(orchestrator("root", [spec.graph]))
+    spec = replace(spec, graph=replace(spec.graph, node=replace(spec.graph.node, protected=True)))
+    context = RunContext(
+        run_id="local-run",
+        user_id="owner",
+        conversation_id="local-session",
+        metadata={"permission": True},
+        auth_context=AuthContext(
+            user_id="owner",
+            roles=("admin",),
+            scopes=("write",),
+            inbound_access_token="local-test-credential",
+        ),
+    )
+    inputs = scripted_reader(["hello", "o"])
+
+    def read_line(prompt: str) -> str:
+        if prompt.startswith("Allow?") and revoke:
+            # Metadata is the explicitly mutable host/hook enrichment field.
+            context.metadata["permission"] = False
+        return inputs(prompt)
+
+    echo = CollectingEcho()
+    async with LangGraphEngine(tmp_path, model_factory=fake_model_factory) as engine:
+        await engine.build(spec)
+        await run_chat_loop(
+            engine, stream=stream, context=context, read_line=read_line, echo=echo.write
+        )
+        if revoke:
+            assert not output.exists()
+            assert await engine.get_run_status("local-run") == RunStatus.FAILED
+            assert await engine.get_pending_approval("local-run") is None
+        else:
+            assert not any(line.startswith("✗") for line in echo.lines), echo.lines
+            assert len(output.read_text().splitlines()) == 1
+            assert await engine.get_run_status("local-run") == RunStatus.COMPLETED
+            assert any(line.startswith("Agent > ") for line in echo.lines)
+    decisions = policy.read_text()
+    latest = json.loads(decisions.splitlines()[-1])
+    assert latest["metadata"]["permission"] is (not revoke)
+    assert latest["auth"]["roles"] == ["admin"]
+    assert latest["auth"]["scopes"] == ["write"]
+    assert latest["user_id"] == "owner"
+    assert latest["conversation_id"] == "local-session"
+    assert "local-test-credential" not in decisions
+    captured = capsys.readouterr()
+    assert "local-test-credential" not in "\n".join(echo.lines) + captured.out + captured.err
 
 
 # ---------------------------------------------------------------------------

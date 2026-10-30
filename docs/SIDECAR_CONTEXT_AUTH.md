@@ -175,8 +175,10 @@ missing variables in strict prompt rendering produce clear errors.
 
 ## Access Plugin
 
-Authorization is opt-in per node. A node marked `protected: true` is hidden from
-the router unless the fixed access plugin allows it.
+Authorization is opt-in per node. A child marked `protected: true` is hidden
+from its parent unless the fixed access plugin allows it. A protected root
+agent or orchestrator passes through the same policy before its executor is
+entered, since it has no parent to filter it.
 
 ```yaml
 agents:
@@ -202,9 +204,56 @@ Rules:
 - Protected nodes are checked before routing.
 - If `can_access` returns true, the node remains a routing candidate.
 - If `can_access` returns false or raises, the node is hidden.
+- On a new run of a protected root, denial returns `Access denied.` with
+  an empty visited route and no tool usage. Prompt resolvers, models, and tools
+  are not invoked. `/invoke` keeps its normal response shape and HTTP 200;
+  `/stream` emits the fixed refusal as an `answer_delta`, then a `final` event
+  containing the same refusal and empty route. Delta-only clients such as the
+  CLI therefore display the refusal too.
+  No model-generated answer or route event is emitted for a denied root.
 - `protected: true` without `plugins/access.py` is a configuration error at
-  startup.
+  startup, including when a Python host builds the engine directly.
 - `plugins/access.py` with no protected nodes is harmless and may be ignored.
+
+The access resolver receives the per-request, non-secret `run_context`
+projection for roots and children alike: available run, conversation, user and
+organization IDs, metadata, and `auth` facts such as roles and scopes. The
+inbound access token is excluded. A Python host supplies trusted `RunContext`
+values; `agent_manager` derives them from its verified principal. The thin
+engine API accepts no caller-asserted roles or user identity, including forged
+`X-User-ID` or `X-Roles` headers.
+
+No universal role requirement is imposed by the engine. If the policy requires
+identity or metadata that is missing or malformed, it must deny or raise; both
+outcomes fail closed. An explicitly permissive policy can allow an empty
+context. A root's decision is evaluated per execution, never cached between
+requests. This enforces node access without implementing API authentication or
+replacing authorization inside client tools and data services.
+
+Approval replay uses the **current approval request's** trusted context. Python
+hosts pass `context=RunContext(...)` to `resume` / `resume_stream`;
+`agent_manager` builds it from the verified principal on each decision request,
+including that principal's current roles, organization and credential. Supplied
+run/user/session identities must match the approval's bound caller and run.
+The root wrapper replaces its execution-local context projection before access
+checks and child delegation. Saved roles, scopes, organization and metadata are
+never merged into it, and credentials are never added to the graph projection.
+Omitting fresh permission facts does not recover the old grant. A permissive
+policy can still explicitly allow a context with no role or scope facts.
+
+The root policy is rechecked before its executor is entered. If that policy
+denies access, the reviewed invocation is never reached. The existing
+replay-binding guard raises `ApprovalInvocationMismatch`, rejects the pending
+approval and fails the run; the decision is not reported as an executed action.
+Removing a protected child can instead trigger the existing checkpoint replay
+mismatch guard, which also prevents execution and fails the run. Neither case
+re-generates the reviewed model/tool request. A denied resume retains the
+existing error handling rather than a new run's normal refusal response.
+
+The optional Python approval ports require implementations to accept the new
+`context` keyword; a host must not silently discard it for a legacy adapter.
+The HTTP decision body, SSE event types, access-plugin signature and YAML
+remain unchanged. See [ADR 0002](adr/0002-conversation-lifecycle-and-immutable-branches.md).
 
 ---
 
