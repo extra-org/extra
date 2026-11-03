@@ -33,9 +33,27 @@ agents:
 | `orchestrator` | orchestrators only | yes |
 | `system` | orchestrators and agents | no |
 | `user` | orchestrators and agents | no |
+| `extra_default` | orchestrators and agents | no (boolean, default `true`) |
 
 `orchestrator` prompts contain routing instructions. `system` prompts describe
 node behavior/persona. `user` prompts can wrap the incoming user input.
+
+### Extra default system prompt
+
+Every node's final system prompt is composed in a fixed order by
+`assemble_prompt` (`agent_engine.engine.langgraph.prompting`), joining non-empty
+parts with a blank line:
+
+1. `EXTRA_DEFAULT_SYSTEM_PROMPT` — Extra's built-in scope/boundary prompt,
+   unless the node sets `prompts.extra_default: false`.
+2. The node's rendered prompt — `system` (or `description` as fallback), and
+   for orchestrators, then `orchestrator`.
+3. Orchestrators only: the engine routing contract.
+
+Only part 2 is interpolated. `extra_default` is a per-node boolean (default
+`true`); disabling it removes only the Extra default, never the node's own
+prompt. Each node's model call carries its own complete system prompt, so the
+default appears once per call during delegated execution.
 
 ---
 

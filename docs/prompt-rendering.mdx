@@ -26,6 +26,7 @@ orchestrators:
 | `orchestrator` | Orchestrators only | **Yes** |
 | `system` | Orchestrators and agents | No |
 | `user` | Orchestrators and agents | No |
+| `extra_default` | Orchestrators and agents | No — boolean, default `true`. See [below](#extras-default-system-prompt). |
 
 ---
 
@@ -75,6 +76,32 @@ class Resolver(SharedResolver):
     def account_tier(self, ctx) -> str:
         return fetch_account_tier(ctx.headers.get("X-Customer-Id"))
 ```
+
+---
+
+## Extra's default system prompt
+
+Every agent and orchestrator gets Extra's built-in default system prompt **in front of** its own system prompt. It keeps the model inside the capabilities you configured: don't invent tools, data, or actions; say so when a request is out of scope; respect tool restrictions, authorization, and agent boundaries; never claim an action happened unless it actually ran.
+
+The final system prompt is composed in a fixed order, with a blank line between parts:
+
+1. Extra's default system prompt (unless disabled)
+2. The node's own prompt — `prompts.system` (or its `description` if there is no system file); for orchestrators, followed by `prompts.orchestrator`
+3. For orchestrators only, the engine's routing contract
+
+Only part 2 is rendered with `{{variables}}`. Extra's default and the routing contract are engine text and are never interpolated.
+
+Opt a single node out with `prompts.extra_default: false`. That removes only Extra's default — the node's own prompt is still sent unchanged:
+
+```yaml
+agents:
+  card_agent:
+    prompts:
+      system: prompts/card_agent/system.md
+      extra_default: false   # opt out for this agent only
+```
+
+The setting is per node. In a delegated run each node makes its own model call with its own complete system prompt, so the default appears exactly once in each call — never twice, and opting out a child doesn't affect its parent.
 
 ---
 

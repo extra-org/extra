@@ -313,6 +313,7 @@ orchestrators:
 | `prompts.orchestrator` | **Yes** | The routing instructions — see below. |
 | `prompts.system` | No | Additional system context. |
 | `prompts.user` | No | User-turn context injection. |
+| `prompts.extra_default` | No | `false` drops Extra's [default system prompt](/docs/prompt-rendering#extras-default-system-prompt) for this node. Default `true`. |
 
 ### Writing the orchestrator prompt
 
@@ -370,6 +371,7 @@ agents:
 | `model` | No | Overrides `defaults.model`. Full replacement. |
 | `prompts.system` | No | Defines the agent's behavior and persona. |
 | `prompts.user` | No | User-turn context injection. |
+| `prompts.extra_default` | No | `false` drops Extra's [default system prompt](/docs/prompt-rendering#extras-default-system-prompt) for this node. Default `true`. |
 | `resolvers` | No | Resolver ids to run before this agent executes. |
 | `tools` | No | Tool ids this agent is allowed to call. |
 | `mcps` | No | MCP server ids this agent has access to. |

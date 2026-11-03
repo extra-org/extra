@@ -483,6 +483,15 @@ class CapturingModel:
         return AIMessage(content="done")
 
 
+def _orchestrator_prompt(rendered: str) -> str:
+    """The full system prompt an orchestrator sends: Extra default, its own
+    rendered prompts, then the engine routing contract."""
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import _ORCHESTRATOR_CONTRACT
+    from agent_engine.engine.langgraph.prompting import EXTRA_DEFAULT_SYSTEM_PROMPT
+
+    return f"{EXTRA_DEFAULT_SYSTEM_PROMPT}\n\n{rendered}\n\n{_ORCHESTRATOR_CONTRACT.strip()}"
+
+
 def write_resolver(base_dir: Path, node_id: str, body: str) -> None:
     resolvers_dir = base_dir / "plugins" / "resolvers"
     resolvers_dir.mkdir(parents=True, exist_ok=True)
@@ -491,10 +500,7 @@ def write_resolver(base_dir: Path, node_id: str, body: str) -> None:
 
 async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
     from agent_engine.core.spec import OrchestratorPromptSet, OrchestratorSpec
-    from agent_engine.engine.langgraph.nodes.orchestrator_node import (
-        _ORCHESTRATOR_CONTRACT,
-        OrchestratorNode,
-    )
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import OrchestratorNode
 
     # Write prompt files
     sys_path = tmp_path / "system.md"
@@ -526,9 +532,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
     await node_both.execute({"message": "hi", "visited": []})
-    expected_both = (
-        f"System persona content\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
-    )
+    expected_both = _orchestrator_prompt("System persona content\n\nOrchestrator routing content")
     assert model_both.captured_prompt == expected_both
 
     # 2. Test system prompt only (no orchestrator) — uses system as the base prompt.
@@ -554,7 +558,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
     await node_sys.execute({"message": "hi", "visited": []})
-    expected_sys = f"System persona content\n\n\n{_ORCHESTRATOR_CONTRACT}"
+    expected_sys = _orchestrator_prompt("System persona content")
     assert model_sys.captured_prompt == expected_sys
 
     # 3. Test orchestrator prompt only (no system) —
@@ -581,7 +585,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
     await node_orch.execute({"message": "hi", "visited": []})
-    expected_orch = f"orch desc\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
+    expected_orch = _orchestrator_prompt("orch desc\n\nOrchestrator routing content")
     assert model_orch.captured_prompt == expected_orch
 
     # 4. Test fallback to description
@@ -605,7 +609,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
     await node_desc.execute({"message": "hi", "visited": []})
-    expected_desc = f"orch desc\n\n\n{_ORCHESTRATOR_CONTRACT}"
+    expected_desc = _orchestrator_prompt("orch desc")
     assert model_desc.captured_prompt == expected_desc
 
 
@@ -620,10 +624,7 @@ async def test_orchestrator_prompts_interpolate_resolver_values(tmp_path: Path) 
         OrchestratorSpec,
         ResolverSpec,
     )
-    from agent_engine.engine.langgraph.nodes.orchestrator_node import (
-        _ORCHESTRATOR_CONTRACT,
-        OrchestratorNode,
-    )
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import OrchestratorNode
 
     (tmp_path / "system.md").write_text("Persona for {{audience}}", encoding="utf-8")
     (tmp_path / "orchestrator.md").write_text("Routing for {{audience}}", encoding="utf-8")
@@ -655,8 +656,8 @@ async def test_orchestrator_prompts_interpolate_resolver_values(tmp_path: Path) 
 
     await node.execute({"message": "hi", "visited": []})
 
-    assert model.captured_prompt == (
-        f"Persona for an admin\n\nRouting for an admin\n{_ORCHESTRATOR_CONTRACT}"
+    assert model.captured_prompt == _orchestrator_prompt(
+        "Persona for an admin\n\nRouting for an admin"
     )
 
 
