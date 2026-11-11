@@ -53,7 +53,9 @@ parts with a blank line:
 Only part 2 is interpolated. `extra_default` is a per-node boolean (default
 `true`); disabling it removes only the Extra default, never the node's own
 prompt. Each node's model call carries its own complete system prompt, so the
-default appears once per call during delegated execution.
+default appears once per call during delegated execution. Non-blank prompt
+text is never trimmed, so indentation in prompt files reaches the model as
+written. See [ADR 0011](adr/0011-extra-default-system-prompt.md).
 
 ---
 

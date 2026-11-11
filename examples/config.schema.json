@@ -321,6 +321,11 @@
               "type": "string",
               "description": "Optional. User prompt template wrapping the incoming input. May contain {{variables}}.",
               "minLength": 1
+            },
+            "extra_default": {
+              "type": "boolean",
+              "description": "Optional. If true (default), Extra's built-in default system prompt is prepended to this orchestrator's own prompts. Set false to opt this node out; its own prompts are still sent unchanged.",
+              "default": true
             }
           }
         }
@@ -400,6 +405,11 @@
               "type": "string",
               "description": "Optional. User prompt template that wraps the incoming input. May contain {{variables}}.",
               "minLength": 1
+            },
+            "extra_default": {
+              "type": "boolean",
+              "description": "Optional. If true (default), Extra's built-in default system prompt is prepended to this agent's own system prompt. Set false to opt this node out; its own prompt is still sent unchanged.",
+              "default": true
             }
           }
         }

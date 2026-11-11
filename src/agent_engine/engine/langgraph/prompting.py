@@ -53,13 +53,14 @@ engine text, never subject to ``{{placeholder}}`` interpolation."""
 def assemble_prompt(*fragments: str | None) -> str:
     """Join prompt fragments, in the order given, into one system prompt.
 
-    Each fragment is trimmed of surrounding whitespace; ``None`` and blank
-    fragments are skipped, and the rest are separated by one blank line. This
-    is the single place a node's final system prompt is composed, so a
-    fragment (such as the Extra default) can never be added twice by
-    competing code paths.
+    ``None`` and whitespace-only fragments are skipped; every other fragment
+    is kept byte-for-byte (leading indentation can be meaningful Markdown, so
+    custom prompt text is never trimmed) and fragments are separated by one
+    blank line. This is the single place a node's final system prompt is
+    composed, so a fragment (such as the Extra default) can never be added
+    twice by competing code paths.
     """
-    return "\n\n".join(text for f in fragments if f and (text := f.strip()))
+    return "\n\n".join(f for f in fragments if f and f.strip())
 
 
 def render_prompt(template: str, context: dict[str, str]) -> str:

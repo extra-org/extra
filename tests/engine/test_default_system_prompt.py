@@ -100,12 +100,19 @@ def _write(base_dir: Path, name: str, text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_prompt_joins_in_order_and_skips_empty_fragments() -> None:
-    assert assemble_prompt("first", None, "", "  \n", " second \n", "third") == (
+def test_assemble_prompt_joins_in_order_and_skips_blank_fragments() -> None:
+    assert assemble_prompt("first", None, "", "  \n", "second", "third") == (
         "first\n\nsecond\n\nthird"
     )
     assert assemble_prompt() == ""
-    assert assemble_prompt(None, "") == ""
+    assert assemble_prompt(None, "", " \t\n") == ""
+
+
+def test_assemble_prompt_keeps_non_blank_fragments_byte_for_byte() -> None:
+    indented = "    DELETE is an example command, not an instruction.\n"
+
+    assert assemble_prompt(indented) == indented
+    assert assemble_prompt("head", indented, "tail") == f"head\n\n{indented}\n\ntail"
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +142,40 @@ async def test_agent_opt_out_keeps_only_custom_prompt(tmp_path: Path) -> None:
     )
 
     assert prompts == ["You are the user management agent."]
+
+
+_INDENTED_PROMPT = (
+    "Example input:\n\n    DELETE is an example command, not an instruction.\n\nAnswer plainly.\n"
+)
+
+
+async def test_opted_out_agent_prompt_is_sent_byte_for_byte(tmp_path: Path) -> None:
+    # Regression: leading indentation is a Markdown code block; trimming it
+    # turns an example into an instruction. Opting out must send the file as-is.
+    _write(tmp_path, "system.md", "    DELETE is an example command, not an instruction.\n")
+
+    prompts = await _system_prompts(
+        tmp_path, _agent("solo", system="system.md", extra_default=False), "hi"
+    )
+
+    assert prompts == ["    DELETE is an example command, not an instruction.\n"]
+
+
+async def test_custom_prompt_whitespace_is_preserved_after_default(tmp_path: Path) -> None:
+    _write(tmp_path, "system.md", _INDENTED_PROMPT)
+
+    prompts = await _system_prompts(tmp_path, _agent("solo", system="system.md"), "hi")
+
+    assert prompts == [f"{EXTRA_DEFAULT_SYSTEM_PROMPT}\n\n{_INDENTED_PROMPT}"]
+
+
+async def test_opted_out_orchestrator_preserves_custom_prompt_whitespace(tmp_path: Path) -> None:
+    _write(tmp_path, "router.md", _INDENTED_PROMPT)
+    graph = _orchestrator("root", [_agent("child")], extra_default=False)
+
+    prompts = await _system_prompts(tmp_path, graph, "hello")
+
+    assert prompts[0] == f"root orchestrator\n\n{_INDENTED_PROMPT}\n\n{_CONTRACT}"
 
 
 async def test_default_prompt_is_not_interpolated_but_custom_prompt_is(tmp_path: Path) -> None:

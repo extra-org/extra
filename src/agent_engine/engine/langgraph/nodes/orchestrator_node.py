@@ -142,7 +142,8 @@ class OrchestratorNode(NodeExecutor):
         return assemble_prompt(
             EXTRA_DEFAULT_SYSTEM_PROMPT if prompts.extra_default else None,
             render_prompt(assemble_prompt(base, orchestrator), ctx),
-            _ORCHESTRATOR_CONTRACT,
+            # Engine text, so trimming it is safe; custom prompts are never trimmed.
+            _ORCHESTRATOR_CONTRACT.strip(),
         )
 
     def _filter_children(self, state: GraphState) -> list[ChildEntry]:
