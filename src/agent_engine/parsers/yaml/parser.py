@@ -68,7 +68,7 @@ _TOP_LEVEL_KEYS = {
 _SYSTEM_KEYS = {"name", "description"}
 _DEFAULTS_KEYS = {"model"}
 _ORCHESTRATOR_KEYS = {"name", "description", "model", "resolvers", "protected", "prompts"}
-_ORCHESTRATOR_PROMPT_KEYS = {"orchestrator", "system", "user"}
+_ORCHESTRATOR_PROMPT_KEYS = {"orchestrator", "system", "user", "extra_default"}
 _AGENT_KEYS = {
     "name",
     "description",
@@ -81,7 +81,7 @@ _AGENT_KEYS = {
     "auto",
     "auto_mode",
 }
-_AGENT_PROMPT_KEYS = {"system", "user"}
+_AGENT_PROMPT_KEYS = {"system", "user", "extra_default"}
 _MODEL_KEYS = {"provider", "name", "temperature", "region", "max_tokens", "top_p", "fallback"}
 _FALLBACK_MODEL_KEYS = {"provider", "name", "temperature", "region", "max_tokens", "top_p"}
 _TOOL_KEYS = {"description"}
@@ -182,6 +182,13 @@ def _validate_node_refs(
         for ref in spec.get("mcps", []):
             if ref not in mcps:
                 errors.append(ValidationError(f"agents.{node_id}.mcps", f"Unknown MCP '{ref}'"))
+
+
+def _validate_extra_default(
+    path: str, prompts: dict[str, Any], errors: list[ValidationError]
+) -> None:
+    if "extra_default" in prompts and not isinstance(prompts["extra_default"], bool):
+        errors.append(ValidationError(f"{path}.extra_default", "Must be a boolean"))
 
 
 def _build_mcp_spec(ref: str, raw: dict[str, Any]) -> MCPSpec:
@@ -543,6 +550,9 @@ class YAMLParser(Parser):
                             _ORCHESTRATOR_PROMPT_KEYS,
                             errors,
                         )
+                        _validate_extra_default(
+                            f"orchestrators.{node_id}.prompts", raw["prompts"], errors
+                        )
 
         if isinstance(data.get("agents"), dict):
             for node_id, raw in agents.items():
@@ -555,6 +565,7 @@ class YAMLParser(Parser):
                             _AGENT_PROMPT_KEYS,
                             errors,
                         )
+                        _validate_extra_default(f"agents.{node_id}.prompts", raw["prompts"], errors)
 
         if isinstance(data.get("tools"), dict):
             for tool_id, raw in data["tools"].items():
@@ -691,6 +702,7 @@ class YAMLParser(Parser):
                     orchestrator=raw.get("prompts", {}).get("orchestrator", ""),
                     system=raw.get("prompts", {}).get("system"),
                     user=raw.get("prompts", {}).get("user"),
+                    extra_default=raw.get("prompts", {}).get("extra_default", True),
                 ),
             )
 
@@ -707,6 +719,7 @@ class YAMLParser(Parser):
                 prompts=BasePromptSet(
                     system=raw.get("prompts", {}).get("system") if raw.get("prompts") else None,
                     user=raw.get("prompts", {}).get("user") if raw.get("prompts") else None,
+                    extra_default=(raw.get("prompts") or {}).get("extra_default", True),
                 ),
                 tools=tuple(
                     ToolSpec(id=ref, description=tools[ref].get("description", ""))

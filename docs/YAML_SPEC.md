@@ -242,10 +242,15 @@ Prompt text lives in files, not inline YAML. Each node uses a `prompts:` object:
 | `orchestrator` | orchestrators only | yes |
 | `system` | orchestrators and agents | no |
 | `user` | orchestrators and agents | no |
+| `extra_default` | orchestrators and agents | no (boolean, default `true`) |
 
 All prompt files may contain `{{variables}}`. Variables are resolved per request
 by declared resolvers before the node runs. Parsed templates may be cached;
 rendered prompts are never cached globally.
+
+Extra prepends its built-in default system prompt to every node's own system
+prompt; set `prompts.extra_default: false` to opt a node out (see
+`PROMPT_RENDERING.md`).
 
 Recommended layout:
 

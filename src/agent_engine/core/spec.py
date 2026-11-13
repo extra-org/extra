@@ -25,6 +25,10 @@ class ModelConfig(BaseModelConfig):
 class BasePromptSet:
     system: str | None = None
     user: str | None = None
+    extra_default: bool = True
+    """When true (the default), Extra's built-in scope/boundary system prompt
+    is prepended to this node's own system prompt. Set false to opt this node
+    out; its own prompt is still sent unchanged."""
 
 
 @dataclass(frozen=True)

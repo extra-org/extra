@@ -15,6 +15,8 @@ from agent_engine.engine.langgraph.execution.model_context import ModelContext
 from agent_engine.engine.langgraph.execution.model_loop import as_text, emit_route, run_tool_loop
 from agent_engine.engine.langgraph.execution.node_executor import NodeExecutor
 from agent_engine.engine.langgraph.prompting import (
+    EXTRA_DEFAULT_SYSTEM_PROMPT,
+    assemble_prompt,
     load_file,
     render_prompt,
     resolve_prompt_context,
@@ -59,8 +61,13 @@ class AgentNode(NodeExecutor):
             current_invocation.reset(token)
 
     def _build_prompt(self, ctx: dict[str, str]) -> str:
-        template = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
-        return render_prompt(template, ctx)
+        """Compose: Extra default (unless opted out) → rendered agent prompt."""
+        prompts = self._spec.prompts
+        template = load_file(self._base_dir, prompts.system) or self._spec.description
+        return assemble_prompt(
+            EXTRA_DEFAULT_SYSTEM_PROMPT if prompts.extra_default else None,
+            render_prompt(template, ctx),
+        )
 
     async def _run(self, system_prompt: str, state: GraphState) -> GraphState:
         user_msg: str = state.get("message", "")
