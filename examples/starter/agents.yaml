@@ -7,7 +7,7 @@ system:
 defaults:
   model:
     provider: openai
-    name: qwen2.5:14b
+    name: openai/gpt-oss-20b
     temperature: 0.0
 
 execution:
